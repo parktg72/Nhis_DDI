@@ -1,0 +1,105 @@
+groups:
+  - name: ddi_model_alerts
+    interval: 1m
+    rules:
+
+      # ── PSI 드리프트 ────────────────────────────────────────────────────
+      - alert: DDI_PSI_Critical
+        expr: ddi_psi_score > 0.25
+        for: 5m
+        labels:
+          severity: critical
+          team: ddi
+        annotations:
+          summary: "피처 PSI 임계값 초과 ({{ $labels.feature_name }})"
+          description: >
+            피처 {{ $labels.feature_name }} PSI = {{ $value | printf "%.4f" }}
+            (임계값 0.25 초과). 긴급 재학습을 검토하세요.
+
+      - alert: DDI_PSI_Warning
+        expr: ddi_psi_score >= 0.10 and ddi_psi_score < 0.25
+        for: 10m
+        labels:
+          severity: warning
+          team: ddi
+        annotations:
+          summary: "피처 분포 변화 감지 ({{ $labels.feature_name }})"
+          description: >
+            피처 {{ $labels.feature_name }} PSI = {{ $value | printf "%.4f" }}
+            (0.10~0.25 구간). 모니터링을 강화하세요.
+
+      # ── 모델 성능 저하 ───────────────────────────────────────────────────
+      - alert: DDI_Recall_Critical
+        expr: ddi_model_recall{subgroup="all"} < 0.87
+        for: 10m
+        labels:
+          severity: critical
+          team: ddi
+        annotations:
+          summary: "고위험 Recall 위험 수준 하락"
+          description: >
+            전체 서브그룹 Recall = {{ $value | printf "%.4f" }}
+            (기준 0.90 대비 3%p 이상 하락). 즉각 재학습 검토 필요.
+
+      - alert: DDI_Recall_Warning
+        expr: ddi_model_recall{subgroup="all"} >= 0.87 and ddi_model_recall{subgroup="all"} < 0.90
+        for: 15m
+        labels:
+          severity: warning
+          team: ddi
+        annotations:
+          summary: "고위험 Recall 경고 수준 하락"
+          description: >
+            전체 서브그룹 Recall = {{ $value | printf "%.4f" }}
+            (기준 0.90 미만). 추이를 지속 모니터링하세요.
+
+      # ── 고위험 환자 비율 이상 ─────────────────────────────────────────────
+      - alert: DDI_HighRiskRate_Spike
+        expr: ddi_high_risk_rate > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          team: ddi
+        annotations:
+          summary: "고위험(Red) 환자 비율 급증"
+          description: >
+            파티션 {{ $labels.partition }} 고위험 비율 = {{ $value | printf "%.2%%" }}
+            (임계값 20% 초과). 데이터 이상 또는 실제 위험 증가를 확인하세요.
+
+      - alert: DDI_HighRiskRate_Drop
+        expr: ddi_high_risk_rate < 0.01
+        for: 10m
+        labels:
+          severity: warning
+          team: ddi
+        annotations:
+          summary: "고위험(Red) 환자 비율 비정상 감소"
+          description: >
+            파티션 {{ $labels.partition }} 고위험 비율 = {{ $value | printf "%.2%%" }}
+            (임계값 1% 미만). ETL 또는 피처 파이프라인 오류를 확인하세요.
+
+      # ── Rule vs ML 불일치 ─────────────────────────────────────────────────
+      - alert: DDI_RuleML_Disagree_High
+        expr: rate(ddi_rule_ml_disagree_total[1h]) > 0.10
+        for: 15m
+        labels:
+          severity: warning
+          team: ddi
+        annotations:
+          summary: "Rule vs ML 불일치율 높음"
+          description: >
+            1시간 내 Rule-ML 불일치율 {{ $value | printf "%.2%%" }}
+            (임계값 10% 초과). ML 모델 재검토가 필요할 수 있습니다.
+
+      # ── 예측 지연시간 ─────────────────────────────────────────────────────
+      - alert: DDI_Latency_High
+        expr: histogram_quantile(0.95, rate(ddi_prediction_latency_ms_bucket[5m])) > 500
+        for: 5m
+        labels:
+          severity: warning
+          team: ddi
+        annotations:
+          summary: "API 예측 지연시간 증가"
+          description: >
+            P95 예측 지연시간 {{ $value | printf "%.0f" }}ms (임계값 500ms 초과).
+            서버 리소스 및 모델 로드 상태를 확인하세요.

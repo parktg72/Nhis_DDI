@@ -1,0 +1,384 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"}
+  ],
+  "annotations": {"list": []},
+  "description": "DDI 다재약물 위험도 분류 시스템 — 운영 모니터링 대시보드 (19개 패널)",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "위험등급별 예측 분포 (일간)",
+      "type": "piechart",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum by (risk_level) (increase(ddi_prediction_total[1d]))", "legendFormat": "{{risk_level}}"}
+      ],
+      "options": {"pieType": "donut", "displayLabels": ["percent", "name"]}
+    },
+
+    {
+      "id": 2,
+      "title": "고위험(Red) 환자 비율 추이",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 0},
+      "targets": [
+        {"expr": "ddi_high_risk_rate", "legendFormat": "파티션 {{partition}}"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.10},
+              {"color": "red", "value": 0.20}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 3,
+      "title": "전체 Recall 추이",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {"expr": "ddi_model_recall{subgroup=\"all\"}", "legendFormat": "전체 Recall"},
+        {"expr": "ddi_model_recall{subgroup=\"age_75plus\"}", "legendFormat": "75세+ Recall"},
+        {"expr": "ddi_model_recall{subgroup=\"polypharmacy\"}", "legendFormat": "10종+ Recall"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0.5, "max": 1.0,
+          "thresholds": {
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.87},
+              {"color": "green", "value": 0.90}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 4,
+      "title": "서브그룹별 Precision 추이",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {"expr": "ddi_model_precision{subgroup=\"all\"}", "legendFormat": "전체 Precision"},
+        {"expr": "ddi_model_precision{subgroup=\"male\"}", "legendFormat": "남성 Precision"},
+        {"expr": "ddi_model_precision{subgroup=\"female\"}", "legendFormat": "여성 Precision"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0.0, "max": 1.0}}
+    },
+
+    {
+      "id": 5,
+      "title": "PSI 추이 — 핵심 피처",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {"expr": "ddi_psi_score{feature_name=\"ddi_contraindicated\"}", "legendFormat": "ddi_contraindicated"},
+        {"expr": "ddi_psi_score{feature_name=\"ddi_major\"}", "legendFormat": "ddi_major"},
+        {"expr": "ddi_psi_score{feature_name=\"triple_whammy\"}", "legendFormat": "triple_whammy"},
+        {"expr": "ddi_psi_score{feature_name=\"cyp_risk_score\"}", "legendFormat": "cyp_risk_score"},
+        {"expr": "ddi_psi_score{feature_name=\"drug_count\"}", "legendFormat": "drug_count"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.10},
+              {"color": "red", "value": 0.25}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 6,
+      "title": "피처별 현재 PSI (히트맵)",
+      "type": "bargauge",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {"expr": "topk(10, ddi_psi_score)", "legendFormat": "{{feature_name}}"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.10},
+              {"color": "red", "value": 0.25}
+            ]
+          }
+        }
+      },
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+
+    {
+      "id": 7,
+      "title": "Rule vs ML 불일치율",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "targets": [
+        {
+          "expr": "rate(ddi_rule_ml_disagree_total[1h]) / rate(ddi_prediction_total[1h])",
+          "legendFormat": "불일치율 (1h)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.05},
+              {"color": "red", "value": 0.10}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 8,
+      "title": "Rule-ML 불일치 매트릭스",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "targets": [
+        {
+          "expr": "sum by (rule_level, ml_level) (increase(ddi_rule_ml_disagree_total[1d]))",
+          "legendFormat": "Rule={{rule_level}} ML={{ml_level}}",
+          "instant": true
+        }
+      ]
+    },
+
+    {
+      "id": 9,
+      "title": "API 예측 지연시간 P50/P95/P99",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(ddi_prediction_latency_ms_bucket{source=\"api\"}[5m]))", "legendFormat": "P50"},
+        {"expr": "histogram_quantile(0.95, rate(ddi_prediction_latency_ms_bucket{source=\"api\"}[5m]))", "legendFormat": "P95"},
+        {"expr": "histogram_quantile(0.99, rate(ddi_prediction_latency_ms_bucket{source=\"api\"}[5m]))", "legendFormat": "P99"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 200},
+              {"color": "red", "value": 500}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 10,
+      "title": "배치 처리 크기 분포",
+      "type": "histogram",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "targets": [
+        {"expr": "ddi_batch_size_bucket", "legendFormat": "배치 크기"}
+      ]
+    },
+
+    {
+      "id": 11,
+      "title": "시간대별 예측 처리량 (TPS)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "targets": [
+        {"expr": "rate(ddi_prediction_total{source=\"api\"}[1m])", "legendFormat": "API TPS"},
+        {"expr": "rate(ddi_prediction_total{source=\"batch\"}[5m])", "legendFormat": "Batch TPS (5m avg)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+
+    {
+      "id": 12,
+      "title": "누적 예측 건수 (위험등급별)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 40},
+      "targets": [
+        {"expr": "sum by (risk_level) (ddi_prediction_total)", "legendFormat": "{{risk_level}}"}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "horizontal"}
+    },
+
+    {
+      "id": 13,
+      "title": "현재 Recall (게이지)",
+      "type": "gauge",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 44},
+      "targets": [
+        {"expr": "ddi_model_recall{subgroup=\"all\"}", "legendFormat": "전체 Recall"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0, "max": 1,
+          "thresholds": {
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.87},
+              {"color": "green", "value": 0.90}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 14,
+      "title": "현재 Precision (게이지)",
+      "type": "gauge",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 44},
+      "targets": [
+        {"expr": "ddi_model_precision{subgroup=\"all\"}", "legendFormat": "전체 Precision"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0, "max": 1,
+          "thresholds": {
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.50},
+              {"color": "green", "value": 0.60}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 15,
+      "title": "약사 피드백 수용률 (주간)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 48},
+      "description": "약사가 Red/Yellow 판정을 수용한 비율 (외부 시스템 연동 시 활성화)",
+      "targets": [
+        {"expr": "ddi_pharmacist_acceptance_rate", "legendFormat": "피드백 수용률"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}}
+    },
+
+    {
+      "id": 16,
+      "title": "드리프트 피처 수 (일간)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 48},
+      "targets": [
+        {
+          "expr": "count(ddi_psi_score > 0.25)",
+          "legendFormat": "드리프트 피처 수 (PSI>0.25)"
+        },
+        {
+          "expr": "count(ddi_psi_score >= 0.10 and ddi_psi_score < 0.25)",
+          "legendFormat": "주의 피처 수 (0.10~0.25)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 2}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 17,
+      "title": "배치 파이프라인 성공률",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 56},
+      "targets": [
+        {
+          "expr": "rate(ddi_batch_success_total[24h]) / (rate(ddi_batch_success_total[24h]) + rate(ddi_batch_fail_total[24h]))",
+          "legendFormat": "배치 성공률"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.90},
+              {"color": "green", "value": 0.99}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 18,
+      "title": "최근 알림 현황",
+      "type": "logs",
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 56},
+      "description": "AlertManager에서 발행된 최근 알림 로그 (Loki 연동 시 활성화)"
+    },
+
+    {
+      "id": 19,
+      "title": "모델 버전별 성능 비교",
+      "type": "table",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 60},
+      "description": "MLflow 모델 레지스트리와 연동하여 버전별 Recall/Precision 비교",
+      "targets": [
+        {"expr": "ddi_model_recall", "legendFormat": "{{model_version}} Recall", "instant": true},
+        {"expr": "ddi_model_precision", "legendFormat": "{{model_version}} Precision", "instant": true}
+      ]
+    }
+
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": ["ddi", "mlops", "monitoring"],
+  "templating": {
+    "list": [
+      {
+        "name": "partition",
+        "type": "query",
+        "query": "label_values(ddi_high_risk_rate, partition)",
+        "refresh": 2,
+        "label": "파티션"
+      }
+    ]
+  },
+  "time": {"from": "now-7d", "to": "now"},
+  "timepicker": {},
+  "timezone": "Asia/Seoul",
+  "title": "DDI 다재약물 위험도 분류 — 운영 모니터링",
+  "uid": "ddi-monitoring-v1",
+  "version": 1
+}
