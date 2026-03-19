@@ -1,0 +1,314 @@
+"""
+DDI Batch Prediction DAG
+
+신규 청구 데이터에 대해 배치 위험도 분류를 수행하고 결과를 저장.
+Serving API의 /predict/batch 엔드포인트를 활용하여 대규모 배치 처리.
+
+스케줄: 매주 화~토 새벽 5시 (ETL + 피처 완료 후)
+실행 시간: 약 10~30분 (환자 수에 따라 상이)
+
+환경변수:
+  DDI_FEATURES_DIR    : ML 피처 디렉토리 (기본: /app/data/features)
+  DDI_PREDICTIONS_DIR : 예측 결과 저장 디렉토리 (기본: /app/data/predictions)
+  DDI_SERVING_URL     : Serving API URL (기본: http://localhost:8000)
+  DDI_BATCH_SIZE      : 배치 크기 (기본: 500)
+  DDI_MATRIX_PATH     : DDI 매트릭스 경로 (기본: /app/data/processed/ddi_matrix_final.parquet)
+"""
+from __future__ import annotations
+
+import os
+from datetime import datetime, timedelta
+
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.operators.empty import EmptyOperator
+from airflow.sensors.external_task import ExternalTaskSensor
+from airflow.utils.dates import days_ago
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 기본 설정
+# ─────────────────────────────────────────────────────────────────────────────
+
+DEFAULT_ARGS = {
+    "owner": "ddi-team",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 2,
+    "retry_delay": timedelta(minutes=5),
+}
+
+FEATURES_DIR    = os.environ.get("DDI_FEATURES_DIR", "/app/data/features")
+PREDICTIONS_DIR = os.environ.get("DDI_PREDICTIONS_DIR", "/app/data/predictions")
+SERVING_URL     = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
+BATCH_SIZE      = int(os.environ.get("DDI_BATCH_SIZE", "500"))
+DDI_MATRIX_PATH = os.environ.get("DDI_MATRIX_PATH", "/app/data/processed/ddi_matrix_final.parquet")
+PROC_DIR        = os.environ.get("DDI_PROCESSED_DIR", "/app/data/processed")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 태스크 함수
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_partition(**context) -> str:
+    partition = context["execution_date"].strftime("%Y%m%d")
+    context["ti"].xcom_push(key="partition", value=partition)
+    return partition
+
+
+def _check_serving_health(**context) -> None:
+    """Serving API 헬스체크."""
+    import requests
+    try:
+        resp = requests.get(f"{SERVING_URL}/health", timeout=10)
+        resp.raise_for_status()
+        body = resp.json()
+        if body.get("status") not in ("ok", "degraded"):
+            raise ValueError(f"Serving 상태 비정상: {body}")
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Serving API 연결 실패: {exc}") from exc
+
+
+def _load_patients(**context) -> None:
+    """당일 처방 환자 목록 로드."""
+    import sys
+    sys.path.insert(0, "/app")
+    import os
+    import pandas as pd
+
+    partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
+
+    # ETL 결과에서 환자 목록 로드
+    t30_path = f"{PROC_DIR}/t30_{partition}_std.parquet"
+    t20_path = f"{PROC_DIR}/t20_{partition}_pseudo.parquet"
+
+    if not os.path.exists(t30_path):
+        raise FileNotFoundError(f"T30 데이터 없음: {t30_path}")
+
+    t30 = pd.read_parquet(t30_path)
+    t20 = pd.read_parquet(t20_path)
+    joined = t30.merge(t20[["claim_id", "patient_id", "prescription_date"]], on="claim_id", how="left")
+
+    # 환자별 약물 목록 구성
+    patient_drugs = {}
+    for patient_id, grp in joined.groupby("patient_id"):
+        drugs = []
+        for _, row in grp.iterrows():
+            drug = {
+                "edi_code": str(row.get("edi_code", "")),
+                "total_days": int(row.get("total_days", 30)),
+            }
+            if "atc_code" in row and row["atc_code"]:
+                drug["atc_code"] = str(row["atc_code"])
+            if "drug_name" in row and row["drug_name"]:
+                drug["drug_name"] = str(row["drug_name"])
+            if "start_date" in row and row["start_date"]:
+                drug["start_date"] = str(row["start_date"])[:10]
+            drugs.append(drug)
+        patient_drugs[str(patient_id)] = drugs
+
+    # 스테이징 저장
+    import json
+    staging_path = f"{PROC_DIR}/batch_patients_{partition}.json"
+    with open(staging_path, "w", encoding="utf-8") as f:
+        json.dump(patient_drugs, f, ensure_ascii=False)
+
+    context["ti"].xcom_push(key="staging_path", value=staging_path)
+    context["ti"].xcom_push(key="n_patients", value=len(patient_drugs))
+
+    import logging
+    logging.info("배치 대상 환자: %d명", len(patient_drugs))
+
+
+def _run_batch_predict(**context) -> None:
+    """Serving API /predict/batch로 위험도 분류 수행."""
+    import json
+    import os
+    import requests
+    import pandas as pd
+
+    partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
+    staging_path = context["ti"].xcom_pull(key="staging_path", task_ids="load_patients")
+
+    with open(staging_path, "r", encoding="utf-8") as f:
+        patient_drugs = json.load(f)
+
+    patient_ids = list(patient_drugs.keys())
+    all_results = []
+
+    # BATCH_SIZE 단위로 API 호출
+    for i in range(0, len(patient_ids), BATCH_SIZE):
+        chunk = patient_ids[i : i + BATCH_SIZE]
+        payload = {
+            "requests": [
+                {
+                    "patient_id": pid,
+                    "drugs": patient_drugs[pid],
+                }
+                for pid in chunk
+                if patient_drugs[pid]  # 빈 약물 목록 제외
+            ]
+        }
+        if not payload["requests"]:
+            continue
+
+        resp = requests.post(
+            f"{SERVING_URL}/predict/batch",
+            json=payload,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+        for pred in body.get("predictions", []):
+            all_results.append({
+                "patient_id": pred["patient_id"],
+                "risk_level": pred["risk_level"],
+                "rule_level": pred.get("rule_level"),
+                "ml_level": pred.get("ml_level"),
+                "ml_probability": pred.get("ml_probability"),
+                "drug_count": pred.get("drug_count", 0),
+                "ddi_count": len(pred.get("ddi_alerts", [])),
+                "intervention": pred.get("intervention"),
+                "reference_date": pred.get("reference_date"),
+                "partition": partition,
+            })
+
+    if not all_results:
+        import logging
+        logging.warning("예측 결과 없음")
+        return
+
+    # 결과 저장
+    os.makedirs(PREDICTIONS_DIR, exist_ok=True)
+    out_path = f"{PREDICTIONS_DIR}/predictions_{partition}.parquet"
+    pd.DataFrame(all_results).to_parquet(out_path, index=False)
+
+    context["ti"].xcom_push(key="predictions_path", value=out_path)
+    context["ti"].xcom_push(key="n_predicted", value=len(all_results))
+
+    import logging
+    logging.info("예측 완료: %d명 → %s", len(all_results), out_path)
+
+
+def _generate_summary(**context) -> None:
+    """위험도 분포 통계 요약 리포트 생성."""
+    import os
+    import pandas as pd
+
+    partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
+    predictions_path = context["ti"].xcom_pull(
+        key="predictions_path", task_ids="run_batch_predict"
+    )
+
+    if not predictions_path or not os.path.exists(predictions_path):
+        import logging
+        logging.warning("예측 결과 파일 없음, 요약 생략")
+        return
+
+    df = pd.read_parquet(predictions_path)
+    dist = df["risk_level"].value_counts().to_dict()
+
+    summary = {
+        "partition": partition,
+        "total": len(df),
+        "red_count":    int(dist.get("Red",    0)),
+        "yellow_count": int(dist.get("Yellow", 0)),
+        "green_count":  int(dist.get("Green",  0)),
+        "normal_count": int(dist.get("Normal", 0)),
+        "red_rate":    float(dist.get("Red",    0)) / max(len(df), 1),
+        "yellow_rate": float(dist.get("Yellow", 0)) / max(len(df), 1),
+    }
+
+    import json
+    summary_path = f"{PREDICTIONS_DIR}/summary_{partition}.json"
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+
+    import logging
+    logging.info(
+        "요약 리포트: 총 %d명 — Red=%d(%.1f%%), Yellow=%d(%.1f%%), Green=%d, Normal=%d",
+        summary["total"],
+        summary["red_count"],    summary["red_rate"]    * 100,
+        summary["yellow_count"], summary["yellow_rate"] * 100,
+        summary["green_count"],
+        summary["normal_count"],
+    )
+
+
+def _cleanup_staging(**context) -> None:
+    """스테이징 파일 삭제."""
+    import os
+    staging_path = context["ti"].xcom_pull(
+        key="staging_path", task_ids="load_patients"
+    )
+    if staging_path and os.path.exists(staging_path):
+        os.remove(staging_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DAG 정의
+# ─────────────────────────────────────────────────────────────────────────────
+
+with DAG(
+    dag_id="ddi_batch_predict",
+    description="DDI 배치 위험도 분류 (Serving API /predict/batch)",
+    default_args=DEFAULT_ARGS,
+    schedule_interval="0 5 * * 2-6",  # 화~토 05:00 (ETL+피처 완료 후)
+    start_date=days_ago(1),
+    catchup=False,
+    max_active_runs=1,
+    tags=["ddi", "predict", "batch"],
+) as dag:
+
+    start = EmptyOperator(task_id="start")
+    end   = EmptyOperator(task_id="end")
+
+    # Feature Engineering DAG 완료 대기
+    wait_features = ExternalTaskSensor(
+        task_id="wait_for_features",
+        external_dag_id="ddi_feature_engineering",
+        external_task_id="end",
+        timeout=3600,
+        poke_interval=60,
+        mode="reschedule",
+    )
+
+    t_partition = PythonOperator(
+        task_id="get_partition",
+        python_callable=_get_partition,
+    )
+    t_health = PythonOperator(
+        task_id="check_serving_health",
+        python_callable=_check_serving_health,
+    )
+    t_load = PythonOperator(
+        task_id="load_patients",
+        python_callable=_load_patients,
+    )
+    t_predict = PythonOperator(
+        task_id="run_batch_predict",
+        python_callable=_run_batch_predict,
+        execution_timeout=timedelta(hours=2),
+    )
+    t_summary = PythonOperator(
+        task_id="generate_summary",
+        python_callable=_generate_summary,
+    )
+    t_cleanup = PythonOperator(
+        task_id="cleanup_staging",
+        python_callable=_cleanup_staging,
+        trigger_rule="all_done",  # 성공/실패 무관하게 정리
+    )
+
+    (
+        start
+        >> wait_features
+        >> t_partition
+        >> t_health
+        >> t_load
+        >> t_predict
+        >> t_summary
+        >> t_cleanup
+        >> end
+    )

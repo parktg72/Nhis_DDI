@@ -1,0 +1,56 @@
+# 식약처 DUR OpenAPI 설정
+# 문서: 식약처 openAPI.docx
+# 주의: API_KEY는 .env 파일에 DUR_API_KEY=<key> 형태로 저장 권장
+
+dur_api:
+  base_url: "https://apis.data.go.kr/1471000/DURIrdntInfoService03"
+  # API 키는 환경변수 DUR_API_KEY 로 주입 (보안)
+  # 폴백: 아래 api_key 직접 지정 (개발/테스트 전용)
+  api_key_env: "DUR_API_KEY"
+  default_num_of_rows: 100
+  max_num_of_rows: 100
+  request_timeout: 30       # seconds
+  retry_count: 3
+  retry_delay: 1.0          # seconds between retries
+  rate_limit_delay: 0.2     # seconds between requests
+
+  endpoints:
+    usjnt_taboo:            # 병용금기 (Drug-Drug Interaction Contraindicated)
+      path: "/getUsjntTabooInfoList02"
+      description: "병용금기 정보조회"
+      priority: 1           # 가장 중요 (DDI Contraindicated)
+    efcy_dplct:             # 효능군중복 (Therapeutic Duplication)
+      path: "/getEfcyDplctInfoList02"
+      description: "효능군중복 정보조회"
+      priority: 2
+    odsn_atent:             # 노인주의 (Elderly Precaution)
+      path: "/getOdsnAtentInfoList02"
+      description: "노인주의 정보조회"
+      priority: 3
+    spcify_agrde_taboo:     # 특정연령대금기 (Age-specific Contraindication)
+      path: "/getSpcifyAgrdeTabooInfoList02"
+      description: "특정연령대금기 정보조회"
+      priority: 4
+    pwnm_taboo:             # 임부금기 (Pregnancy Contraindication)
+      path: "/getPwnmTabooInfoList02"
+      description: "임부금기 정보조회"
+      priority: 5
+    cpcty_atent:            # 용량주의 (Dose Precaution)
+      path: "/getCpctyAtentInfoList02"
+      description: "용량주의 정보조회"
+      priority: 6
+    mdctn_pd_atent:         # 투여기간주의 (Duration Precaution)
+      path: "/getMdctnPdAtentInfoList02"
+      description: "투여기간주의 정보조회"
+      priority: 7
+
+# 출력 경로 (폐쇄망 반입 전 데이터 수집 단계에서 사용)
+output:
+  base_dir: "data/dur"
+  usjnt_taboo: "data/dur/dur_ddi_contraindicated.parquet"
+  efcy_dplct: "data/dur/dur_therapeutic_duplicate.parquet"
+  odsn_atent: "data/dur/dur_elderly_precaution.parquet"
+  spcify_agrde_taboo: "data/dur/dur_age_contraindicated.parquet"
+  pwnm_taboo: "data/dur/dur_pregnancy_contraindicated.parquet"
+  cpcty_atent: "data/dur/dur_dose_precaution.parquet"
+  mdctn_pd_atent: "data/dur/dur_duration_precaution.parquet"

@@ -1,0 +1,34 @@
+# macOS 메타데이터
+._*
+.DS_Store
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# 대용량 패키지 (오프라인 설치용 wheel)
+packages_linux/
+packages_mac/
+packages_win/
+
+# 원천 데이터 및 모델 (용량/보안)
+data/
+drugbank/
+
+# 훈련된 모델 파일
+models/
+mlruns/
+
+# 환경변수
+.env
+*.env
+
+# Claude Code 로컬 설정
+.claude/
+
+# IDE
+.idea/
+.vscode/

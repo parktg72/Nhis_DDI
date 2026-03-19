@@ -1,0 +1,397 @@
+# DDI Rule-based Safety Net 규칙 정의
+# 기준: CLINICAL_STANDARDS_v1.0.md, PROJECT_PLAN.md
+# Top 10 DDI: 100% 탐지율 목표
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 약물 그룹 정의
+# name_keywords: 약물명에서 대소문자 무관 매칭
+# atc_prefixes: ATC 코드 prefix 매칭 (3~5자리)
+# ─────────────────────────────────────────────────────────────────────────────
+drug_groups:
+  # 항응고제
+  warfarin:
+    name_keywords: [warfarin, coumadin, jantoven]
+    atc_prefixes: [B01AA03]
+
+  doac:
+    name_keywords: [rivaroxaban, apixaban, dabigatran, edoxaban, betrixaban]
+    atc_prefixes: [B01AF01, B01AF02, B01AE07, B01AF03, B01AF04]
+
+  anticoagulants_all:
+    name_keywords: [warfarin, coumadin, rivaroxaban, apixaban, dabigatran, edoxaban, betrixaban, acenocoumarol, phenprocoumon, heparin, enoxaparin, fondaparinux]
+    atc_prefixes: [B01AA, B01AB, B01AE, B01AF]
+
+  # NSAIDs
+  nsaids:
+    name_keywords: [ibuprofen, naproxen, diclofenac, celecoxib, ketoprofen, indomethacin, meloxicam, piroxicam, ketorolac, aspirin, acetylsalicylic]
+    atc_prefixes: [M01AA, M01AB, M01AC, M01AE, M01AG, M01AH, N02BA01]
+
+  # 항혈소판제
+  clopidogrel:
+    name_keywords: [clopidogrel, plavix]
+    atc_prefixes: [B01AC04]
+
+  antiplatelet_p2y12:
+    name_keywords: [clopidogrel, prasugrel, ticagrelor, ticlopidine]
+    atc_prefixes: [B01AC04, B01AC22, B01AC24, B01AC05]
+
+  # PPI (CYP2C19 억제)
+  ppi_cyp2c19:
+    name_keywords: [omeprazole, esomeprazole, lansoprazole, pantoprazole, rabeprazole]
+    atc_prefixes: [A02BC01, A02BC05, A02BC03, A02BC02, A02BC04]
+
+  # ACE억제제
+  acei:
+    name_keywords: [enalapril, lisinopril, ramipril, captopril, perindopril, quinapril, fosinopril, benazepril, trandolapril, moexipril]
+    atc_prefixes: [C09AA]
+
+  # ARB
+  arb:
+    name_keywords: [losartan, valsartan, irbesartan, candesartan, olmesartan, telmisartan, azilsartan, fimasartan]
+    atc_prefixes: [C09CA]
+
+  # 칼륨보존이뇨제
+  k_sparing_diuretics:
+    name_keywords: [spironolactone, eplerenone, amiloride, triamterene, finerenone]
+    atc_prefixes: [C03DA01, C03DA04, C03DB01, C03DB02, C03DA02]
+
+  # 디곡신
+  digoxin:
+    name_keywords: [digoxin, digitoxin, lanoxin]
+    atc_prefixes: [C01AA05, C01AA04]
+
+  # 아미오다론/베라파밀
+  amiodarone:
+    name_keywords: [amiodarone, cordarone]
+    atc_prefixes: [C01BD01]
+
+  verapamil:
+    name_keywords: [verapamil, calan, isoptin]
+    atc_prefixes: [C08DA01]
+
+  # 메토트렉세이트
+  methotrexate:
+    name_keywords: [methotrexate, mtx]
+    atc_prefixes: [L01BA01, L04AX03]
+
+  # 트리메토프림/설파메톡사졸
+  trimethoprim_smx:
+    name_keywords: [trimethoprim, sulfamethoxazole, co-trimoxazole, bactrim, septra, cotrimoxazole]
+    atc_prefixes: [J01EA01, J01EC01, J01EE01]
+
+  # SSRI
+  ssri:
+    name_keywords: [fluoxetine, sertraline, paroxetine, fluvoxamine, citalopram, escitalopram, vilazodone, vortioxetine]
+    atc_prefixes: [N06AB04, N06AB06, N06AB05, N06AB08, N06AB10, N06AB09]
+
+  # MAO억제제
+  maoi:
+    name_keywords: [phenelzine, tranylcypromine, isocarboxazid, selegiline, rasagiline, safinamide, moclobemide, linezolid, methylene blue]
+    atc_prefixes: [N06AF01, N06AF02, N06AF03, N06AG02, N02AX, J01XX08]
+
+  # Triptan
+  triptan:
+    name_keywords: [sumatriptan, rizatriptan, zolmitriptan, naratriptan, frovatriptan, almotriptan, eletriptan]
+    atc_prefixes: [N02CC01, N02CC02, N02CC03, N02CC04, N02CC05, N02CC06, N02CC07]
+
+  # 리튬
+  lithium:
+    name_keywords: [lithium, lithobid, eskalith]
+    atc_prefixes: [N05AN01]
+
+  # 이뇨제 (리튬 독성 위험)
+  loop_thiazide_diuretics:
+    name_keywords: [furosemide, torsemide, bumetanide, hydrochlorothiazide, chlorthalidone, indapamide, metolazone]
+    atc_prefixes: [C03CA01, C03CA04, C03CB01, C03AA03, C03BA11, C03BA51, C03BA08]
+
+  # QT 연장 약물
+  qt_prolonging:
+    name_keywords: [amiodarone, sotalol, quinidine, disopyramide, haloperidol, chlorpromazine, thioridazine, quetiapine, ziprasidone, ondansetron, azithromycin, clarithromycin, erythromycin, ciprofloxacin, moxifloxacin, levofloxacin, methadone, domperidone, hydroxychloroquine, chloroquine]
+    atc_prefixes: [C01BD, C01BA, N05A, N05AH, A04AA, J01FA, J01MA, N07BC02]
+
+  # 스타틴
+  statin:
+    name_keywords: [atorvastatin, simvastatin, rosuvastatin, pravastatin, lovastatin, fluvastatin, pitavastatin, cerivastatin]
+    atc_prefixes: [C10AA01, C10AA02, C10AA07, C10AA03, C10AA02, C10AA04]
+
+  # 마크로라이드 (CYP3A4 강억제)
+  macrolide_strong:
+    name_keywords: [clarithromycin, erythromycin, telithromycin]
+    atc_prefixes: [J01FA09, J01FA01, J01FA15]
+
+  # 고위험 약물 (마스터 목록)
+  high_risk_drugs:
+    name_keywords: [warfarin, methotrexate, lithium, digoxin, amiodarone, phenytoin, cyclosporine, tacrolimus, sirolimus, theophylline, insulin, clozapine, carbamazepine, valproate, phenobarbital]
+    atc_prefixes: [B01AA03, L01BA01, N05AN01, C01AA05, C01BD01, N03AB02, L04AD01, L04AD02, L04AA18, R03DA04]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Top 10 DDI 규칙 (100% 탐지 필수)
+# ─────────────────────────────────────────────────────────────────────────────
+top10_ddi_rules:
+
+  - id: "TOP01"
+    name: "Anticoagulant_NSAIDs"
+    description: "와파린/DOAC + NSAIDs → 출혈 위험 급증"
+    drug_group_a: "anticoagulants_all"
+    drug_group_b: "nsaids"
+    severity: "Major"
+    mechanism: "항응고 효과 증강 + 위장관 출혈 위험 증가 (혈소판 기능 억제)"
+    clinical_risk: "위장관출혈, 뇌출혈 (K92, D68, I60-I62)"
+    risk_grade_contribution: "Red"   # Major DDI 3건 이상이면 Red; 단독이면 Yellow
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP01"]
+
+  - id: "TOP02"
+    name: "Clopidogrel_PPI_CYP2C19"
+    description: "클로피도그렐 + 오메프라졸/에소메프라졸 → 항혈소판 효과 감소"
+    drug_group_a: "clopidogrel"
+    drug_group_b: "ppi_cyp2c19"
+    severity: "Moderate"
+    mechanism: "CYP2C19 억제 → 클로피도그렐 활성대사체 생성 감소"
+    clinical_risk: "혈전증, 심근경색 재발"
+    risk_grade_contribution: "Yellow"
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP02"]
+
+  - id: "TOP03"
+    name: "Triple_Whammy"
+    description: "ACEi/ARB + K보존이뇨제 + NSAIDs → Triple Whammy (급성신부전)"
+    drug_group_a: ["acei", "arb"]
+    drug_group_b: "k_sparing_diuretics"
+    drug_group_c: "nsaids"
+    requires_triple: true
+    severity: "Major"
+    mechanism: "신장 혈류 3중 감소 (신혈관수축 억제 + 혈류 감소 + 직접 신독성)"
+    clinical_risk: "급성신부전 (N17, E87)"
+    risk_grade_contribution: "Red"
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP03"]
+
+  - id: "TOP04"
+    name: "Digoxin_Amiodarone_Verapamil"
+    description: "디곡신 + 아미오다론/베라파밀 → 디곡신 독성"
+    drug_group_a: "digoxin"
+    drug_group_b: ["amiodarone", "verapamil"]
+    severity: "Major"
+    mechanism: "P-glycoprotein 억제 + 신장 배설 감소 → 디곡신 혈중농도 상승"
+    clinical_risk: "디곡신 독성 (I49 부정맥, R11 구역/구토)"
+    risk_grade_contribution: "Red"
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP04"]
+
+  - id: "TOP05"
+    name: "Methotrexate_Trimethoprim"
+    description: "메토트렉세이트 + 트리메토프림/SMX → 골수억제"
+    drug_group_a: "methotrexate"
+    drug_group_b: "trimethoprim_smx"
+    severity: "Contraindicated"
+    mechanism: "엽산길항제 효과 상가 → 골수억제, 거대적혈모세포빈혈"
+    clinical_risk: "골수억제, 범혈구감소증"
+    risk_grade_contribution: "Red"
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP05"]
+
+  - id: "TOP06"
+    name: "SSRI_MAOi_SerotoninSyndrome"
+    description: "SSRI + MAO억제제 → 세로토닌 증후군"
+    drug_group_a: "ssri"
+    drug_group_b: "maoi"
+    severity: "Contraindicated"
+    mechanism: "세로토닌 재흡수 억제 + 세로토닌 분해 억제 → 세로토닌 과잉"
+    clinical_risk: "세로토닌 증후군 (G25, R56) - 치명적"
+    risk_grade_contribution: "Red"
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP06"]
+
+  - id: "TOP07"
+    name: "SSRI_Triptan_SerotoninSyndrome"
+    description: "SSRI + Triptan → 세로토닌 증후군"
+    drug_group_a: "ssri"
+    drug_group_b: "triptan"
+    severity: "Major"
+    mechanism: "세로토닌 증가 + 세로토닌 1B/1D 수용체 자극"
+    clinical_risk: "세로토닌 증후군 (G25, R56)"
+    risk_grade_contribution: "Yellow"   # Major DDI 단독 → Yellow; 추가 Major DDI 동반 시 Red
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP07"]
+
+  - id: "TOP08"
+    name: "Lithium_NSAIDs_Diuretics"
+    description: "리튬 + NSAIDs/이뇨제 → 리튬 독성"
+    drug_group_a: "lithium"
+    drug_group_b: ["nsaids", "loop_thiazide_diuretics"]
+    severity: "Major"
+    mechanism: "신장 리튬 배설 감소 → 리튬 혈중농도 상승"
+    clinical_risk: "리튬 독성 (신독성, 신경독성)"
+    risk_grade_contribution: "Yellow"
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP08"]
+
+  - id: "TOP09"
+    name: "QT_Prolongation_Multiple"
+    description: "QT 연장 약물 3종 이상 병용 → 치명적 부정맥"
+    drug_group_a: "qt_prolonging"
+    requires_count: 3         # 3종 이상일 때 발동
+    severity: "Major"
+    mechanism: "QT 간격 상가 연장 → Torsades de Pointes"
+    clinical_risk: "치명적 부정맥 (I49)"
+    risk_grade_contribution: "Red"
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP09"]
+
+  - id: "TOP10"
+    name: "Statin_Macrolide_Rhabdomyolysis"
+    description: "스타틴 + 마크로라이드(클래리스로마이신) → 횡문근융해"
+    drug_group_a: "statin"
+    drug_group_b: "macrolide_strong"
+    severity: "Major"
+    mechanism: "CYP3A4 강력 억제 → 스타틴 혈중농도 급증 → 근독성"
+    clinical_risk: "횡문근융해 (M62.82), 급성신부전"
+    risk_grade_contribution: "Yellow"
+    references: ["CLINICAL_STANDARDS_v1.0.md#TOP10"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 위험도 등급 산출 로직
+# ─────────────────────────────────────────────────────────────────────────────
+risk_grade_rules:
+  red:
+    conditions:
+      - "ddi_contraindicated_count >= 1"
+      - "ddi_major_count >= 3"
+      - "triple_whammy_flag == True"
+      - "concurrent_drugs_90d >= 10 AND has_high_risk_drug"
+      - "age_group >= 75 AND concurrent_drugs_90d >= 5 AND has_renal_hepatic_risk_drug"
+    intervention: "즉각 개입 (약사 직접 연락, 처방 재검토)"
+
+  yellow:
+    conditions:
+      - "ddi_major_count >= 1"
+      - "ddi_moderate_count >= 2"
+      - "duplicate_level1_count >= 1"
+      - "prescribing_institutions >= 3"
+    intervention: "월 1회 정기 모니터링"
+
+  green:
+    conditions:
+      - "ddi_minor_count >= 1 AND ddi_major_count == 0 AND ddi_contraindicated_count == 0"
+      - "concurrent_drugs_90d >= 5 AND ddi_total == 0"
+    intervention: "분기 1회 자동 안내"
+
+  normal:
+    conditions:
+      - "concurrent_drugs_90d < 5 AND ddi_total == 0"
+    intervention: "대상 외"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 중복약물 예외 허용 규칙 (E1~E9)
+# ─────────────────────────────────────────────────────────────────────────────
+duplicate_exceptions:
+  E1:
+    name: "항고혈압제 다제병용"
+    atc_prefixes: [C02, C03, C07, C08, C09]
+    rule: "ATC 3단계 중복이어도 서로 다른 기전이면 허용"
+    clinical_basis: "고혈압 가이드라인 권장 병용 (기전 다른 2~3종)"
+
+  E2:
+    name: "당뇨병 다제병용"
+    atc_prefixes: [A10]
+    rule: "ATC 3단계 중복이어도 단계적 병용 허용"
+    clinical_basis: "당뇨병 단계적 병용요법 표준"
+
+  E3:
+    name: "흡입제 병용 (천식/COPD)"
+    atc_prefixes: [R03]
+    rule: "ICS + LABA + LAMA 3종 병용 허용"
+    clinical_basis: "GOLD/GINA 가이드라인 표준 요법"
+
+  E4:
+    name: "진통제 단계적 병용"
+    atc_prefixes: [N02, M01]
+    rule: "WHO 진통제 사다리 단계별 병용 허용"
+    clinical_basis: "WHO 암성 통증 관리 3단계 사다리"
+
+  E5:
+    name: "DAPT (이중항혈소판)"
+    atc_prefixes: [B01AC]
+    rule: "아스피린 + P2Y12 억제제 병용 허용"
+    clinical_basis: "관상동맥 시술 후 표준 (AHA/ACC 가이드라인)"
+
+  E6:
+    name: "심부전 다제병용"
+    atc_prefixes: [C01, C03, C07, C09]
+    rule: "ACEi/ARB + 베타차단제 + 이뇨제 병용 허용"
+    clinical_basis: "심부전 표준 3제 요법"
+
+  E7:
+    name: "정신과 병용 (전문의 처방 확인 필요)"
+    atc_prefixes: [N05, N06]
+    rule: "정신과 전문의 처방 확인 후 허용 (플래그만 발생)"
+    clinical_basis: "정신과 다제 요법 (복합 우울증, 조현병)"
+    requires_specialist: true
+
+  E8:
+    name: "통증/류마티스 병용"
+    atc_prefixes: [M01, M04]
+    rule: "통증/류마티스 전문 병용 허용"
+    clinical_basis: "류마티스 관절염 병용요법"
+
+  E9:
+    name: "항암제 지지요법"
+    atc_prefixes: [L01, L02, L03, L04]
+    rule: "항암/면역억제 프로토콜 병용 허용 (플래그만)"
+    requires_specialist: true
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CYP450 효소 기반 DDI 위험 피처
+# ─────────────────────────────────────────────────────────────────────────────
+cyp450_enzymes:
+  - name: "CYP3A4"
+    importance: "high"     # 전체 약물의 ~50% 대사
+  - name: "CYP2D6"
+    importance: "high"
+  - name: "CYP2C9"
+    importance: "medium"
+  - name: "CYP2C19"
+    importance: "medium"
+  - name: "CYP1A2"
+    importance: "medium"
+
+cyp_interaction_risk_threshold:
+  strong_inhibitor_substrate: "Major"    # 강억제제 + 기질 → Major
+  moderate_inhibitor_substrate: "Moderate"
+  inducer_substrate: "Moderate"          # 유도제 + 기질 → 효능 감소
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADR 프록시 지표 (후향적 레이블용 ICD-10 코드)
+# ─────────────────────────────────────────────────────────────────────────────
+adr_proxy_icd10:
+  bleeding:
+    description: "출혈 관련 유해반응"
+    icd10: [K92, D68, I60, I61, I62]
+    related_ddi: ["TOP01"]
+
+  acute_kidney_injury:
+    description: "급성신부전"
+    icd10: [N17, E87]
+    related_ddi: ["TOP03"]
+
+  digoxin_toxicity:
+    description: "디곡신 독성"
+    icd10: [I49, R11]
+    related_ddi: ["TOP04"]
+
+  serotonin_syndrome:
+    description: "세로토닌 증후군 (비특이적)"
+    icd10: [G25, R56]
+    related_ddi: ["TOP06", "TOP07"]
+
+  hypoglycemia:
+    description: "저혈당"
+    icd10: [E16, R55]
+    related_ddi: []
+
+  rhabdomyolysis:
+    description: "횡문근융해"
+    icd10: [M6282]
+    related_ddi: ["TOP10"]
+
+  arrhythmia:
+    description: "부정맥"
+    icd10: [I49]
+    related_ddi: ["TOP09"]
