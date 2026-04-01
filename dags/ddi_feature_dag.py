@@ -92,15 +92,15 @@ def _extract_temporal_features(**context) -> None:
     t20_df = pd.read_parquet(f"{PROC_DIR}/t20_{partition}_pseudo.parquet")
 
     joined = prescriptions_df.merge(
-        t20_df[["claim_id", "patient_id", "prescription_date"]],
-        on="claim_id", how="left",
+        t20_df[["CMN_KEY", "INDI_DSCM_NO", "MDCARE_STRT_DT"]],
+        on="CMN_KEY", how="left",
     )
 
     temporal_rows = []
-    for patient_id, grp in joined.groupby("patient_id"):
+    for patient_id, grp in joined.groupby("INDI_DSCM_NO"):
         if grp.empty:
             continue
-        dates = pd.to_datetime(grp["prescription_date"])
+        dates = pd.to_datetime(grp["MDCARE_STRT_DT"])
         window_end = dates.max()
         window_start = window_end - pd.Timedelta(days=90)
         feat = extract_temporal(grp, window_start, window_end)

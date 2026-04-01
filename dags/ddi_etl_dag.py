@@ -85,7 +85,7 @@ def _pseudonymize(**context) -> None:
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
     for table in ("t20", "t30", "t40"):
         df = pd.read_parquet(f"{RAW_DIR}/{table}_{partition}.parquet")
-        df = pseudonymize_dataframe(df, id_cols=["patient_id"])
+        df = pseudonymize_dataframe(df, id_cols=["INDI_DSCM_NO"])
         df.to_parquet(f"{PROC_DIR}/{table}_{partition}_pseudo.parquet", index=False)
 
 
@@ -120,9 +120,17 @@ def _quality_check(**context) -> None:
     t20 = pd.read_parquet(f"{PROC_DIR}/t20_{partition}_pseudo.parquet")
     t30 = pd.read_parquet(f"{PROC_DIR}/t30_{partition}_std.parquet")
 
-    report = check_all(t20, t30)
-    if report.critical_issues:
-        raise ValueError(f"품질 검사 치명적 오류: {report.critical_issues}")
+    reports = check_all(t20, t30)
+    failed = {name: r for name, r in reports.items() if not r.passed}
+    if failed:
+        msgs = "; ".join(
+            f"{name}: dup_rate={r.duplicate_rate:.3f}, "
+            f"date_anomalies={r.date_anomalies}, "
+            f"unknown_rate={r.wk_compn_unknown_rate:.3f}, "
+            f"warnings={r.warnings}"
+            for name, r in failed.items()
+        )
+        raise ValueError(f"품질 검사 실패: {msgs}")
 
 
 def _calculate_overlaps(**context) -> None:
@@ -136,10 +144,10 @@ def _calculate_overlaps(**context) -> None:
     t30 = pd.read_parquet(f"{PROC_DIR}/t30_{partition}_std.parquet")
     t20 = pd.read_parquet(f"{PROC_DIR}/t20_{partition}_pseudo.parquet")
 
-    # T20-T30 조인
+    # T20-T30 조인 (NHIS 실제 컬럼명 사용)
     joined = t30.merge(
-        t20[["claim_id", "patient_id", "prescription_date"]],
-        on="claim_id", how="left",
+        t20[["CMN_KEY", "INDI_DSCM_NO", "MDCARE_STRT_DT"]],
+        on="CMN_KEY", how="left",
     )
     pairs_df = calculate_overlaps_batch(joined)
     pairs_df.to_parquet(f"{PROC_DIR}/overlap_pairs_{partition}.parquet", index=False)
@@ -158,8 +166,8 @@ def _aggregate_features(**context) -> None:
     pairs = pd.read_parquet(f"{PROC_DIR}/overlap_pairs_{partition}.parquet")
 
     joined = t30.merge(
-        t20[["claim_id", "patient_id", "prescription_date"]],
-        on="claim_id", how="left",
+        t20[["CMN_KEY", "INDI_DSCM_NO", "MDCARE_STRT_DT"]],
+        on="CMN_KEY", how="left",
     )
     features = aggregate_batch(joined, pairs)
     context["ti"].xcom_push(key="n_patients", value=len(features))
@@ -180,8 +188,8 @@ def _write_features(**context) -> None:
 
     from scripts.etl.prescription_aggregator import aggregate_batch
     joined = t30.merge(
-        t20[["claim_id", "patient_id", "prescription_date"]],
-        on="claim_id", how="left",
+        t20[["CMN_KEY", "INDI_DSCM_NO", "MDCARE_STRT_DT"]],
+        on="CMN_KEY", how="left",
     )
     features = aggregate_batch(joined, pairs)
 

@@ -87,23 +87,25 @@ def _load_patients(**context) -> None:
 
     t30 = pd.read_parquet(t30_path)
     t20 = pd.read_parquet(t20_path)
-    joined = t30.merge(t20[["claim_id", "patient_id", "prescription_date"]], on="claim_id", how="left")
+    joined = t30.merge(t20[["CMN_KEY", "INDI_DSCM_NO", "MDCARE_STRT_DT"]], on="CMN_KEY", how="left")
 
     # 환자별 약물 목록 구성
     patient_drugs = {}
-    for patient_id, grp in joined.groupby("patient_id"):
+    for patient_id, grp in joined.groupby("INDI_DSCM_NO"):
         drugs = []
         for _, row in grp.iterrows():
             drug = {
-                "edi_code": str(row.get("edi_code", "")),
-                "total_days": int(row.get("total_days", 30)),
+                "edi_code": str(row.get("MCARE_DIV_CD", "") or ""),
+                "total_days": int(row.get("TOT_MCNT", 30) or 30),
             }
             if "atc_code" in row and row["atc_code"]:
                 drug["atc_code"] = str(row["atc_code"])
-            if "drug_name" in row and row["drug_name"]:
+            if "MCARE_DIV_CD_NM" in row and row["MCARE_DIV_CD_NM"]:
+                drug["drug_name"] = str(row["MCARE_DIV_CD_NM"])
+            elif "drug_name" in row and row["drug_name"]:
                 drug["drug_name"] = str(row["drug_name"])
-            if "start_date" in row and row["start_date"]:
-                drug["start_date"] = str(row["start_date"])[:10]
+            if "MDCARE_STRT_DT" in row and row["MDCARE_STRT_DT"]:
+                drug["start_date"] = str(row["MDCARE_STRT_DT"])[:10]
             drugs.append(drug)
         patient_drugs[str(patient_id)] = drugs
 
@@ -160,7 +162,7 @@ def _run_batch_predict(**context) -> None:
         resp.raise_for_status()
         body = resp.json()
 
-        for pred in body.get("predictions", []):
+        for pred in body.get("results", []):
             all_results.append({
                 "patient_id": pred["patient_id"],
                 "risk_level": pred["risk_level"],
