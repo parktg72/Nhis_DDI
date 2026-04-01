@@ -277,6 +277,45 @@ class HANAConnector:
             cursor.close()
             return -1
 
+    def _get_order_key(self, schema_name, table_name):
+        """LIMIT/OFFSET 페이징을 위한 정렬 키 결정.
+
+        1순위: PRIMARY KEY 컬럼
+        2순위: 테이블 첫 번째 컬럼 (최소한 세션 내 결정적 순서 보장)
+        """
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT COLUMN_NAME FROM SYS.CONSTRAINTS
+                WHERE SCHEMA_NAME = ? AND TABLE_NAME = ? AND IS_PRIMARY_KEY = 'TRUE'
+                ORDER BY POSITION
+            """, (schema_name, table_name))
+            pk_cols = [row[0] for row in cursor.fetchall()]
+            if pk_cols:
+                return ', '.join(f'"{c}"' for c in pk_cols)
+        except Exception:
+            pass
+        finally:
+            cursor.close()
+
+        # PK가 없으면 첫 번째 컬럼 사용
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS
+                WHERE SCHEMA_NAME = ? AND TABLE_NAME = ?
+                ORDER BY POSITION LIMIT 1
+            """, (schema_name, table_name))
+            row = cursor.fetchone()
+            if row:
+                return f'"{row[0]}"'
+        except Exception:
+            pass
+        finally:
+            cursor.close()
+
+        return '1'  # 최종 fallback
+
     # -------------------------------------------------------
     # 데이터 적재
     # -------------------------------------------------------
@@ -298,32 +337,63 @@ class HANAConnector:
 
     def fetch_table_chunked(self, table_name, schema_name, columns=None,
                             where_clause=None, chunk_size=None):
+        """서버 측 LIMIT/OFFSET 페이징으로 대용량 테이블 분할 조회.
+
+        HANA의 search result size limit 초과를 방지하기 위해
+        한 번의 대형 SELECT 대신 LIMIT/OFFSET으로 분할 실행한다.
+        """
         if chunk_size is None:
             chunk_size = chunk_controller.get_chunk('hana')
         if not self.conn:
             self.connect()
         col_str = ', '.join(f'"{c}"' for c in columns) if columns else '*'
         from_clause = f'"{schema_name}"."{table_name}"' if schema_name else f'"{table_name}"'
-        query = f'SELECT {col_str} FROM {from_clause}'
+
+        where_part = ''
         if where_clause:
             self._validate_where_clause(where_clause)
-            query += f' WHERE {where_clause}'
+            where_part = f' WHERE {where_clause}'
 
+        # 컬럼 이름을 먼저 가져오기 (0건만 조회)
+        meta_query = f'SELECT {col_str} FROM {from_clause}{where_part} LIMIT 0'
         cursor = self.conn.cursor()
-        cursor.execute(query)
+        cursor.execute(meta_query)
         col_names = [desc[0] for desc in cursor.description]
+        cursor.close()
+
+        # 결정적 페이징을 위한 정렬 키 (PK → 첫 컬럼 fallback)
+        order_key = self._get_order_key(schema_name, table_name)
+
+        # 서버 측 LIMIT/OFFSET 페이징
         total_rows = 0
+        offset = 0
 
         while True:
-            rows = cursor.fetchmany(chunk_size)
+            paged_query = (
+                f'SELECT {col_str} FROM {from_clause}{where_part}'
+                f' ORDER BY {order_key} LIMIT {chunk_size} OFFSET {offset}'
+            )
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(paged_query)
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+
             if not rows:
                 break
+
             chunk_df = pd.DataFrame(rows, columns=col_names)
-            total_rows += len(chunk_df)
+            fetched = len(chunk_df)
+            total_rows += fetched
+            offset += fetched
             yield chunk_df
 
-        cursor.close()
-        logger.info(f"HANA {schema_name}.{table_name}: {total_rows:,}건 로드")
+            # 마지막 페이지면 종료
+            if fetched < chunk_size:
+                break
+
+        logger.info(f"HANA {schema_name}.{table_name}: {total_rows:,}건 로드 (LIMIT/OFFSET 페이징)")
 
     def load_table_to_duckdb(self, hana_table, hana_schema, duckdb_storage,
                               duckdb_table, columns=None, where_clause=None,

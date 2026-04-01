@@ -343,12 +343,15 @@ class CohortBuilder:
 
         # age65_date: 생년만 알고 생년월일이 없으므로 BYEAR+65의 1월 1일로 근사
         # (실제 생일이 1월 이후인 환자는 최대 ~1년 조기 censoring 가능 — 행정DB 한계)
+        # HHDT_DEATH: JK 테이블의 사망추정일자 — 실제 사망일로 censoring 및 사망 분석에 활용
         self.dm.execute(f"""
             CREATE OR REPLACE TABLE analysis_data AS
             WITH last_eligible AS (
                 -- JK SURV_YR: 해당 연도까지 생존/자격 유지. 마지막 자격연도 말일을 censoring 기준으로 사용.
+                -- HHDT_DEATH: 사망추정일자 (YYYYMMDD). 사망자만 값이 있음.
                 SELECT INDI_DSCM_NO,
-                       MAX(CAST(SURV_YR AS VARCHAR)) || '1231' AS withdrawal_date
+                       MAX(CAST(SURV_YR AS VARCHAR)) || '1231' AS withdrawal_date,
+                       MAX(HHDT_DEATH) AS death_date
                 FROM JK
                 WHERE CAST(STD_YYYY AS INTEGER) <= {ey}
                 GROUP BY INDI_DSCM_NO
@@ -360,11 +363,12 @@ class CohortBuilder:
                        oa.event_date AS dementia_date,
                        ad.event_date AS ad_date,
                        vd.event_date AS vad_date,
+                       le.death_date,
                        LEAST(
                            COALESCE(oa.event_date, '{ey}1231'),
                            CAST((CAST(sc.BYEAR AS INT) + {yod}) || '0101' AS VARCHAR),
                            '{ey}1231',
-                           COALESCE(le.withdrawal_date, '{ey}1231')
+                           COALESCE(le.death_date, le.withdrawal_date, '{ey}1231')
                        ) AS censor_date
                 FROM study_cohort sc
                 LEFT JOIN outcome_all_cause oa ON sc.INDI_DSCM_NO=oa.INDI_DSCM_NO
@@ -380,7 +384,12 @@ class CohortBuilder:
                              AND ad_date <= censor_date THEN 1 ELSE 0 END AS ad_event,
                    CASE WHEN vad_date IS NOT NULL
                              AND vad_date <= censor_date THEN 1 ELSE 0 END AS vad_event,
-                   -- 경쟁위험: 치매 미발생 + 연구종료일·65세 도달 전 censor → 사망/탈퇴
+                   -- 사망 이벤트: HHDT_DEATH 기반 실제 사망 여부 (모든 사망 분석에 활용)
+                   CASE WHEN death_date IS NOT NULL
+                             AND death_date <= censor_date
+                             AND death_date > index_date
+                        THEN 1 ELSE 0 END AS death_event,
+                   -- 경쟁위험: 치매 미발생 상태에서 사망 또는 탈퇴
                    CASE WHEN (dementia_date IS NULL OR dementia_date > censor_date)
                              AND censor_date < '{ey}1231'
                              AND censor_date < age65_date
@@ -408,7 +417,7 @@ class CohortBuilder:
 
         events = self.dm.query("""
             SELECT exposure_group, COUNT(*) n, SUM(dementia_event) dem, SUM(ad_event) ad, SUM(vad_event) vad,
-                   SUM(competing_death_event) death
+                   SUM(death_event) death_actual, SUM(competing_death_event) death_competing
             FROM analysis_data GROUP BY exposure_group
         """)
         logger.info(f"Step 6:\n{events.to_string()}")
