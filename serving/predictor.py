@@ -18,8 +18,10 @@ ML 모델:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import pickle
+import threading
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -40,19 +42,49 @@ logger = logging.getLogger(__name__)
 # 규칙 기반 Safety Net 브릿지
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _drugs_to_rule_input(drugs: list[DrugItem]) -> list[dict]:
-    """DrugItem 목록 → Safety Net 입력 형식."""
+def _drugs_to_dup_input(drugs: list[DrugItem]) -> list[dict]:
+    """DrugItem 목록 → DuplicateDetector 입력 형식."""
     return [
         {
-            "name":     d.drug_name or d.edi_code,
-            "atc":      d.atc_code or "",
-            "edi_code": d.edi_code,
+            "name": d.drug_name or d.edi_code,
+            "atc":  d.atc_code or "",
+            "edi":  d.edi_code,
         }
         for d in drugs
     ]
 
 
-def _run_safety_net(drugs: list[DrugItem]) -> tuple[RiskLevel, list[str], list[DDIAlert]]:
+def _detect_risk_flags(drugs: list[DrugItem]) -> tuple[bool, bool]:
+    """약물 목록에서 신기능/간기능 저하 위험 플래그 계산."""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from scripts.etl.prescription_aggregator import (
+            _RENAL_RISK_KEYWORDS, _RENAL_RISK_ATC_PREFIXES,
+            _HEPATIC_RISK_KEYWORDS, _HEPATIC_RISK_ATC_PREFIXES,
+        )
+        renal_prefixes = tuple(_RENAL_RISK_ATC_PREFIXES)
+        hepatic_prefixes = tuple(_HEPATIC_RISK_ATC_PREFIXES)
+
+        has_renal = any(
+            any(kw in (d.drug_name or "").lower() for kw in _RENAL_RISK_KEYWORDS)
+            or bool(d.atc_code and d.atc_code.startswith(renal_prefixes))
+            for d in drugs
+        )
+        has_hepatic = any(
+            any(kw in (d.drug_name or "").lower() for kw in _HEPATIC_RISK_KEYWORDS)
+            or bool(d.atc_code and d.atc_code.startswith(hepatic_prefixes))
+            for d in drugs
+        )
+        return has_renal, has_hepatic
+    except Exception:
+        return False, False
+
+
+def _run_safety_net(
+    drugs: list[DrugItem],
+    patient_age: Optional[int] = None,
+) -> tuple[RiskLevel, list[str], list[DDIAlert]]:
     """
     rules/safety_net.py 실행 → (등급, 이유 목록, DDI 알림 목록).
     safety_net 미설치/오류 시 Normal 반환.
@@ -62,21 +94,34 @@ def _run_safety_net(drugs: list[DrugItem]) -> tuple[RiskLevel, list[str], list[D
         sys.path.insert(0, str(Path(__file__).parent.parent))
         from rules.safety_net import SafetyNet
 
-        sn = SafetyNet()
-        drug_input = _drugs_to_rule_input(drugs)
-        assessment = sn.assess(drug_input)
+        has_renal, has_hepatic = _detect_risk_flags(drugs)
 
-        level = RiskLevel(assessment.risk_level)
-        reasons = list(assessment.reasons)
+        sn = SafetyNet()
+        # SafetyNet.assess는 list[str] (약물명 목록)을 기대
+        drug_names = [d.drug_name or d.edi_code for d in drugs]
+        assessment = sn.assess(
+            drugs=drug_names,
+            patient_age=patient_age,
+            concurrent_drug_count=len(drugs),
+            has_renal_risk=has_renal,
+            has_hepatic_risk=has_hepatic,
+        )
+
+        level = RiskLevel(assessment.risk_grade)
+        reasons = list(assessment.triggered_rules)
 
         alerts: list[DDIAlert] = []
-        for ddi in getattr(assessment, "detected_ddis", []):
+        for ddi in assessment.ddi_pairs:
+            try:
+                severity = Severity(ddi.severity)
+            except ValueError:
+                severity = Severity.UNKNOWN
             alerts.append(DDIAlert(
-                drug_a=str(ddi.get("drug_a", "")),
-                drug_b=str(ddi.get("drug_b", "")),
-                severity=Severity(ddi.get("severity", "Unknown")),
-                description=ddi.get("description"),
-                source=ddi.get("source", "Rule"),
+                drug_a=ddi.drug_a,
+                drug_b=ddi.drug_b,
+                severity=severity,
+                description=ddi.description,
+                source=ddi.source,
             ))
 
         return level, reasons, alerts
@@ -91,7 +136,7 @@ def _run_duplicate_detector(drugs: list[DrugItem]) -> tuple[int, list[str]]:
         from rules.duplicate_detector import DuplicateDetector
 
         dd = DuplicateDetector()
-        drug_input = _drugs_to_rule_input(drugs)
+        drug_input = _drugs_to_dup_input(drugs)
         result = dd.detect(drug_input)
 
         dup_count = result.duplicate_level1_count + result.duplicate_level2_count
@@ -120,10 +165,38 @@ class MLModel:
         self._partition: Optional[str] = None
         self._model_type: str = "none"
 
+    @staticmethod
+    def _verify_hash(path: Path) -> bool:
+        """SHA-256 사이드카 파일(.sha256)이 있으면 무결성 검증."""
+        hash_path = path.with_suffix(path.suffix + ".sha256")
+        if not hash_path.exists():
+            logger.warning("모델 해시 파일 없음 — 무결성 검증 생략: %s", hash_path)
+            return True  # 사이드카 없으면 경고만, 로드는 허용 (하위 호환)
+        expected = hash_path.read_text().strip().split()[0]
+        sha = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                sha.update(chunk)
+        actual = sha.hexdigest()
+        if actual != expected:
+            logger.error(
+                "모델 파일 해시 불일치 — 로드 거부 (expected=%s, actual=%s)",
+                expected[:16] + "…", actual[:16] + "…",
+            )
+            return False
+        logger.info("모델 해시 검증 통과: %s", path)
+        return True
+
     def load(self, path: str | Path) -> bool:
+        path = Path(path)
         try:
+            if not self._verify_hash(path):
+                return False
             with open(path, "rb") as f:
                 state = pickle.load(f)
+            if not isinstance(state, dict):
+                logger.error("모델 파일 형식 오류: dict가 아님 (%s)", type(state))
+                return False
             self._model = state.get("model")
             self._threshold = state.get("best_threshold", 0.5)
             self._model_type = state.get("trainer_class", "unknown")
@@ -202,7 +275,7 @@ class RequestFeatureBuilder:
         if self._std is not None:
             for d in drugs:
                 if not d.atc_code:
-                    atc, name = self._std.lookup(d.edi_code)
+                    atc, name = self._std.lookup_edi(d.edi_code)
                     d.atc_code = atc
                     if not d.drug_name and name:
                         d.drug_name = name
@@ -295,6 +368,7 @@ class HybridPredictor:
         cyp_matrix_path: str | Path = "data/processed/cyp_matrix.parquet",
     ):
         self._start_time = time.time()
+        self._ml_lock = threading.RLock()
         self._ml = MLModel()
         self._ddi_matrix: Optional[pd.DataFrame] = None
         self._cyp = None
@@ -338,11 +412,12 @@ class HybridPredictor:
         )
 
     def reload_model(self, model_path: str | Path) -> bool:
-        """무중단 모델 핫스왑."""
+        """무중단 모델 핫스왑 (스레드 안전)."""
         new_ml = MLModel()
         ok = new_ml.load(model_path)
         if ok:
-            self._ml = new_ml
+            with self._ml_lock:
+                self._ml = new_ml
             logger.info("모델 핫스왑 완료: %s", model_path)
         return ok
 
@@ -359,7 +434,7 @@ class HybridPredictor:
         ref = req.reference_date or date.today()
 
         # Step 1: Rule Safety Net
-        rule_level, rule_reasons, ddi_alerts = _run_safety_net(req.drugs)
+        rule_level, rule_reasons, ddi_alerts = _run_safety_net(req.drugs, patient_age=req.patient_age)
 
         # Step 2: 중복약물 탐지
         dup_count, dup_reasons = _run_duplicate_detector(req.drugs)
@@ -372,10 +447,12 @@ class HybridPredictor:
         # Step 3: ML 예측 (모델 있을 때만)
         ml_level: Optional[RiskLevel] = None
         ml_prob: Optional[float] = None
-        if self._ml.loaded:
+        with self._ml_lock:
+            ml_snapshot = self._ml  # 핫스왑 중 교체되더라도 이 참조는 안전
+        if ml_snapshot.loaded:
             feat_vec, _ = self._builder.build(req)
-            ml_prob  = self._ml.predict_proba(feat_vec)
-            ml_level = self._ml.classify(ml_prob)
+            ml_prob  = ml_snapshot.predict_proba(feat_vec)
+            ml_level = ml_snapshot.classify(ml_prob)
 
         # Step 4: 최종 등급 = max(Rule, ML)
         final_level = rule_level

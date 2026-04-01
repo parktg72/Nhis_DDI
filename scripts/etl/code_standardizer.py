@@ -1,7 +1,16 @@
 """
-EDI 코드 → ATC 코드 표준화
-DrugBank 파싱 결과(drug_name_index.parquet)를 매핑 테이블로 사용.
-EDI 코드(건보 의약품코드) → ATC 코드 7자리 + 약품명 매핑.
+약물 코드 표준화.
+
+기존: EDI(MCARE_DIV_CD) → ATC 코드 변환
+신규: WK_COMPN_CD(주성분코드) → 성분명 → DDI ID 변환 (DrugMaster 통합)
+
+DDI 분석 우선 경로 (주성분명 기반):
+  WK_COMPN_CD → DrugMaster.get_components() → 성분명 목록
+              → DrugMaster.get_ddi_ids()     → DDI 매트릭스 ID 목록
+
+복합제 자동 처리:
+  주성분코드 5-6번 == "00" → 성분명 2개 이상 반환
+  각 성분에 대해 DDI 조회 수행
 """
 from __future__ import annotations
 
@@ -11,118 +20,150 @@ from typing import Optional
 
 import pandas as pd
 
+from .drug_master import DrugMaster
+
 logger = logging.getLogger(__name__)
 
 
 class CodeStandardizer:
     """
-    EDI → ATC 코드 변환기.
+    약물 코드 → 성분명 / DDI ID 변환기.
 
-    매핑 테이블 우선순위:
-    1. drug_name_index.parquet (DrugBank 파싱 결과)
-    2. 식약처 DUR parquet (dur_ddi_contraindicated.parquet 등)
-    3. 사용자 정의 CSV (config/edi_atc_extra.csv)
+    DrugMaster(HIRA 약제급여목록 기반)를 주요 조회 경로로 사용.
+    EDI→ATC 매핑은 DrugBank 인덱스 기반 보조 경로로 유지.
     """
 
     def __init__(
         self,
+        drug_master: DrugMaster | None = None,
+        hira_xlsx: str | Path | None = None,
+        ddi_matrix_path: str | Path = "data/processed/ddi_matrix_final.parquet",
+        master_parquet: str | Path = "data/processed/hira_drug_master.parquet",
+        # 레거시 EDI→ATC 경로 (DrugBank 기반)
         index_path: str | Path = "data/processed/drug_name_index.parquet",
-        dur_path: str | Path | None = "data/dur/dur_ddi_contraindicated_std.parquet",
         extra_csv: str | Path | None = "config/edi_atc_extra.csv",
     ):
-        self._map: dict[str, dict] = {}  # edi_code → {atc_code, drug_name}
-        self._load_index(Path(index_path))
-        if dur_path and Path(dur_path).exists():
-            self._load_dur(Path(dur_path))
+        # ── DrugMaster (성분명 기반 DDI) ────────────────────────────────────
+        if drug_master is not None:
+            self._master = drug_master
+        elif Path(master_parquet).exists():
+            self._master = DrugMaster.load_parquet(master_parquet, ddi_matrix_path)
+        elif hira_xlsx and Path(hira_xlsx).exists():
+            self._master = DrugMaster.from_files(hira_xlsx, ddi_matrix_path)
+        else:
+            logger.warning(
+                "DrugMaster 초기화 실패: hira_xlsx=%s, master_parquet=%s",
+                hira_xlsx, master_parquet,
+            )
+            self._master = DrugMaster()
+
+        # ── 레거시: EDI → ATC 매핑 (DrugBank) ──────────────────────────────
+        self._edi_map: dict[str, dict] = {}
+        self._load_edi_index(Path(index_path))
         if extra_csv and Path(extra_csv).exists():
             self._load_extra(Path(extra_csv))
-        logger.info("CodeStandardizer 초기화: %d개 EDI 매핑 로드", len(self._map))
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 로딩 메서드
-    # ──────────────────────────────────────────────────────────────────────────
+        logger.info(
+            "CodeStandardizer 초기화: DrugMaster %d개 코드, EDI매핑 %d개",
+            self._master.code_count,
+            len(self._edi_map),
+        )
 
-    def _load_index(self, path: Path) -> None:
+    # ── 레거시 EDI 매핑 로딩 ─────────────────────────────────────────────────
+
+    def _load_edi_index(self, path: Path) -> None:
         if not path.exists():
-            logger.warning("drug_name_index.parquet 없음: %s", path)
             return
         df = pd.read_parquet(path)
-        # DrugBank 인덱스 컬럼: drug_id, name, atc_code (있는 경우)
         for _, row in df.iterrows():
-            edi = str(row.get("drug_id", "")).strip()
-            atc = str(row.get("atc_code", "")).strip() if pd.notna(row.get("atc_code")) else None
-            name = str(row.get("name", "")).strip() if pd.notna(row.get("name")) else None
+            edi = str(row.get("drug_id") or row.get("drugbank_id") or "").strip()
+            atc = str(row.get("atc_codes") or row.get("atc_code") or "").strip() or None
+            name = str(row.get("name") or row.get("drug_name") or "").strip() or None
             if edi:
-                self._map[edi] = {"atc_code": atc, "drug_name": name}
-
-    def _load_dur(self, path: Path) -> None:
-        """DUR 병용금기 표준화 데이터에서 성분코드 → ATC 보완 (없으면 code 그대로 사용)."""
-        df = pd.read_parquet(path)
-        for col_code, col_name in [
-            ("drug_a_code", "drug_a_name"),
-            ("drug_b_code", "drug_b_name"),
-        ]:
-            if col_code not in df.columns:
-                continue
-            sub = df[[col_code, col_name]].dropna(subset=[col_code]).drop_duplicates(col_code)
-            for _, row in sub.iterrows():
-                code = str(row[col_code]).strip()
-                name = str(row[col_name]).strip() if pd.notna(row.get(col_name)) else None
-                if code and code not in self._map:
-                    self._map[code] = {"atc_code": None, "drug_name": name}
+                self._edi_map[edi] = {"atc_code": atc, "drug_name": name}
 
     def _load_extra(self, path: Path) -> None:
-        """사용자 정의 EDI→ATC 매핑 CSV (edi_code, atc_code, drug_name)."""
         df = pd.read_csv(path, dtype=str)
-        required = {"edi_code", "atc_code"}
-        if not required.issubset(df.columns):
-            logger.warning("extra CSV 컬럼 부족: %s", df.columns.tolist())
+        if not {"edi_code", "atc_code"}.issubset(df.columns):
             return
         for _, row in df.iterrows():
             edi = str(row["edi_code"]).strip()
-            atc = str(row["atc_code"]).strip() if pd.notna(row["atc_code"]) else None
-            name = str(row.get("drug_name", "")).strip() or None
+            atc = str(row["atc_code"]).strip() or None
+            name = str(row.get("drug_name", "") or "").strip() or None
             if edi:
-                self._map[edi] = {"atc_code": atc, "drug_name": name}
+                self._edi_map[edi] = {"atc_code": atc, "drug_name": name}
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 공개 API
-    # ──────────────────────────────────────────────────────────────────────────
+    # ── 주성분코드 기반 공개 API (신규) ──────────────────────────────────────
 
-    def lookup(self, edi_code: str) -> tuple[Optional[str], Optional[str]]:
-        """(atc_code, drug_name) 반환. 미매핑 시 (None, None)."""
-        entry = self._map.get(str(edi_code).strip())
+    def get_components(self, wk_compn_cd: str) -> list[str]:
+        """
+        WK_COMPN_CD → 정규화 성분명 목록.
+
+        복합제(5-6번=00): 여러 성분 반환
+        단일제:           1개 성분 반환
+        미등록:           빈 리스트
+        """
+        return self._master.get_components(wk_compn_cd)
+
+    def get_ddi_ids(self, wk_compn_cd: str) -> list[str]:
+        """
+        WK_COMPN_CD → DDI 매트릭스 ID 목록.
+
+        복합제는 각 성분의 DDI ID를 모두 반환.
+        DDI 조회 시 이 ID 목록을 cross-product로 사용.
+        """
+        return self._master.get_ddi_ids(wk_compn_cd)
+
+    def is_combination(self, wk_compn_cd: str) -> bool:
+        """복합제 여부 (주성분코드 5-6번 == '00')."""
+        return self._master.is_combination(wk_compn_cd)
+
+    def expand_drug_count(self, wk_codes: list[str]) -> int:
+        """
+        복합제를 성분별로 전개한 고유 성분 수 계산.
+        drug_count 피처 계산에 사용.
+        """
+        return len(self._master.expand_drug_count(wk_codes))
+
+    # ── 레거시 EDI→ATC API (보조) ────────────────────────────────────────────
+
+    def lookup_edi(self, edi_code: str) -> tuple[Optional[str], Optional[str]]:
+        """EDI 코드 → (atc_code, drug_name). DrugBank 인덱스 기반."""
+        entry = self._edi_map.get(str(edi_code).strip())
         if entry is None:
             return None, None
         return entry.get("atc_code"), entry.get("drug_name")
 
-    def standardize(self, df: pd.DataFrame, edi_col: str = "EDI_CD") -> pd.DataFrame:
+    def standardize(self, df: pd.DataFrame, edi_col: str = "MCARE_DIV_CD") -> pd.DataFrame:
         """
-        DataFrame에 atc_code, drug_name 컬럼 추가.
-        원본 EDI_CD 컬럼은 보존.
+        DataFrame에 atc_code, drug_name 컬럼 추가 (EDI→ATC 레거시 경로).
+        원본 컬럼은 보존.
         """
         if edi_col not in df.columns:
             raise ValueError(f"컬럼 '{edi_col}' 없음")
-
-        atc_codes = []
-        drug_names = []
+        atc_codes, drug_names = [], []
         for code in df[edi_col].astype(str):
-            atc, name = self.lookup(code)
+            atc, name = self.lookup_edi(code)
             atc_codes.append(atc)
             drug_names.append(name)
-
         out = df.copy()
         out["atc_code"] = atc_codes
         out["drug_name"] = drug_names
         return out
 
-    def unknown_rate(self, df: pd.DataFrame, edi_col: str = "EDI_CD") -> float:
-        """ATC 매핑 불가 비율 계산 (품질 지표용)."""
-        if edi_col not in df.columns or len(df) == 0:
+    def unknown_rate(self, df: pd.DataFrame, wk_col: str = "WK_COMPN_CD") -> float:
+        """DDI 매핑 불가 비율 (품질 지표용)."""
+        if wk_col not in df.columns or len(df) == 0:
             return 0.0
-        known = df[edi_col].astype(str).isin(self._map)
-        return float((~known).mean())
+        mapped = df[wk_col].astype(str).apply(
+            lambda c: bool(self._master.get_ddi_ids(c))
+        )
+        return float((~mapped).mean())
+
+    @property
+    def drug_master(self) -> DrugMaster:
+        return self._master
 
     @property
     def mapping_count(self) -> int:
-        return len(self._map)
+        return self._master.code_count

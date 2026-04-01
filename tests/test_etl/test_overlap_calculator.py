@@ -2,6 +2,8 @@
 overlap_calculator 단위 테스트
 핵심 알고리즘: 동시복용 기간 계산
 """
+from __future__ import annotations
+
 import pytest
 from datetime import date, timedelta
 
@@ -24,6 +26,7 @@ def make_rx(
         patient_id=patient,
         institution_id="INST0001",
         bill_no=f"BILL_{edi}",
+        wk_compn_cd=edi,
         edi_code=edi,
         atc_code=atc,
         drug_name=edi,

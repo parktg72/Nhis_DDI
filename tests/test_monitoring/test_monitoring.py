@@ -425,7 +425,7 @@ class TestAlertRules:
         )]
         path = manager.save_alerts(alerts, "20260319")
         assert path is not None and os.path.exists(path)
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert data["total"] == 1
         assert data["critical"] == 1

@@ -93,19 +93,19 @@ def sample_prescriptions():
     return [
         PrescriptionRecord(
             patient_id="P001", institution_id="INST01", bill_no="B001",
-            edi_code="A001", atc_code="B01AA03", drug_name="warfarin",
+            wk_compn_cd="A001", edi_code="A001", atc_code="B01AA03", drug_name="warfarin",
             start_date=base, end_date=base + timedelta(days=29),
             total_days=30, dose_once=1.0, dose_freq=1,
         ),
         PrescriptionRecord(
             patient_id="P001", institution_id="INST02", bill_no="B002",
-            edi_code="A002", atc_code="M01AE01", drug_name="ibuprofen",
+            wk_compn_cd="A002", edi_code="A002", atc_code="M01AE01", drug_name="ibuprofen",
             start_date=base + timedelta(days=5), end_date=base + timedelta(days=19),
             total_days=15, dose_once=1.0, dose_freq=3,
         ),
         PrescriptionRecord(
             patient_id="P001", institution_id="INST01", bill_no="B003",
-            edi_code="A003", atc_code="J02AC01", drug_name="fluconazole",
+            wk_compn_cd="A003", edi_code="A003", atc_code="J02AC01", drug_name="fluconazole",
             start_date=base + timedelta(days=50), end_date=base + timedelta(days=79),
             total_days=30, dose_once=1.0, dose_freq=1,
         ),

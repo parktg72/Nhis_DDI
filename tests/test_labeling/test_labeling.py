@@ -468,7 +468,7 @@ class TestLabelingPipeline:
             partition="20260319",
             output_dir=str(tmp_path),
         )
-        with open(result.validation_path) as f:
+        with open(result.validation_path, encoding="utf-8") as f:
             val = json.load(f)
         assert "total_records" in val
         assert "checks" in val

@@ -63,9 +63,14 @@ def pseudonymize_dataframe(
 
 
 # 표준 가명처리 대상 컬럼 (테이블별)
+# 주의: NHIS 반출 데이터에서 INDI_DSCM_NO는 이미 가명화된 번호임.
+# 이 매핑은 자체 DB에서 원본 ID가 있는 경우(원내 전처리 단계)에만 사용.
 PSEUDO_COLUMNS: dict[str, list[str]] = {
-    "T20": ["BNFCR_PSEUDO", "INST_PSEUDO"],
-    "T30": [],                          # FK만 존재 (T20에서 이미 처리)
-    "T40": ["BNFCR_PSEUDO"],
-    "T50": ["INST_PSEUDO"],
+    "T20": ["INDI_DSCM_NO", "MDCARE_SYM"],  # 개인식별번호, 요양기관기호
+    "T30": ["INDI_DSCM_NO"],                 # T20 merge 전 원본 INDI_DSCM_NO 가명처리 필수
+    "T40": ["INDI_DSCM_NO"],
+    "T60": ["INDI_DSCM_NO"],
+    "YOYANG": ["REPR_INDI_DSCM_NO", "MDCARE_SYM"],  # 대표자 개인식별번호, 요양기관기호(T20 조인 키)
+    # 하위 호환
+    "T50": ["MDCARE_SYM"],
 }

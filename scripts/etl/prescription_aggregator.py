@@ -17,10 +17,74 @@ from typing import Optional
 
 import pandas as pd
 
+from .drug_master import DrugMaster
 from .models import DrugOverlapPair, PatientFeatures, PrescriptionRecord
 from .overlap_calculator import calculate_overlaps_for_patient, get_concurrent_drug_count
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 고위험/신기능/간기능 저하 위험 약물 키워드 및 ATC prefix
+# 기준: CLINICAL_STANDARDS_v1.0.md + drug_rules.yaml high_risk_drugs
+# ─────────────────────────────────────────────────────────────────────────────
+
+_HIGH_RISK_KEYWORDS = {
+    "warfarin", "methotrexate", "lithium", "digoxin", "amiodarone",
+    "phenytoin", "cyclosporine", "tacrolimus", "sirolimus", "theophylline",
+    "insulin", "clozapine", "carbamazepine", "valproate", "phenobarbital",
+}
+_HIGH_RISK_ATC_PREFIXES = (
+    "B01AA03", "L01BA01", "N05AN01", "C01AA05", "C01BD01",
+    "N03AB02", "L04AD01", "L04AD02", "L04AA18", "R03DA04",
+)
+
+_RENAL_RISK_KEYWORDS = {
+    "ibuprofen", "naproxen", "diclofenac", "celecoxib", "ketorolac",
+    "indomethacin", "meloxicam", "piroxicam",       # NSAIDs
+    "gentamicin", "tobramycin", "amikacin", "vancomycin",  # 신독성 항생제
+    "lithium", "cisplatin", "acyclovir", "tenofovir",
+    "cyclosporine", "tacrolimus",                    # calcineurin inhibitors
+}
+_RENAL_RISK_ATC_PREFIXES = ("M01A", "N05AN01", "J01GB", "L04AD")
+
+_HEPATIC_RISK_KEYWORDS = {
+    "methotrexate", "valproate", "valproic", "isoniazid", "amiodarone",
+    "phenytoin", "carbamazepine", "ketoconazole", "itraconazole",
+    "acetaminophen", "paracetamol",
+}
+_HEPATIC_RISK_ATC_PREFIXES = ("L01BA01", "N03AG01", "J04AC01", "C01BD01", "N03AB02")
+
+
+def _check_risk_drugs(
+    prescriptions: list[PrescriptionRecord],
+    keywords: set[str],
+    atc_prefixes: tuple[str, ...],
+) -> bool:
+    """처방 목록에서 특정 위험 약물 포함 여부 확인 (이름 + ATC 이중 매칭)."""
+    for p in prescriptions:
+        name = (p.drug_name or "").lower()
+        if any(kw in name for kw in keywords):
+            return True
+        atc = p.atc_code or ""
+        if atc and atc.startswith(atc_prefixes):
+            return True
+    return False
+
+
+def _fill_risk_drug_flags(
+    features: PatientFeatures,
+    prescriptions: list[PrescriptionRecord],
+) -> None:
+    """고위험/신기능/간기능 저하 위험 약물 포함 여부 플래그 설정."""
+    features.has_high_risk_drug = _check_risk_drugs(
+        prescriptions, _HIGH_RISK_KEYWORDS, _HIGH_RISK_ATC_PREFIXES,
+    )
+    features.has_renal_risk_drug = _check_risk_drugs(
+        prescriptions, _RENAL_RISK_KEYWORDS, _RENAL_RISK_ATC_PREFIXES,
+    )
+    features.has_hepatic_risk_drug = _check_risk_drugs(
+        prescriptions, _HEPATIC_RISK_KEYWORDS, _HEPATIC_RISK_ATC_PREFIXES,
+    )
 
 
 def _parse_date(s: str) -> Optional[date]:
@@ -47,14 +111,17 @@ def aggregate_patient_features(
     sex: str | None = None,
     window_start: date | None = None,
     window_end: date | None = None,
+    drug_master: DrugMaster | None = None,
+    cyp_extractor=None,
 ) -> PatientFeatures:
     """
     단일 환자의 피처 벡터 계산.
 
     Parameters
     ----------
-    ddi_matrix : ddi_matrix_final.parquet (drug_a_atc, drug_b_atc, severity)
-    dup_groups : efcy_duplicate_groups.parquet (drug_code, efcy_class_no)
+    ddi_matrix   : ddi_matrix_final.parquet (drug_a_id, drug_b_id, severity)
+    dup_groups   : efcy_duplicate_groups.parquet (drug_code, efcy_class_no)
+    drug_master  : DrugMaster 인스턴스 (복합제 성분 전개 및 DDI ID 매핑)
     """
     if not prescriptions:
         return PatientFeatures(
@@ -79,8 +146,12 @@ def aggregate_patient_features(
     )
 
     # ── 기본 피처 ──────────────────────────────────────────────────────────
-    unique_edis = {p.edi_code for p in prescriptions}
-    features.drug_count = len(unique_edis)
+    # 고유 약물 수: 복합제는 성분별로 전개하여 카운트
+    unique_wk = [p.wk_compn_cd for p in prescriptions]
+    if drug_master is not None:
+        features.drug_count = len(drug_master.expand_drug_count(unique_wk))
+    else:
+        features.drug_count = len(set(unique_wk))
 
     unique_insts = {p.institution_id for p in prescriptions if p.institution_id}
     features.institution_count = len(unique_insts)
@@ -90,11 +161,23 @@ def aggregate_patient_features(
 
     # ── DDI 피처 ────────────────────────────────────────────────────────────
     if ddi_matrix is not None and overlap_pairs:
-        _fill_ddi_features(features, overlap_pairs, ddi_matrix)
+        _fill_ddi_features(features, overlap_pairs, ddi_matrix, drug_master)
 
     # ── 중복약물 피처 ────────────────────────────────────────────────────────
     if dup_groups is not None:
-        _fill_dup_features(features, prescriptions, dup_groups)
+        _fill_dup_features(features, prescriptions, dup_groups, drug_master)
+
+    # ── 고위험/신기능/간기능 약물 플래그 ─────────────────────────────────────
+    _fill_risk_drug_flags(features, prescriptions)
+
+    # ── CYP450 피처 ────────────────────────────────────────────────────────
+    if cyp_extractor is not None:
+        atc_codes = [p.atc_code for p in prescriptions if p.atc_code]
+        if atc_codes:
+            cyp_feat = cyp_extractor.extract(atc_codes)
+            features.cyp_risk_score = cyp_feat.get("cyp_risk_score", 0.0)
+            features.cyp_max_enzyme_risk = cyp_feat.get("cyp_max_enzyme_risk", 0.0)
+            features.cyp_high_risk_pairs = int(cyp_feat.get("cyp_high_risk_pairs", 0))
 
     # ── 위험도 결정 ──────────────────────────────────────────────────────────
     _assign_risk_level(features)
@@ -106,30 +189,63 @@ def _fill_ddi_features(
     features: PatientFeatures,
     pairs: list[DrugOverlapPair],
     ddi_matrix: pd.DataFrame,
+    drug_master: DrugMaster | None = None,
 ) -> None:
-    """동시복용 쌍 × DDI 매트릭스 → 심각도별 카운트."""
-    # ddi_matrix 인덱스: (drug_a_atc, drug_b_atc) → severity
-    if "drug_a_atc" not in ddi_matrix.columns or "severity" not in ddi_matrix.columns:
+    """
+    동시복용 쌍 × DDI 매트릭스 → 심각도별 카운트.
+
+    DDI 조회 경로 (우선순위):
+      1. DrugMaster: WK_COMPN_CD → 성분명 → DDI ID (drug_a_id/drug_b_id)
+         - 복합제의 경우 각 성분의 ID 쌍을 cross-product로 검사
+      2. Fallback: WK_COMPN_CD 직접 비교 (DrugMaster 미사용 시)
+    """
+    if "severity" not in ddi_matrix.columns:
         return
 
-    # ATC 코드 집합으로 빠른 조회를 위한 딕셔너리 구성
+    severity_order = {"Contraindicated": 4, "Major": 3, "Moderate": 2, "Minor": 1}
+
+    # DDI 매트릭스 → ID 쌍 기반 조회 딕셔너리 구성
+    # ddi_matrix_final.parquet 컬럼: drug_a_id, drug_b_id, severity
     ddi_lookup: dict[frozenset, str] = {}
-    for row in ddi_matrix.itertuples(index=False):
-        key = frozenset({str(row.drug_a_atc), str(row.drug_b_atc)})
-        # 더 심각한 것을 유지
-        severity_order = {"Contraindicated": 4, "Major": 3, "Moderate": 2, "Minor": 1}
-        existing = ddi_lookup.get(key)
-        new_sev = str(row.severity)
-        if existing is None or severity_order.get(new_sev, 0) > severity_order.get(existing, 0):
-            ddi_lookup[key] = new_sev
+    id_cols = ("drug_a_id", "drug_b_id")
+    if all(c in ddi_matrix.columns for c in id_cols):
+        for row in ddi_matrix.itertuples(index=False):
+            a_id = str(row.drug_a_id).strip()
+            b_id = str(row.drug_b_id).strip()
+            if not a_id or not b_id:
+                continue
+            key = frozenset({a_id, b_id})
+            new_sev = str(row.severity)
+            existing = ddi_lookup.get(key)
+            if existing is None or severity_order.get(new_sev, 0) > severity_order.get(existing, 0):
+                ddi_lookup[key] = new_sev
+
+    def _best_severity_for_pair(ids_a: list[str], ids_b: list[str]) -> str | None:
+        """두 약물의 DDI ID 목록 cross-product에서 최고 심각도 반환."""
+        best: str | None = None
+        for ia in ids_a:
+            for ib in ids_b:
+                sev = ddi_lookup.get(frozenset({ia, ib}))
+                if sev and severity_order.get(sev, 0) > severity_order.get(best or "", 0):
+                    best = sev
+        return best
 
     for pair in pairs:
-        a_atc = pair.drug_a_atc
-        b_atc = pair.drug_b_atc
-        if not a_atc or not b_atc:
-            continue
-        key = frozenset({a_atc, b_atc})
-        severity = ddi_lookup.get(key)
+        severity = None
+
+        if drug_master is not None:
+            # ── 성분명 기반 조회 (복합제 전개 포함) ────────────────────────
+            ids_a = drug_master.get_ddi_ids(pair.drug_a_wk_compn)
+            ids_b = drug_master.get_ddi_ids(pair.drug_b_wk_compn)
+            if ids_a and ids_b:
+                severity = _best_severity_for_pair(ids_a, ids_b)
+
+        if severity is None:
+            # DrugMaster 없거나 미매핑 쌍: ddi_lookup은 drug_a_id/drug_b_id 기반이므로
+            # WK_COMPN_CD로 조회하면 다른 식별자 공간 → 항상 미매칭.
+            # 잘못된 폴백 대신 해당 쌍은 미평가 처리(severity=None 유지).
+            pass
+
         if severity == "Contraindicated":
             features.ddi_contraindicated += 1
         elif severity == "Major":
@@ -144,50 +260,80 @@ def _fill_dup_features(
     features: PatientFeatures,
     prescriptions: list[PrescriptionRecord],
     dup_groups: pd.DataFrame,
+    drug_master: DrugMaster | None = None,
 ) -> None:
-    """ATC 코드 기반 중복약물 레벨 계산."""
+    """
+    중복약물 레벨 계산.
+
+    레벨 우선순위:
+      1. 성분명 동일 (DrugMaster 전개 기반) — 복합제 성분과 단일제 교차 검사 포함
+      2. EFMDC_CLSF_NO 동일 (NHIS 약효분류) — 효능군 중복
+      3. ATC prefix 레벨 (DrugBank ATC 코드 기반)
+    """
+    from collections import Counter
+
+    # ── 1. 성분명 기반 동일성분 중복 ────────────────────────────────────────
+    # DrugMaster가 있으면 복합제 성분 전개 후 비교 (복합제A의 성분1 == 단일제B)
+    wk_codes = [p.wk_compn_cd for p in prescriptions if p.wk_compn_cd]
+    if len(wk_codes) >= 2:
+        if drug_master is not None:
+            # 각 처방의 성분명 집합 목록
+            comp_sets: list[set[str]] = [
+                set(drug_master.get_components(code)) or {code}
+                for code in wk_codes
+            ]
+            # 모든 성분명 누적 카운트 (복합제 포함)
+            all_comps: list[str] = []
+            for cs in comp_sets:
+                all_comps.extend(cs)
+            cnt_comp = Counter(all_comps)
+            features.dup_same_ingredient = sum(1 for c in cnt_comp.values() if c >= 2)
+        else:
+            cnt_wk = Counter(wk_codes)
+            features.dup_same_ingredient = sum(1 for c in cnt_wk.values() if c >= 2)
+
+    # ── 2. EFMDC_CLSF_NO 기반 효능군 중복 ──────────────────────────────────
+    efmdc_codes = [p.efmdc_clsf_no for p in prescriptions if p.efmdc_clsf_no]
+    if len(efmdc_codes) >= 2:
+        cnt_efmdc = Counter(efmdc_codes)
+        features.dup_efmdc = sum(1 for c in cnt_efmdc.values() if c >= 2)
+
+    # ── 3. ATC 코드 기반 레벨별 중복 (DrugBank 매핑 된 경우) ─────────────────
     atc_codes = [p.atc_code for p in prescriptions if p.atc_code]
     if len(atc_codes) < 2:
         return
 
-    # ATC 레벨별 prefix 집합
-    level5 = set(atc_codes)                         # 전체 (7자리)
-    level4 = {c[:5] for c in atc_codes if len(c) >= 5}  # 5자리
-    level3 = {c[:4] for c in atc_codes if len(c) >= 4}  # 4자리
-    level2 = {c[:3] for c in atc_codes if len(c) >= 3}  # 3자리
-
-    # Level 5 (동일성분): 동일 ATC 7자리 2개 이상
-    from collections import Counter
+    # ATC 5단계 (7자리 full code) — 동일 성분 2개 이상 (WK_COMPN_CD 미매핑 보완)
     cnt5 = Counter(atc_codes)
-    features.dup_same_ingredient = sum(1 for c in cnt5.values() if c >= 2)
+    if features.dup_same_ingredient == 0:
+        features.dup_same_ingredient = sum(1 for c in cnt5.values() if c >= 2)
+    features.dup_atc5 = sum(1 for c in cnt5.values() if c >= 2)
 
-    # Level 4: 동일 5자리 prefix 중 다른 ATC를 가진 쌍
+    # ATC 4단계 (5자리 prefix)
     cnt4: Counter = Counter()
     for code in atc_codes:
         if len(code) >= 5:
             cnt4[code[:5]] += 1
-    features.dup_atc5 = sum(1 for c in cnt4.values() if c >= 2)
+    features.dup_atc4 = sum(1 for c in cnt4.values() if c >= 2)
 
-    # Level 3: 동일 4자리 prefix
+    # ATC 3단계 (4자리 prefix)
     cnt3: Counter = Counter()
     for code in atc_codes:
         if len(code) >= 4:
             cnt3[code[:4]] += 1
-    features.dup_atc4 = sum(1 for c in cnt3.values() if c >= 2)
-
-    # Level 2: 동일 3자리 prefix (더 넓은 범위)
-    cnt2: Counter = Counter()
-    for code in atc_codes:
-        if len(code) >= 3:
-            cnt2[code[:3]] += 1
-    features.dup_atc3 = sum(1 for c in cnt2.values() if c >= 2)
+    features.dup_atc3 = sum(1 for c in cnt3.values() if c >= 2)
 
 
 def _assign_risk_level(features: PatientFeatures) -> None:
     """
-    위험도 4단계 판정 규칙 (Rule-based Safety Net과 동일 기준).
-    Safety Net에서 이미 상세 판정하므로 여기서는 DDI 카운트 기반 단순 판정.
-    최종 등급 = max(Safety Net 등급, ML 등급)은 pipeline.py에서 처리.
+    위험도 4단계 판정 규칙 (CLINICAL_STANDARDS_v1.0.md 기준).
+
+    Red 조건:
+      - Contraindicated DDI ≥ 1
+      - Major DDI ≥ 3
+      - Triple Whammy
+      - 10종 이상 + 고위험 약물 포함
+      - 75세 이상 + 5종 이상 + 신기능/간기능 저하 약물
     """
     reasons: list[str] = []
 
@@ -201,16 +347,20 @@ def _assign_risk_level(features: PatientFeatures) -> None:
     elif features.triple_whammy:
         features.risk_level = "Red"
         reasons.append("Triple Whammy")
-    elif features.drug_count >= 10 and features.qt_risk_count >= 3:
+    elif features.drug_count >= 10 and features.has_high_risk_drug:
         features.risk_level = "Red"
-        reasons.append(f"10종↑+QT위험약물{features.qt_risk_count}종")
+        reasons.append(f"10종↑+고위험약물 포함 (약물={features.drug_count})")
     elif (
         features.age is not None
-        and features.age >= 75
+        and features.age >= 70  # 70대 버킷(70–79)은 75–79 포함 → 버킷 하한으로 판정
         and features.drug_count >= 5
+        and (features.has_renal_risk_drug or features.has_hepatic_risk_drug)
     ):
         features.risk_level = "Red"
-        reasons.append(f"75세↑+5종↑ (나이={features.age}, 약물={features.drug_count})")
+        reasons.append(
+            f"70세↑(고령)+5종↑+신기능/간기능 저하 약물 "
+            f"(나이={features.age}, 약물={features.drug_count})"
+        )
 
     # Yellow 조건
     elif features.ddi_major >= 1:
@@ -246,6 +396,7 @@ def aggregate_batch(
     overlap_df: pd.DataFrame,
     ddi_matrix: pd.DataFrame | None,
     dup_groups: pd.DataFrame | None,
+    drug_master: DrugMaster | None = None,
 ) -> list[PatientFeatures]:
     """
     전체 환자 배치 집계.
@@ -258,15 +409,20 @@ def aggregate_batch(
     for r in all_records:
         patient_records.setdefault(r.patient_id, []).append(r)
 
-    # 환자 인구통계
+    # 환자 인구통계 — T20에 SEX_TYPE, SUJIN_POTM_AGE_ID가 포함됨
+    # df_t40은 상병내역(진단)이므로 인구통계 없음; df_prescriptions(T20+T30 조인)에서 추출
     patient_demo: dict[str, dict] = {}
-    if df_t40 is not None and "BNFCR_PSEUDO" in df_t40.columns:
-        for row in df_t40.itertuples(index=False):
-            pid = str(row.BNFCR_PSEUDO)
-            patient_demo[pid] = {
-                "birth_year": str(getattr(row, "BTH_YYYY", "")),
-                "sex": "M" if str(getattr(row, "SEX_TP_CD", "")) == "1" else "F",
-            }
+    if "INDI_DSCM_NO" in df_prescriptions.columns:
+        demo_cols = [c for c in ["INDI_DSCM_NO", "SEX_TYPE", "SUJIN_POTM_AGE_ID"]
+                     if c in df_prescriptions.columns]
+        if len(demo_cols) > 1:
+            demo_df = df_prescriptions[demo_cols].drop_duplicates("INDI_DSCM_NO")
+            for row in demo_df.itertuples(index=False):
+                pid = str(row.INDI_DSCM_NO)
+                patient_demo[pid] = {
+                    "sex": str(getattr(row, "SEX_TYPE", "")) or None,
+                    "age_id": str(getattr(row, "SUJIN_POTM_AGE_ID", "")) or None,
+                }
 
     # 동시복용 쌍 → 환자별 그룹
     patient_pairs: dict[str, list[DrugOverlapPair]] = {}
@@ -275,11 +431,13 @@ def aggregate_batch(
             pid = str(row.patient_id)
             patient_pairs.setdefault(pid, []).append(DrugOverlapPair(
                 patient_id=pid,
-                drug_a_edi=str(row.drug_a_edi),
-                drug_b_edi=str(row.drug_b_edi),
+                drug_a_wk_compn=str(getattr(row, "drug_a_wk_compn", "") or ""),
+                drug_a_edi=getattr(row, "drug_a_edi", None) or None,
                 drug_a_atc=getattr(row, "drug_a_atc", None) or None,
-                drug_b_atc=getattr(row, "drug_b_atc", None) or None,
                 drug_a_name=getattr(row, "drug_a_name", None) or None,
+                drug_b_wk_compn=str(getattr(row, "drug_b_wk_compn", "") or ""),
+                drug_b_edi=getattr(row, "drug_b_edi", None) or None,
+                drug_b_atc=getattr(row, "drug_b_atc", None) or None,
                 drug_b_name=getattr(row, "drug_b_name", None) or None,
                 overlap_start=row.overlap_start,
                 overlap_end=row.overlap_end,
@@ -291,11 +449,13 @@ def aggregate_batch(
     all_features: list[PatientFeatures] = []
     for patient_id, prx_list in patient_records.items():
         demo = patient_demo.get(patient_id, {})
-        birth_year = demo.get("birth_year", "")
-        # 윈도우 종료 기준 나이
-        w_end = max(p.end_date for p in prx_list)
-        age = _calc_age(birth_year, w_end) if birth_year else None
-        sex = demo.get("sex")
+        # SEX_TYPE: "1"=남, "2"=여 → PatientFeatures.sex에 그대로 저장
+        sex = demo.get("sex") or None
+        age_id = demo.get("age_id") or None
+        # SUJIN_POTM_AGE_ID: 10세 단위 연령범주 ID (3=30대, 4=40대, ..., 8=80대)
+        # 하한값(age_id * 10)으로 파생: "7"(70대) → 70, "8"(80대) → 80.
+        # ≥75 규칙은 70대 버킷(70~79)에 75~79세가 포함되므로 age >= 70 으로 적용.
+        age: int | None = int(age_id) * 10 if age_id and age_id.isdigit() else None
 
         pairs = patient_pairs.get(patient_id, [])
         feat = aggregate_patient_features(
@@ -306,7 +466,9 @@ def aggregate_batch(
             dup_groups=dup_groups,
             age=age,
             sex=sex,
+            drug_master=drug_master,
         )
+        feat.age_id = age_id
         all_features.append(feat)
 
     return all_features
