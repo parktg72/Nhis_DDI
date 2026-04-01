@@ -1,35 +1,38 @@
 """
 가명처리 (Pseudonymization)
 SHA-256 기반 단방향 해시. SALT는 환경변수 ETL_PSEUDO_SALT 로 주입.
+
+보안 요구사항:
+  - ETL_PSEUDO_SALT 환경변수 반드시 설정 (미설정 시 RuntimeError)
+  - SALT는 최소 32바이트 이상의 무작위 값 사용 권장
+    예: python -c "import secrets; print(secrets.token_hex(32))"
 """
 from __future__ import annotations
 
 import hashlib
 import os
-import warnings
 
 import pandas as pd
 
 
-_DEFAULT_SALT = "ddi_model_dev_salt_2024"
 _SALT: str = os.environ.get("ETL_PSEUDO_SALT", "")
 
 
 def _get_salt() -> str:
     if _SALT:
         return _SALT
-    warnings.warn(
-        "환경변수 ETL_PSEUDO_SALT 미설정. 개발용 기본 SALT 사용. 운영 환경에서는 반드시 설정하세요.",
-        stacklevel=3,
+    raise RuntimeError(
+        "환경변수 ETL_PSEUDO_SALT 가 설정되지 않았습니다. "
+        "운영 환경에서는 반드시 충분한 길이의 무작위 SALT를 설정하세요. "
+        "생성 예: python -c \"import secrets; print(secrets.token_hex(32))\""
     )
-    return _DEFAULT_SALT
 
 
 def hash_id(value: str, salt: str | None = None) -> str:
-    """단일 ID 해시 (SHA-256 hex, 16자리 truncation)."""
+    """단일 ID 해시 (SHA-256 full hex, 64자리)."""
     s = salt if salt is not None else _get_salt()
     raw = f"{s}:{value}".encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()[:16]
+    return hashlib.sha256(raw).hexdigest()
 
 
 def pseudonymize_column(series: pd.Series, salt: str | None = None) -> pd.Series:

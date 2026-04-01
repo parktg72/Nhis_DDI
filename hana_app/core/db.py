@@ -147,6 +147,12 @@ class HANAConnection:
     ) -> pd.DataFrame:
         _assert_safe_identifier(schema, "schema")
         _assert_safe_identifier(table, "table")
+        limit = int(limit)
+        offset = int(offset)
+        if not (1 <= limit <= 10_000):
+            raise ValueError(f"limit는 1~10,000 범위여야 합니다. (입력값: {limit})")
+        if offset < 0:
+            raise ValueError(f"offset은 0 이상이어야 합니다. (입력값: {offset})")
         cur = self.conn.cursor()
         try:
             cur.execute(
@@ -211,6 +217,9 @@ class HANAConnection:
         _assert_safe_identifier(schema, "schema")
         _assert_safe_identifier(table, "table")
         _assert_safe_identifier(col, "column")
+        limit = int(limit)
+        if not (1 <= limit <= 10_000):
+            raise ValueError(f"limit는 1~10,000 범위여야 합니다. (입력값: {limit})")
         cur = self.conn.cursor()
         try:
             cur.execute(

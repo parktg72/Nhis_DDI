@@ -135,6 +135,9 @@ def aggregate_patient_features(
     all_starts = [p.start_date for p in prescriptions]
     all_ends = [p.end_date for p in prescriptions]
     w_start = window_start or min(all_starts)
+    # days=90: w_start 당일을 1일째로 계산하는 임상 관습 기준 (1~90일 = 90일 윈도우)
+    # days=89: w_start를 0일째(포함)로 계산 시 동일한 90일 구간
+    # CLINICAL_STANDARDS_v1.0.md §1.3 "90일 윈도우"는 시작일 포함 90일 의미 → days=89
     w_end = window_end or min(max(all_ends), w_start + timedelta(days=89))
 
     features = PatientFeatures(

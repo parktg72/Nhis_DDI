@@ -166,18 +166,18 @@ class MLModel:
         self._model_type: str = "none"
 
     @staticmethod
-    def _verify_hash(path: Path) -> bool:
-        """SHA-256 사이드카 파일(.sha256)이 있으면 무결성 검증."""
+    def _verify_hash(path: Path, content: bytes) -> bool:
+        """SHA-256 사이드카 파일(.sha256)이 있으면 content bytes로 무결성 검증.
+
+        content를 인자로 받아 검증과 역직렬화가 동일한 바이트를 사용하도록 보장
+        (TOCTOU 방지).
+        """
         hash_path = path.with_suffix(path.suffix + ".sha256")
         if not hash_path.exists():
             logger.warning("모델 해시 파일 없음 — 무결성 검증 생략: %s", hash_path)
             return True  # 사이드카 없으면 경고만, 로드는 허용 (하위 호환)
         expected = hash_path.read_text().strip().split()[0]
-        sha = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                sha.update(chunk)
-        actual = sha.hexdigest()
+        actual = hashlib.sha256(content).hexdigest()
         if actual != expected:
             logger.error(
                 "모델 파일 해시 불일치 — 로드 거부 (expected=%s, actual=%s)",
@@ -190,10 +190,11 @@ class MLModel:
     def load(self, path: str | Path) -> bool:
         path = Path(path)
         try:
-            if not self._verify_hash(path):
+            # 파일을 1회만 읽어 검증과 역직렬화에 동일한 바이트 사용 (TOCTOU 방지)
+            content = path.read_bytes()
+            if not self._verify_hash(path, content):
                 return False
-            with open(path, "rb") as f:
-                state = pickle.load(f)
+            state = pickle.loads(content)
             if not isinstance(state, dict):
                 logger.error("모델 파일 형식 오류: dict가 아님 (%s)", type(state))
                 return False
@@ -307,7 +308,7 @@ class RequestFeatureBuilder:
 
         # ── 투여일수 피처 ──────────────────────────────────────────────────
         durations = [d.total_days for d in drugs]
-        feat["avg_drug_duration"]    = float(sum(durations) / len(durations))
+        feat["avg_drug_duration"]    = float(sum(durations) / len(durations)) if durations else 0.0
         feat["long_term_drug_count"] = float(sum(1 for d in durations if d >= 30))
 
         # ── ATC 중복 피처 ──────────────────────────────────────────────────

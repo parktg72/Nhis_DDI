@@ -178,7 +178,7 @@ class TestPseudonymizer:
     def test_hash_length(self):
         from scripts.etl.pseudonymizer import hash_id
         result = hash_id("P001", salt="test")
-        assert len(result) == 16
+        assert len(result) == 64  # SHA-256 full hex (보안 강화: 16자리 truncation 제거)
 
     def test_pseudonymize_column(self):
         from scripts.etl.pseudonymizer import pseudonymize_column
