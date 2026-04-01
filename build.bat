@@ -2,8 +2,8 @@
 echo === NHIS YOD-DM Analyzer v2.1 Build ===
 if not exist venv (python -m venv venv)
 call venv\Scripts\activate.bat
-pip install -r requirements.txt
-pip install pyinstaller
+pip install --no-cache-dir -r requirements.txt
+pip install --no-cache-dir pyinstaller
 pyinstaller --noconfirm --onedir --windowed ^
     --name "NHIS_YOD_DM_Analyzer" ^
     --hidden-import "hdbcli" --hidden-import "pyreadstat" --hidden-import "duckdb" ^
