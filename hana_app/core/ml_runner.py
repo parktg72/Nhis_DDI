@@ -464,23 +464,24 @@ def stratify_and_sample_patients(
     if total <= sample_size:
         sampled = df
     else:
-        # 비례 배분
+        # 비례 배분: floor + 최대잉여법(LR) → 항상 정확히 sample_size 명 배분
         strata_counts = df["_strata"].value_counts()
         alloc: dict[str, int] = {}
-        remaining = sample_size
+        fractional: dict[str, float] = {}
         for st, cnt in strata_counts.items():
-            a = min(round(cnt / total * sample_size), cnt)
-            alloc[st] = a
-            remaining -= a
+            exact = cnt / total * sample_size
+            floor_val = min(int(exact), int(cnt))
+            alloc[st] = floor_val
+            fractional[st] = exact - floor_val  # 소수 부분 (잉여)
 
-        # 나머지 분배 (가장 큰 층부터)
-        for st in strata_counts.index:
+        remaining = sample_size - sum(alloc.values())
+        # 소수 부분이 큰 층부터 1씩 추가 배분 (최대잉여법)
+        for st in sorted(fractional, key=fractional.__getitem__, reverse=True):
             if remaining <= 0:
                 break
-            available = strata_counts[st] - alloc[st]
-            add = min(remaining, available)
-            alloc[st] += add
-            remaining -= add
+            if alloc[st] < int(strata_counts[st]):
+                alloc[st] += 1
+                remaining -= 1
 
         rng = np.random.default_rng(seed)
         parts: list[pd.DataFrame] = []
@@ -495,6 +496,12 @@ def stratify_and_sample_patients(
                     sub.sample(n=a, random_state=int(rng.integers(0, 2**31)))
                 )
         sampled = pd.concat(parts, ignore_index=True) if parts else df.head(0)
+        # 부동소수 오차 등으로 초과 시 정확히 sample_size 로 자르기
+        if len(sampled) > sample_size:
+            sampled = sampled.sample(
+                n=sample_size,
+                random_state=int(rng.integers(0, 2**31)),
+            )
 
     # ── 결과 변환 ─────────────────────────────────────────────────────
     sampled_pids: list[str] = []

@@ -472,9 +472,10 @@ class HANAExtractor:
         self,
         std_year: str,
         addr_digits: int = 5,
+        sample_size: int | None = None,
         progress_cb: Callable[[str], None] | None = None,
     ) -> pd.DataFrame:
-        """자격DB에서 연도별 전체 인구통계 조회 (사전 층화 샘플링용).
+        """자격DB에서 연도별 인구통계 조회 (사전 층화 샘플링용).
 
         Parameters
         ----------
@@ -482,6 +483,10 @@ class HANAExtractor:
             기준 연도 (STD_YYYY 필터).
         addr_digits : int
             RVSN_ADDR_CD 앞 몇 자리 (5 또는 8).
+        sample_size : int, optional
+            지정 시 DB에서 ``sample_size * 2`` 행만 랜덤 추출하여 Python 전송량을
+            제한합니다. 전체 인구를 pandas로 로드하지 않아 메모리 절약.
+            None 이면 전체 연도 데이터를 반환합니다 (주의: 대용량).
 
         Returns
         -------
@@ -503,26 +508,44 @@ class HANAExtractor:
         year_col   = c.get("std_year",     "STD_YYYY")
         addr_col   = c.get("rvsn_addr_cd", "RVSN_ADDR_CD")
 
-        sql = (
-            f'SELECT "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
-            f'FROM {tbl} WHERE "{year_col}" = ?'
-        )
-
-        if progress_cb:
-            progress_cb(
-                f"자격DB 전체 조회 (층화 샘플링용): {tbl} (STD_YYYY={std_year})"
+        if sample_size is not None and sample_size > 0:
+            # 메모리 절약: HANA에서 2배 오버샘플 후 Python 전송 (대용량 전체 로드 방지)
+            # ORDER BY RAND() → 결과가 랜덤이어서 stratify_and_sample_patients 재층화 유효
+            oversample = min(sample_size * 2, 10_000_000)
+            sql = (
+                f'SELECT TOP ? "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
+                f'FROM {tbl} WHERE "{year_col}" = ? '
+                f'ORDER BY RAND()'
             )
+            params: list = [oversample, std_year]
+            if progress_cb:
+                progress_cb(
+                    f"자격DB 오버샘플 조회 (샘플링용 {oversample:,}행 제한): "
+                    f"{tbl} (STD_YYYY={std_year})"
+                )
+        else:
+            # 전체 조회 (소규모 데이터 또는 sample_size 미지정)
+            # ORDER BY pid ASC → drop_duplicates(keep="last") 결과가 항상 결정적
+            sql = (
+                f'SELECT "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
+                f'FROM {tbl} WHERE "{year_col}" = ? '
+                f'ORDER BY "{pid_col}" ASC'
+            )
+            params = [std_year]
+            if progress_cb:
+                progress_cb(
+                    f"자격DB 전체 조회 (층화 샘플링용): {tbl} (STD_YYYY={std_year})"
+                )
 
-        df = self.conn.query_df(sql, [std_year])
+        df = self.conn.query_df(sql, params)
 
-        # 중복 INDI_DSCM_NO → 마지막 레코드 유지
+        # 중복 INDI_DSCM_NO → 마지막 레코드 유지 (결정적)
         if not df.empty:
             df = df.drop_duplicates(subset=[pid_col], keep="last").reset_index(drop=True)
-            # 주소 코드 앞 N자리만
             df[addr_col] = df[addr_col].astype(str).str[:addr_digits]
 
         if progress_cb:
-            progress_cb(f"자격DB 전체 완료: {len(df):,}명")
+            progress_cb(f"자격DB 조회 완료: {len(df):,}명")
 
         return df
 
@@ -578,15 +601,17 @@ class HANAExtractor:
         for i in range(0, max(len(patient_ids), 1), _BATCH):
             batch = patient_ids[i: i + _BATCH]
             placeholders = ",".join(["?" for _ in batch])
+            # ORDER BY pid ASC → drop_duplicates(keep="last") 결과가 항상 결정적
             sql = (
                 f'SELECT "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
                 f'FROM {tbl} '
-                f'WHERE "{year_col}" = ? AND "{pid_col}" IN ({placeholders})'
+                f'WHERE "{year_col}" = ? AND "{pid_col}" IN ({placeholders}) '
+                f'ORDER BY "{pid_col}" ASC'
             )
             params = [std_year] + batch
             df = self.conn.query_df(sql, params)
 
-            # 중복 INDI_DSCM_NO → 마지막 레코드 유지 (RVSN_ADDR_CD)
+            # 중복 INDI_DSCM_NO → 마지막 레코드 유지 (ORDER BY pid ASC 기준으로 결정적)
             if not df.empty:
                 df = df.drop_duplicates(subset=[pid_col], keep="last")
                 for row in df.itertuples(index=False):

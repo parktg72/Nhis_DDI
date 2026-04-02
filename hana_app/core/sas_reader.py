@@ -514,17 +514,28 @@ class SASExtractor:
         self,
         std_year: str,
         addr_digits: int = 5,
+        sample_size: int | None = None,
         progress_cb: Callable[[str], None] | None = None,
     ) -> pd.DataFrame:
-        """자격DB SAS 파일에서 연도별 전체 인구통계 조회 (사전 층화 샘플링용).
+        """자격DB SAS 파일에서 연도별 인구통계 조회 (사전 층화 샘플링용).
 
-        patient_ids 필터 없이 STD_YYYY = std_year 에 해당하는 전체 레코드를 반환합니다.
+        patient_ids 필터 없이 STD_YYYY = std_year 에 해당하는 레코드를 반환합니다.
         중복 INDI_DSCM_NO는 마지막 레코드 유지.
+
+        Parameters
+        ----------
+        sample_size : int, optional
+            지정 시 2-pass 스트리밍 저장소 샘플링을 사용합니다.
+            전체 파일을 메모리에 올리지 않고 ``sample_size`` 행만 보유.
+            None 이면 전체 데이터를 메모리에 로드합니다 (주의: 대용량).
 
         Returns
         -------
         pd.DataFrame : INDI_DSCM_NO, BYEAR, SEX_TYPE, RVSN_ADDR_CD(잘린 값) 컬럼.
         """
+        import random as _random
+        from collections import defaultdict as _defaultdict
+
         c = self.cols.get("eligibility", {})
         pid_col    = c.get("patient_id",   "INDI_DSCM_NO")
         byear_col  = c.get("byear",        "BYEAR")
@@ -538,14 +549,102 @@ class SASExtractor:
                 progress_cb("[건너뜀] 자격DB SAS 파일 미지정 또는 없음")
             return pd.DataFrame()
 
+        use_cols = [pid_col, byear_col, sex_col, addr_col, year_col]
+
+        if sample_size is not None and sample_size > 0:
+            # ── 2-pass 스트리밍 저장소 샘플링 ────────────────────────────────
+            # Pass 1: 층별 행 수 카운트 (row 저장 없음 → 메모리 최소)
+            if progress_cb:
+                progress_cb(
+                    f"자격DB SAS 1차 스캔 (층별 카운트): {fpath.name} (STD_YYYY={std_year})"
+                )
+            strata_row_count: dict[str, int] = _defaultdict(int)
+            for chunk in read_sas_chunks(fpath, self.encoding, use_cols, self.chunksize):
+                if year_col in chunk.columns:
+                    chunk = chunk[chunk[year_col].astype(str).str.strip() == str(std_year)]
+                if chunk.empty:
+                    continue
+                for row in chunk.itertuples(index=False):
+                    sex_v   = str(getattr(row, sex_col,   "") or "").strip()
+                    byear_v = str(getattr(row, byear_col, "") or "").strip()
+                    addr_v  = str(getattr(row, addr_col,  "") or "")[:addr_digits]
+                    strata_row_count[f"{sex_v}|{byear_v}|{addr_v}"] += 1
+
+            total_rows = sum(strata_row_count.values())
+            if total_rows == 0:
+                return pd.DataFrame(columns=[pid_col, byear_col, sex_col, addr_col])
+
+            # floor + 최대잉여법으로 층별 할당
+            alloc: dict[str, int] = {}
+            frac:  dict[str, float] = {}
+            for key, cnt in strata_row_count.items():
+                exact = cnt / total_rows * sample_size
+                floor_v = min(int(exact), cnt)
+                alloc[key] = floor_v
+                frac[key]  = exact - floor_v
+            remaining = sample_size - sum(alloc.values())
+            for key in sorted(frac, key=frac.__getitem__, reverse=True):
+                if remaining <= 0:
+                    break
+                if alloc[key] < strata_row_count[key]:
+                    alloc[key] += 1
+                    remaining -= 1
+
+            # Pass 2: 층별 저장소(reservoir) 샘플링
+            if progress_cb:
+                progress_cb(
+                    f"자격DB SAS 2차 스캔 (저장소 샘플링 {sample_size:,}명): {fpath.name}"
+                )
+            rng_local = _random.Random(42)
+            reservoirs: dict[str, list] = {k: [] for k in alloc if alloc[k] > 0}
+            counts_seen: dict[str, int] = _defaultdict(int)
+
+            for chunk in read_sas_chunks(fpath, self.encoding, use_cols, self.chunksize):
+                if year_col in chunk.columns:
+                    chunk = chunk[chunk[year_col].astype(str).str.strip() == str(std_year)]
+                if chunk.empty:
+                    continue
+                for row in chunk.itertuples(index=False):
+                    pid_v   = str(getattr(row, pid_col,   "") or "").strip()
+                    sex_v   = str(getattr(row, sex_col,   "") or "").strip()
+                    byear_v = str(getattr(row, byear_col, "") or "").strip()
+                    addr_v  = str(getattr(row, addr_col,  "") or "")[:addr_digits]
+                    if not pid_v:
+                        continue
+                    key = f"{sex_v}|{byear_v}|{addr_v}"
+                    if key not in reservoirs:
+                        continue
+                    k = alloc[key]
+                    counts_seen[key] += 1
+                    n = counts_seen[key]
+                    entry = {
+                        pid_col: pid_v, byear_col: byear_v,
+                        sex_col: sex_v, addr_col: addr_v,
+                    }
+                    if len(reservoirs[key]) < k:
+                        reservoirs[key].append(entry)
+                    else:
+                        j = rng_local.randint(0, n - 1)
+                        if j < k:
+                            reservoirs[key][j] = entry
+
+            rows_sampled = [entry for res in reservoirs.values() for entry in res]
+            if not rows_sampled:
+                return pd.DataFrame(columns=[pid_col, byear_col, sex_col, addr_col])
+
+            df = pd.DataFrame(rows_sampled)
+            df = df.drop_duplicates(subset=[pid_col], keep="last").reset_index(drop=True)
+            if progress_cb:
+                progress_cb(f"자격DB SAS 샘플링 완료: {len(df):,}명")
+            return df
+
+        # ── 전체 로드 경로 (sample_size 미지정 / 소규모 데이터) ──────────────
         if progress_cb:
             progress_cb(
                 f"자격DB SAS 전체 읽기 (층화 샘플링용): {fpath.name} (STD_YYYY={std_year})"
             )
 
-        use_cols = [pid_col, byear_col, sex_col, addr_col, year_col]
         rows_acc: list[pd.DataFrame] = []
-
         for chunk in read_sas_chunks(fpath, self.encoding, use_cols, self.chunksize):
             if year_col in chunk.columns:
                 chunk = chunk[chunk[year_col].astype(str).str.strip() == str(std_year)]
@@ -559,6 +658,8 @@ class SASExtractor:
             return pd.DataFrame(columns=[pid_col, byear_col, sex_col, addr_col])
 
         df = pd.concat(rows_acc, ignore_index=True)
+        # pid 오름차순 정렬 후 dedup → 결과가 항상 결정적
+        df = df.sort_values(pid_col, kind="mergesort").reset_index(drop=True)
         df = df.drop_duplicates(subset=[pid_col], keep="last").reset_index(drop=True)
 
         if progress_cb:
@@ -634,7 +735,8 @@ class SASExtractor:
                     addr_col:  addr[:addr_digits] if addr else None,
                 })
 
-        # 중복 INDI_DSCM_NO → 마지막 레코드 유지
+        # 중복 INDI_DSCM_NO → pid 오름차순 정렬 후 마지막 레코드 유지 (결정적)
+        rows_acc.sort(key=lambda r: r.get(pid_col, "") or "")
         result: dict[str, dict] = {}
         for r in rows_acc:
             pid = r[pid_col]
