@@ -188,6 +188,34 @@ def aggregate_patient_features(
     return features
 
 
+_ddi_lookup_cache: dict[int, dict[frozenset, str]] = {}
+_SEVERITY_ORDER = {"Contraindicated": 4, "Major": 3, "Moderate": 2, "Minor": 1}
+
+
+def _get_ddi_lookup(ddi_matrix: pd.DataFrame) -> dict[frozenset, str]:
+    """DDI 매트릭스 → ID 쌍 기반 조회 딕셔너리 (캐시됨)."""
+    matrix_id = id(ddi_matrix)
+    if matrix_id in _ddi_lookup_cache:
+        return _ddi_lookup_cache[matrix_id]
+
+    ddi_lookup: dict[frozenset, str] = {}
+    id_cols = ("drug_a_id", "drug_b_id")
+    if all(c in ddi_matrix.columns for c in id_cols):
+        for row in ddi_matrix.itertuples(index=False):
+            a_id = str(row.drug_a_id).strip()
+            b_id = str(row.drug_b_id).strip()
+            if not a_id or not b_id:
+                continue
+            key = frozenset({a_id, b_id})
+            new_sev = str(row.severity)
+            existing = ddi_lookup.get(key)
+            if existing is None or _SEVERITY_ORDER.get(new_sev, 0) > _SEVERITY_ORDER.get(existing, 0):
+                ddi_lookup[key] = new_sev
+
+    _ddi_lookup_cache[matrix_id] = ddi_lookup
+    return ddi_lookup
+
+
 def _fill_ddi_features(
     features: PatientFeatures,
     pairs: list[DrugOverlapPair],
@@ -205,23 +233,7 @@ def _fill_ddi_features(
     if "severity" not in ddi_matrix.columns:
         return
 
-    severity_order = {"Contraindicated": 4, "Major": 3, "Moderate": 2, "Minor": 1}
-
-    # DDI 매트릭스 → ID 쌍 기반 조회 딕셔너리 구성
-    # ddi_matrix_final.parquet 컬럼: drug_a_id, drug_b_id, severity
-    ddi_lookup: dict[frozenset, str] = {}
-    id_cols = ("drug_a_id", "drug_b_id")
-    if all(c in ddi_matrix.columns for c in id_cols):
-        for row in ddi_matrix.itertuples(index=False):
-            a_id = str(row.drug_a_id).strip()
-            b_id = str(row.drug_b_id).strip()
-            if not a_id or not b_id:
-                continue
-            key = frozenset({a_id, b_id})
-            new_sev = str(row.severity)
-            existing = ddi_lookup.get(key)
-            if existing is None or severity_order.get(new_sev, 0) > severity_order.get(existing, 0):
-                ddi_lookup[key] = new_sev
+    ddi_lookup = _get_ddi_lookup(ddi_matrix)
 
     def _best_severity_for_pair(ids_a: list[str], ids_b: list[str]) -> str | None:
         """두 약물의 DDI ID 목록 cross-product에서 최고 심각도 반환."""
@@ -229,7 +241,7 @@ def _fill_ddi_features(
         for ia in ids_a:
             for ib in ids_b:
                 sev = ddi_lookup.get(frozenset({ia, ib}))
-                if sev and severity_order.get(sev, 0) > severity_order.get(best or "", 0):
+                if sev and _SEVERITY_ORDER.get(sev, 0) > _SEVERITY_ORDER.get(best or "", 0):
                     best = sev
         return best
 

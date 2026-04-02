@@ -9,6 +9,7 @@ POST /admin/reload - 모델 핫스왑 (운영, X-Admin-Key 헤더 필수)
   MODEL_DIR     : 허용된 모델 파일 디렉토리 (기본: data/models)
                   경로를 이 디렉토리 밖으로 지정하면 거부됩니다.
 """
+import hmac
 import os
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def _require_admin(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
             status_code=503,
             detail="ADMIN_API_KEY 환경변수 미설정: /admin 엔드포인트 비활성화",
         )
-    if x_admin_key != _ADMIN_KEY:
+    if not hmac.compare_digest(x_admin_key, _ADMIN_KEY):
         raise HTTPException(status_code=401, detail="관리자 인증 실패")
 
 

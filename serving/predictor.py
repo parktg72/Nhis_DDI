@@ -174,8 +174,8 @@ class MLModel:
         """
         hash_path = path.with_suffix(path.suffix + ".sha256")
         if not hash_path.exists():
-            logger.warning("모델 해시 파일 없음 — 무결성 검증 생략: %s", hash_path)
-            return True  # 사이드카 없으면 경고만, 로드는 허용 (하위 호환)
+            logger.error("모델 해시 파일 없음 — 무결성 검증 불가, 로드 거부: %s", hash_path)
+            return False
         expected = hash_path.read_text().strip().split()[0]
         actual = hashlib.sha256(content).hexdigest()
         if actual != expected:

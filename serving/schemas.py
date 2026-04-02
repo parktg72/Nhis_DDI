@@ -136,6 +136,7 @@ class BatchPredictResponse(BaseModel):
     green_count:   int
     normal_count:  int
     elapsed_ms:    float
+    warnings:      list[str] = Field(default_factory=list, description="부분 실패 경고 목록")
 
 
 class HealthResponse(BaseModel):

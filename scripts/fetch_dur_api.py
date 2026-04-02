@@ -37,13 +37,14 @@ def load_config(config_path: str = "config/api_config.yaml") -> dict:
 
 
 def get_api_key(config: dict) -> str:
-    """환경변수 → config 순서로 API 키 조회."""
+    """환경변수에서 API 키 조회. 미설정 시 RuntimeError 발생."""
     env_key = config["dur_api"].get("api_key_env", "DUR_API_KEY")
     key = os.environ.get(env_key, "")
     if not key:
-        # docx 에서 확인된 키 (폴백 - 운영환경에서는 환경변수 사용 권장)
-        key = "5272509bb288430a86be85362aebf40c04cdcf232ba45e58fa2580a972b81b35"
-        print(f"[경고] 환경변수 {env_key} 미설정. 기본 키 사용. 운영환경에서는 환경변수 설정 필수.")
+        raise RuntimeError(
+            f"환경변수 {env_key} 미설정. "
+            f"실행 전 `export {env_key}=<your_key>` 로 API 키를 설정하세요."
+        )
     return key
 
 

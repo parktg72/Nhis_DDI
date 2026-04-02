@@ -108,14 +108,17 @@ class DrugMatcher:
         self._groups = drug_groups  # group_name → {name_keywords, atc_prefixes}
         self._name_map = {}        # normalized_name → drugbank_id
         self._atc_map = {}         # atc_code → [drugbank_id, ...]
+        self._id_to_atc = {}       # drugbank_id → atc_codes string (O(1) 조회용)
 
         if not drug_index.empty:
-            for _, row in drug_index.iterrows():
-                name_lower = str(row.get("drug_name_lower", "")).strip()
-                did = str(row.get("drugbank_id", "")).strip()
-                atc = str(row.get("atc_codes", "")).strip()
+            for row in drug_index.itertuples(index=False):
+                name_lower = str(getattr(row, "drug_name_lower", "")).strip()
+                did = str(getattr(row, "drugbank_id", "")).strip()
+                atc = str(getattr(row, "atc_codes", "")).strip()
                 if name_lower:
                     self._name_map[name_lower] = did
+                if did and atc:
+                    self._id_to_atc[did] = atc
                 if atc:
                     for code in atc.split("|"):
                         code = code.strip()
@@ -134,15 +137,10 @@ class DrugMatcher:
             if kw.lower() in name_lower:
                 return True
 
-        # ATC 코드 매칭 (drug_index 에서 ATC 조회 후 prefix 비교)
+        # ATC 코드 매칭 (사전 구축된 dict에서 O(1) 조회)
         did = self._name_map.get(name_lower, "")
         if did:
-            atc_str = ""
-            # 인덱스에서 ATC 코드 조회
-            for _, row in self._index.iterrows():
-                if row.get("drugbank_id") == did:
-                    atc_str = str(row.get("atc_codes", ""))
-                    break
+            atc_str = self._id_to_atc.get(did, "")
             for atc_code in atc_str.split("|"):
                 atc_code = atc_code.strip()
                 for prefix in group_def.get("atc_prefixes", []):

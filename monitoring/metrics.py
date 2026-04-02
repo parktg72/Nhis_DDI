@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram, CollectorRegistry, push_to_gateway
+    from prometheus_client import Counter, Gauge, Histogram, REGISTRY, push_to_gateway
     _PROMETHEUS_AVAILABLE = True
 except ImportError:
     _PROMETHEUS_AVAILABLE = False
@@ -212,7 +212,7 @@ def push_metrics(gateway_url: str, job: str = "ddi_serving") -> None:
         logger.warning("prometheus_client 미설치 — push 생략")
         return
     try:
-        push_to_gateway(gateway_url, job=job, registry=CollectorRegistry())
+        push_to_gateway(gateway_url, job=job, registry=REGISTRY)
         logger.info("메트릭 push 완료: %s", gateway_url)
     except Exception as exc:
         logger.warning("메트릭 push 실패 (무시): %s", exc)
