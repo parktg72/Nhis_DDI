@@ -16,4 +16,5 @@ results/
 venv/
 .env
 .omc/
+.claude/
 *.sas7bdat
