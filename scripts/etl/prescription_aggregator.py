@@ -109,6 +109,7 @@ def aggregate_patient_features(
     dup_groups: pd.DataFrame | None,
     age: int | None = None,
     sex: str | None = None,
+    addr_cd: str | None = None,
     window_start: date | None = None,
     window_end: date | None = None,
     drug_master: DrugMaster | None = None,
@@ -128,7 +129,7 @@ def aggregate_patient_features(
             patient_id=patient_id,
             window_start=window_start or date.today(),
             window_end=window_end or date.today(),
-            age=age, sex=sex,
+            age=age, sex=sex, addr_cd=addr_cd,
         )
 
     # 윈도우 결정 (처방 최소/최대 날짜)
@@ -146,6 +147,7 @@ def aggregate_patient_features(
         window_end=w_end,
         age=age,
         sex=sex,
+        addr_cd=addr_cd,
     )
 
     # ── 기본 피처 ──────────────────────────────────────────────────────────
@@ -367,13 +369,13 @@ def _assign_risk_level(features: PatientFeatures) -> None:
         reasons.append(f"10종↑+고위험약물 포함 (약물={features.drug_count})")
     elif (
         features.age is not None
-        and features.age >= 70  # 70대 버킷(70–79)은 75–79 포함 → 버킷 하한으로 판정
+        and features.age >= 75
         and features.drug_count >= 5
         and (features.has_renal_risk_drug or features.has_hepatic_risk_drug)
     ):
         features.risk_level = "Red"
         reasons.append(
-            f"70세↑(고령)+5종↑+신기능/간기능 저하 약물 "
+            f"75세↑(고령)+5종↑+신기능/간기능 저하 약물 "
             f"(나이={features.age}, 약물={features.drug_count})"
         )
 

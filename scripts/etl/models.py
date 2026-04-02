@@ -276,6 +276,7 @@ class PatientFeatures:
     age:     Optional[int] = None
     sex:     Optional[str] = None  # "1"=남, "2"=여 (SEX_TYPE)
     age_id:  Optional[str] = None  # SUJIN_POTM_AGE_ID (연령 범주 ID)
+    addr_cd: Optional[str] = None  # RVSN_ADDR_CD 앞 5자리 또는 8자리 (자격DB)
 
     # 위험도 레이블 (Rule-based)
     risk_level:   str = "Normal"  # Red/Yellow/Green/Normal

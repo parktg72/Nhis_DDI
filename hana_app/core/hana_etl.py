@@ -205,10 +205,40 @@ class HANAExtractor:
         _assert_safe_identifier(val, f"{tbl}.{field}")
         return f'"{val}"'
 
+    _PID_BATCH = 50_000
+
+    def _query_paged_by_pid(
+        self,
+        sql_base: str,
+        params_base: list,
+        pid_col: str,
+        patient_ids: list[str] | None,
+    ) -> pd.DataFrame:
+        """날짜 조건 SQL에 INDI_DSCM_NO IN (...) 조건을 추가하여 조회.
+
+        patient_ids=None 이면 필터 없이 그대로 실행.
+        patient_ids=[] 이면 빈 DataFrame 반환.
+        patient_ids 건수가 많으면 50,000 단위 배치로 분할·조합.
+        """
+        if patient_ids is not None and len(patient_ids) == 0:
+            return pd.DataFrame()
+        if not patient_ids:
+            return self.conn.query_df(sql_base, params_base or None)
+        results = []
+        for i in range(0, len(patient_ids), self._PID_BATCH):
+            batch = patient_ids[i: i + self._PID_BATCH]
+            phs = ",".join(["?"] * len(batch))
+            sql = f'{sql_base} AND "{pid_col}" IN ({phs})'
+            results.append(self.conn.query_df(sql, params_base + list(batch)))
+        if len(results) == 1:
+            return results[0]
+        return pd.concat(results, ignore_index=True)
+
     # ---- T20 ----------------------------------------------------------------
 
     def fetch_t20(self, yyyymm_list: list[str],
-                  progress_cb: Callable[[str], None] | None = None) -> pd.DataFrame:
+                  progress_cb: Callable[[str], None] | None = None,
+                  patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t20"]
         tbl = self._tbl("t20")
         placeholders = ",".join(["?" for _ in yyyymm_list])
@@ -221,12 +251,13 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T20 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self.conn.query_df(sql, yyyymm_list)
+        return self._query_paged_by_pid(sql, list(yyyymm_list), c["patient_id"], patient_ids)
 
     # ---- T30 ----------------------------------------------------------------
 
     def fetch_t30(self, yyyymm_list: list[str],
-                  progress_cb: Callable[[str], None] | None = None) -> pd.DataFrame:
+                  progress_cb: Callable[[str], None] | None = None,
+                  patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t30"]
         tbl = self._tbl("t30")
         placeholders = ",".join(["?" for _ in yyyymm_list])
@@ -240,12 +271,13 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T30 (원내) 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self.conn.query_df(sql, yyyymm_list)
+        return self._query_paged_by_pid(sql, list(yyyymm_list), c["patient_id"], patient_ids)
 
     # ---- T60 ----------------------------------------------------------------
 
     def fetch_t60(self, yyyymm_list: list[str],
-                  progress_cb: Callable[[str], None] | None = None) -> pd.DataFrame:
+                  progress_cb: Callable[[str], None] | None = None,
+                  patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t60"]
         tbl = self._tbl("t60")
         placeholders = ",".join(["?" for _ in yyyymm_list])
@@ -260,12 +292,13 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T60 (원외) 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self.conn.query_df(sql, yyyymm_list)
+        return self._query_paged_by_pid(sql, list(yyyymm_list), c["patient_id"], patient_ids)
 
     # ---- T40 ----------------------------------------------------------------
 
     def fetch_t40(self, yyyymm_list: list[str],
-                  progress_cb: Callable[[str], None] | None = None) -> pd.DataFrame:
+                  progress_cb: Callable[[str], None] | None = None,
+                  patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t40"]
         tbl = self._tbl("t40")
         placeholders = ",".join(["?" for _ in yyyymm_list])
@@ -277,12 +310,13 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T40 (상병) 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self.conn.query_df(sql, yyyymm_list)
+        return self._query_paged_by_pid(sql, list(yyyymm_list), c["patient_id"], patient_ids)
 
     # ---- 날짜 범위 쿼리 (일 단위 청크용) ------------------------------------
 
     def fetch_t20_by_date(self, date_from: str, date_to: str,
-                          progress_cb: Callable[[str], None] | None = None) -> pd.DataFrame:
+                          progress_cb: Callable[[str], None] | None = None,
+                          patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t20"]
         tbl = self._tbl("t20")
         sql = (
@@ -294,10 +328,11 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T20 조회: {date_from}~{date_to}")
-        return self.conn.query_df(sql, [date_from, date_to])
+        return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
 
     def fetch_t30_by_date(self, date_from: str, date_to: str,
-                          progress_cb: Callable[[str], None] | None = None) -> pd.DataFrame:
+                          progress_cb: Callable[[str], None] | None = None,
+                          patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t30"]
         tbl = self._tbl("t30")
         sql = (
@@ -310,10 +345,11 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T30 (원내) 조회: {date_from}~{date_to}")
-        return self.conn.query_df(sql, [date_from, date_to])
+        return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
 
     def fetch_t60_by_date(self, date_from: str, date_to: str,
-                          progress_cb: Callable[[str], None] | None = None) -> pd.DataFrame:
+                          progress_cb: Callable[[str], None] | None = None,
+                          patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t60"]
         tbl = self._tbl("t60")
         sql = (
@@ -327,10 +363,11 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T60 (원외) 조회: {date_from}~{date_to}")
-        return self.conn.query_df(sql, [date_from, date_to])
+        return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
 
     def fetch_t40_by_date(self, date_from: str, date_to: str,
-                          progress_cb: Callable[[str], None] | None = None) -> pd.DataFrame:
+                          progress_cb: Callable[[str], None] | None = None,
+                          patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t40"]
         tbl = self._tbl("t40")
         sql = (
@@ -341,7 +378,7 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T40 (상병) 조회: {date_from}~{date_to}")
-        return self.conn.query_df(sql, [date_from, date_to])
+        return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
 
     # ---- 요양기관 -----------------------------------------------------------
 
@@ -355,7 +392,218 @@ class HANAExtractor:
         )
         return self.conn.query_df(sql, [std_year])
 
-    # ---- 자격 DB (Eligibility) → 환자 나이 -----------------------------------
+    # ---- T40 ICD-10 질환 필터 → 환자 ID 추출 ----------------------------------
+
+    def fetch_patients_by_icd10(
+        self,
+        icd10_prefixes: list[str],
+        yyyymm_list: list[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        progress_cb: Callable[[str], None] | None = None,
+    ) -> list[str]:
+        """T40 상병코드(ICD-10)로 해당 환자 ID 목록 반환.
+
+        Parameters
+        ----------
+        icd10_prefixes : list[str]
+            ICD-10 접두사 목록. 3자리 입력 시 하위 코드 포함 (LIKE 'E11%').
+            예: ["E11", "I10", "J45"]
+        yyyymm_list : list[str], optional
+            월 목록 (YYYYMM 형식). date_from/date_to와 택일.
+        date_from / date_to : str, optional
+            일 단위 날짜 범위 (YYYYMMDD). yyyymm_list와 택일.
+
+        Returns
+        -------
+        list[str]
+            중복 제거된 INDI_DSCM_NO 목록.
+        """
+        if not icd10_prefixes:
+            return []
+        if "t40" not in self.tables:
+            if progress_cb:
+                progress_cb("[건너뜀] T40 테이블 미설정")
+            return []
+
+        c = self.cols["t40"]
+        tbl = self._tbl("t40")
+        pid_col  = c["patient_id"]
+        sick_col = c["sick_code"]
+
+        # ICD-10 LIKE 조건 생성
+        like_clauses = " OR ".join(
+            f'"{sick_col}" LIKE ?' for _ in icd10_prefixes
+        )
+        like_params = [f"{p.strip().upper()}%" for p in icd10_prefixes]
+
+        if yyyymm_list:
+            phs = ",".join(["?"] * len(yyyymm_list))
+            sql = (
+                f'SELECT DISTINCT "{pid_col}" FROM {tbl} '
+                f'WHERE "{c["yyyymm"]}" IN ({phs}) AND ({like_clauses})'
+            )
+            params = list(yyyymm_list) + like_params
+        elif date_from and date_to:
+            sql = (
+                f'SELECT DISTINCT "{pid_col}" FROM {tbl} '
+                f'WHERE "{c["start_date"]}" BETWEEN ? AND ? AND ({like_clauses})'
+            )
+            params = [date_from, date_to] + like_params
+        else:
+            if progress_cb:
+                progress_cb("[건너뜀] T40 ICD-10 조회: 날짜 범위 미지정")
+            return []
+
+        codes_str = ", ".join(icd10_prefixes)
+        if progress_cb:
+            progress_cb(f"T40 ICD-10 필터 조회: {codes_str} (하위 코드 포함)")
+
+        df = self.conn.query_df(sql, params)
+        result = df[pid_col].dropna().astype(str).str.strip().unique().tolist()
+
+        if progress_cb:
+            progress_cb(f"T40 ICD-10 완료: {codes_str} → {len(result):,}명")
+        return result
+
+    # ---- 자격 DB (Eligibility) → 인구통계 ------------------------------------
+
+    def fetch_eligibility_for_sampling(
+        self,
+        std_year: str,
+        addr_digits: int = 5,
+        progress_cb: Callable[[str], None] | None = None,
+    ) -> pd.DataFrame:
+        """자격DB에서 연도별 전체 인구통계 조회 (사전 층화 샘플링용).
+
+        Parameters
+        ----------
+        std_year : str
+            기준 연도 (STD_YYYY 필터).
+        addr_digits : int
+            RVSN_ADDR_CD 앞 몇 자리 (5 또는 8).
+
+        Returns
+        -------
+        pd.DataFrame
+            INDI_DSCM_NO, BYEAR, SEX_TYPE, RVSN_ADDR_CD(잘린 값) 컬럼.
+            중복 INDI_DSCM_NO는 마지막 레코드 유지.
+        """
+        if "eligibility" not in self.tables:
+            if progress_cb:
+                progress_cb("[건너뜀] 자격DB 테이블 미설정")
+            return pd.DataFrame()
+
+        elig_cfg = self.tables["eligibility"]
+        tbl = f'"{elig_cfg["schema"]}"."{elig_cfg["table"]}"'
+        c = self.cols.get("eligibility", {})
+        pid_col    = c.get("patient_id",   "INDI_DSCM_NO")
+        byear_col  = c.get("byear",        "BYEAR")
+        sex_col    = c.get("sex_type",     "SEX_TYPE")
+        year_col   = c.get("std_year",     "STD_YYYY")
+        addr_col   = c.get("rvsn_addr_cd", "RVSN_ADDR_CD")
+
+        sql = (
+            f'SELECT "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
+            f'FROM {tbl} WHERE "{year_col}" = ?'
+        )
+
+        if progress_cb:
+            progress_cb(
+                f"자격DB 전체 조회 (층화 샘플링용): {tbl} (STD_YYYY={std_year})"
+            )
+
+        df = self.conn.query_df(sql, [std_year])
+
+        # 중복 INDI_DSCM_NO → 마지막 레코드 유지
+        if not df.empty:
+            df = df.drop_duplicates(subset=[pid_col], keep="last").reset_index(drop=True)
+            # 주소 코드 앞 N자리만
+            df[addr_col] = df[addr_col].astype(str).str[:addr_digits]
+
+        if progress_cb:
+            progress_cb(f"자격DB 전체 완료: {len(df):,}명")
+
+        return df
+
+    def fetch_eligibility_demographics(
+        self,
+        patient_ids: list[str],
+        std_year: str,
+        addr_digits: int = 5,
+        progress_cb: Callable[[str], None] | None = None,
+    ) -> dict[str, dict]:
+        """자격 DB에서 BYEAR·SEX_TYPE·RVSN_ADDR_CD 조회.
+
+        Parameters
+        ----------
+        patient_ids : list[str]
+            처방 추출 후 수집한 고유 INDI_DSCM_NO 목록.
+        std_year : str
+            추출 기준 연도 (STD_YYYY 필터, 예: "2023").
+        addr_digits : int
+            RVSN_ADDR_CD 앞 몇 자리를 사용할지 (5 또는 8).
+        progress_cb : callable, optional
+            진행 메시지 콜백.
+
+        Returns
+        -------
+        dict[str, dict]
+            {patient_id: {"byear": int, "sex_type": str, "addr_cd": str}}
+            INDI_DSCM_NO 중복 시 마지막 레코드의 RVSN_ADDR_CD 사용.
+        """
+        if "eligibility" not in self.tables:
+            if progress_cb:
+                progress_cb("[건너뜀] 자격DB 테이블 미설정")
+            return {}
+
+        elig_cfg = self.tables["eligibility"]
+        tbl = f'"{elig_cfg["schema"]}"."{elig_cfg["table"]}"'
+        c = self.cols.get("eligibility", {})
+        pid_col    = c.get("patient_id",   "INDI_DSCM_NO")
+        byear_col  = c.get("byear",        "BYEAR")
+        sex_col    = c.get("sex_type",     "SEX_TYPE")
+        year_col   = c.get("std_year",     "STD_YYYY")
+        addr_col   = c.get("rvsn_addr_cd", "RVSN_ADDR_CD")
+
+        _BATCH = 50_000
+        result: dict[str, dict] = {}
+
+        if progress_cb:
+            progress_cb(
+                f"자격DB 조회: {tbl} (STD_YYYY={std_year}, "
+                f"대상 {len(patient_ids):,}명, 배치 {_BATCH:,})"
+            )
+
+        for i in range(0, max(len(patient_ids), 1), _BATCH):
+            batch = patient_ids[i: i + _BATCH]
+            placeholders = ",".join(["?" for _ in batch])
+            sql = (
+                f'SELECT "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
+                f'FROM {tbl} '
+                f'WHERE "{year_col}" = ? AND "{pid_col}" IN ({placeholders})'
+            )
+            params = [std_year] + batch
+            df = self.conn.query_df(sql, params)
+
+            # 중복 INDI_DSCM_NO → 마지막 레코드 유지 (RVSN_ADDR_CD)
+            if not df.empty:
+                df = df.drop_duplicates(subset=[pid_col], keep="last")
+                for row in df.itertuples(index=False):
+                    pid   = str(getattr(row, pid_col, "")).strip()
+                    byear = getattr(row, byear_col, None)
+                    sex   = str(getattr(row, sex_col, "") or "").strip() or None
+                    addr  = str(getattr(row, addr_col, "") or "").strip()
+                    if pid:
+                        result[pid] = {
+                            "byear":    int(byear) if byear is not None else None,
+                            "sex_type": sex,
+                            "addr_cd":  addr[:addr_digits] if addr else None,
+                        }
+
+        if progress_cb:
+            progress_cb(f"자격DB 완료: {len(result):,}명 인구통계 매핑")
+        return result
 
     def fetch_eligibility_ages(
         self,
@@ -367,6 +615,10 @@ class HANAExtractor:
 
         나이 = reference_year - BYEAR.
         reference_year 미지정 시 현재 연도 사용.
+
+        .. deprecated::
+            fetch_eligibility_demographics 사용 권장.
+            STD_YYYY 필터 없이 전체 테이블을 조회하므로 메모리 사용량이 큽니다.
         """
         from datetime import date as _date
 
@@ -503,6 +755,7 @@ class HANAExtractor:
         buffer_days: int = 90,
         buffer_after_days: int = 0,
         progress_cb: Callable[[str], None] | None = None,
+        patient_ids: list[str] | None = None,
     ) -> tuple[list[PrescriptionRecord], dict]:
         """전 기간 일괄 추출 (소규모 데이터용).
 
@@ -534,19 +787,19 @@ class HANAExtractor:
                 f"버퍼: {buf_label})"
             )
 
-        t20 = self.fetch_t20(yyyymm_list, progress_cb)
+        t20 = self.fetch_t20(yyyymm_list, progress_cb, patient_ids=patient_ids)
         stats_t20 = len(t20)
         t20_index = t20.set_index(self.cols["t20"]["bill_no"])
         del t20
         gc.collect()
 
-        t40 = self.fetch_t40(yyyymm_list, progress_cb)
+        t40 = self.fetch_t40(yyyymm_list, progress_cb, patient_ids=patient_ids)
         stats_t40 = len(t40)
         t40_idx = build_t40_index(t40, self.cols["t40"]["bill_no"], self.cols["t40"]["sick_code"])
         del t40
         gc.collect()
 
-        t30 = self.fetch_t30(yyyymm_list, progress_cb)
+        t30 = self.fetch_t30(yyyymm_list, progress_cb, patient_ids=patient_ids)
         stats_t30 = len(t30)
 
         if progress_cb:
@@ -556,7 +809,7 @@ class HANAExtractor:
         del t30
         gc.collect()
 
-        t60 = self.fetch_t60(yyyymm_list, progress_cb)
+        t60 = self.fetch_t60(yyyymm_list, progress_cb, patient_ids=patient_ids)
         stats_t60 = len(t60)
 
         if progress_cb:
@@ -601,6 +854,7 @@ class HANAExtractor:
         buffer_after_days: int = 0,
         memory_limit_mb: int = 0,
         progress_cb: Callable[[str], None] | None = None,
+        patient_ids: list[str] | None = None,
     ) -> tuple[list[Path], dict]:
         """
         청크 단위 추출 -> Parquet 저장 (메모리 효율화).
@@ -690,25 +944,25 @@ class HANAExtractor:
                     )
 
                 # 일 단위 쿼리: MDCARE_STRT_DT BETWEEN
-                t20 = self.fetch_t20_by_date(dt_from, dt_to, progress_cb)
+                t20 = self.fetch_t20_by_date(dt_from, dt_to, progress_cb, patient_ids=patient_ids)
                 stats["t20_rows"] += len(t20)
                 t20_index = t20.set_index(self.cols["t20"]["bill_no"])
                 del t20
                 gc.collect()
 
-                t40 = self.fetch_t40_by_date(dt_from, dt_to, progress_cb)
+                t40 = self.fetch_t40_by_date(dt_from, dt_to, progress_cb, patient_ids=patient_ids)
                 stats["t40_rows"] += len(t40)
                 t40_idx = build_t40_index(t40, self.cols["t40"]["bill_no"], self.cols["t40"]["sick_code"])
                 del t40
                 gc.collect()
 
-                t30 = self.fetch_t30_by_date(dt_from, dt_to, progress_cb)
+                t30 = self.fetch_t30_by_date(dt_from, dt_to, progress_cb, patient_ids=patient_ids)
                 stats["t30_rows"] += len(t30)
                 chunk_records = self._t30_to_records(t30, t20_index, t40_idx)
                 del t30
                 gc.collect()
 
-                t60 = self.fetch_t60_by_date(dt_from, dt_to, progress_cb)
+                t60 = self.fetch_t60_by_date(dt_from, dt_to, progress_cb, patient_ids=patient_ids)
                 stats["t60_rows"] += len(t60)
                 chunk_records += self._t60_to_records(t60, t20_index, t40_idx)
                 del t60, t20_index, t40_idx
@@ -723,25 +977,25 @@ class HANAExtractor:
                     )
 
                 # 월 단위 쿼리 (기존 방식): MDCARE_STRT_YYYYMM IN
-                t20 = self.fetch_t20(chunk, progress_cb)
+                t20 = self.fetch_t20(chunk, progress_cb, patient_ids=patient_ids)
                 stats["t20_rows"] += len(t20)
                 t20_index = t20.set_index(self.cols["t20"]["bill_no"])
                 del t20
                 gc.collect()
 
-                t40 = self.fetch_t40(chunk, progress_cb)
+                t40 = self.fetch_t40(chunk, progress_cb, patient_ids=patient_ids)
                 stats["t40_rows"] += len(t40)
                 t40_idx = build_t40_index(t40, self.cols["t40"]["bill_no"], self.cols["t40"]["sick_code"])
                 del t40
                 gc.collect()
 
-                t30 = self.fetch_t30(chunk, progress_cb)
+                t30 = self.fetch_t30(chunk, progress_cb, patient_ids=patient_ids)
                 stats["t30_rows"] += len(t30)
                 chunk_records = self._t30_to_records(t30, t20_index, t40_idx)
                 del t30
                 gc.collect()
 
-                t60 = self.fetch_t60(chunk, progress_cb)
+                t60 = self.fetch_t60(chunk, progress_cb, patient_ids=patient_ids)
                 stats["t60_rows"] += len(t60)
                 chunk_records += self._t60_to_records(t60, t20_index, t40_idx)
                 del t60, t20_index, t40_idx
@@ -775,6 +1029,38 @@ class HANAExtractor:
 # ---------------------------------------------------------------------------
 # 헬퍼
 # ---------------------------------------------------------------------------
+
+def collect_unique_patient_ids(parquet_paths: list[Path]) -> list[str]:
+    """Parquet 청크 파일들에서 고유 patient_id(INDI_DSCM_NO) 목록 반환.
+
+    자격DB 조회 전에 호출하여 필요한 환자 ID만 필터링하는 데 사용합니다.
+    DuckDB 설치 시 메모리 사용 최소화.
+    """
+    if not parquet_paths:
+        return []
+    try:
+        import duckdb
+        _src_list = ", ".join(f"'{Path(p).as_posix()}'" for p in parquet_paths)
+        con = duckdb.connect()
+        try:
+            rows = con.execute(
+                f"SELECT DISTINCT patient_id FROM read_parquet([{_src_list}])"
+            ).fetchall()
+            return [str(r[0]) for r in rows if r[0] is not None]
+        finally:
+            con.close()
+    except Exception:
+        pid_set: set[str] = set()
+        for p in parquet_paths:
+            try:
+                df = pd.read_parquet(p, columns=["patient_id"])
+                pid_set.update(df["patient_id"].dropna().astype(str).unique())
+                del df
+                gc.collect()
+            except Exception:
+                pass
+        return list(pid_set)
+
 
 def _count_unique_patients(parquet_paths: list[Path], memory_limit_mb: int = 0) -> int:
     """Parquet 파일들에서 고유 환자 수 집계 (메모리 절약).

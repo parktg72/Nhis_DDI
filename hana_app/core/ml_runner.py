@@ -393,7 +393,135 @@ FEATURES_CACHE_DIR = Path(__file__).parent.parent / "data" / "features_cache"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 층화 샘플링 (DuckDB 기반)
+# 사전 층화 샘플링 (자격DB 인구통계 기반)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 의학적 연령 구간 (기본값)
+_DEFAULT_AGE_BINS   = [0,  20,  40,  60,  75,  200]
+_DEFAULT_AGE_LABELS = ["0-19", "20-39", "40-59", "60-74", "75+"]
+
+
+def stratify_and_sample_patients(
+    elig_df: pd.DataFrame,
+    sample_size: int,
+    reference_year: int,
+    seed: int = 42,
+    pid_col: str = "INDI_DSCM_NO",
+    byear_col: str = "BYEAR",
+    sex_col: str = "SEX_TYPE",
+    addr_col: str = "RVSN_ADDR_CD",
+    addr_digits: int = 5,
+    age_bins: "list[int] | None" = None,
+    age_labels: "list[str] | None" = None,
+) -> "tuple[list[str], dict[str, dict], dict]":
+    """자격DB DataFrame에서 성별·연령·지역 층화 샘플링.
+
+    Parameters
+    ----------
+    elig_df : pd.DataFrame
+        fetch_eligibility_for_sampling() 반환값.
+        INDI_DSCM_NO, BYEAR, SEX_TYPE, RVSN_ADDR_CD 컬럼 필요.
+    sample_size : int
+        추출할 총 환자 수.
+    reference_year : int
+        나이 계산 기준 연도 (나이 = reference_year - BYEAR).
+    seed : int
+        랜덤 시드.
+    addr_digits : int
+        RVSN_ADDR_CD 앞 몇 자리로 지역 구분 (5=시군구, 8=읍면동).
+    age_bins / age_labels : list, optional
+        연령 구간 경계·레이블. 미지정 시 기본값 사용.
+
+    Returns
+    -------
+    sampled_pids : list[str]
+        샘플링된 INDI_DSCM_NO 목록.
+    demographics : dict[str, dict]
+        {patient_id: {"byear": int, "sex_type": str, "addr_cd": str}}
+        save_demographics() 에 직접 전달 가능.
+    strata_summary : dict
+        층별 샘플 수 요약.
+    """
+    import numpy as np
+
+    bins   = age_bins   or _DEFAULT_AGE_BINS
+    labels = age_labels or _DEFAULT_AGE_LABELS
+
+    df = elig_df.copy()
+    if df.empty or sample_size <= 0:
+        return [], {}, {}
+
+    # ── 나이·층화 키 생성 ─────────────────────────────────────────────
+    df["_age"] = reference_year - pd.to_numeric(df[byear_col], errors="coerce")
+    df["_age_grp"] = pd.cut(
+        df["_age"], bins=bins, labels=labels, right=False
+    ).astype(str).fillna("unknown")
+    df["_sex"] = df[sex_col].astype(str).str.strip().fillna("U")
+    df["_addr"] = df[addr_col].astype(str).str[:addr_digits].fillna("00000")
+    df["_strata"] = df["_sex"] + "|" + df["_age_grp"] + "|" + df["_addr"]
+
+    total = len(df)
+    if total <= sample_size:
+        sampled = df
+    else:
+        # 비례 배분
+        strata_counts = df["_strata"].value_counts()
+        alloc: dict[str, int] = {}
+        remaining = sample_size
+        for st, cnt in strata_counts.items():
+            a = min(round(cnt / total * sample_size), cnt)
+            alloc[st] = a
+            remaining -= a
+
+        # 나머지 분배 (가장 큰 층부터)
+        for st in strata_counts.index:
+            if remaining <= 0:
+                break
+            available = strata_counts[st] - alloc[st]
+            add = min(remaining, available)
+            alloc[st] += add
+            remaining -= add
+
+        rng = np.random.default_rng(seed)
+        parts: list[pd.DataFrame] = []
+        for st, a in alloc.items():
+            if a <= 0:
+                continue
+            sub = df[df["_strata"] == st]
+            if len(sub) <= a:
+                parts.append(sub)
+            else:
+                parts.append(
+                    sub.sample(n=a, random_state=int(rng.integers(0, 2**31)))
+                )
+        sampled = pd.concat(parts, ignore_index=True) if parts else df.head(0)
+
+    # ── 결과 변환 ─────────────────────────────────────────────────────
+    sampled_pids: list[str] = []
+    demographics: dict[str, dict] = {}
+    for row in sampled.itertuples(index=False):
+        pid  = str(getattr(row, pid_col, "")).strip()
+        if not pid:
+            continue
+        byear = getattr(row, byear_col, None)
+        sex   = str(getattr(row, sex_col, "") or "").strip() or None
+        addr  = str(getattr(row, addr_col, "") or "").strip()
+        sampled_pids.append(pid)
+        demographics[pid] = {
+            "byear":    int(float(byear)) if byear is not None else None,
+            "sex_type": sex,
+            "addr_cd":  addr[:addr_digits] if addr else None,
+        }
+
+    strata_summary = sampled["_strata"].value_counts().to_dict()
+    logger.info(
+        "층화 샘플링 완료: %d명 → %d명 (%d 층)", total, len(sampled_pids), len(strata_summary)
+    )
+    return sampled_pids, demographics, strata_summary
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 층화 샘플링 (DuckDB 기반, 학습 시 사용)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def stratified_sample_from_parquet(
@@ -1044,6 +1172,7 @@ def _load_dup_groups() -> pd.DataFrame | None:
 
 
 AGE_MAP_PATH = ROOT / "data" / "raw" / "eligibility_ages.parquet"
+DEMOGRAPHICS_PATH = ROOT / "data" / "raw" / "eligibility_demographics.parquet"
 CYP_MATRIX_PATH = ROOT / "data" / "processed" / "cyp_matrix.parquet"
 DRUG_INDEX_PATH = ROOT / "data" / "processed" / "drug_name_index.parquet"
 
@@ -1062,19 +1191,103 @@ def _load_cyp_extractor():
     return None
 
 
-def _load_age_map() -> dict[str, int]:
-    """저장된 자격DB 나이 매핑 로드. 파일 없으면 빈 딕셔너리 반환."""
-    if AGE_MAP_PATH.exists():
+def _load_demographics() -> dict[str, dict]:
+    """저장된 자격DB 인구통계(BYEAR·SEX_TYPE·RVSN_ADDR_CD) 로드.
+
+    Returns
+    -------
+    dict[str, dict]
+        {patient_id: {"byear": int, "sex_type": str, "addr_cd": str}}
+    파일 없으면 빈 딕셔너리 반환.
+    """
+    if DEMOGRAPHICS_PATH.exists():
         try:
-            df = pd.read_parquet(AGE_MAP_PATH)
-            return dict(zip(df["patient_id"].astype(str), df["age"].astype(int)))
+            df = pd.read_parquet(DEMOGRAPHICS_PATH)
+            result: dict[str, dict] = {}
+            for row in df.itertuples(index=False):
+                pid = str(row.patient_id)
+                result[pid] = {
+                    "byear":    int(row.byear) if pd.notna(row.byear) else None,
+                    "sex_type": str(row.sex_type) if pd.notna(row.sex_type) else None,
+                    "addr_cd":  str(row.addr_cd)  if pd.notna(row.addr_cd)  else None,
+                }
+            return result
         except Exception as e:
-            logger.warning("나이 매핑 로드 실패: %s", e)
+            logger.warning("인구통계 매핑 로드 실패: %s", e)
+    return {}
+
+
+def save_demographics(
+    demographics: dict[str, dict],
+    path: Path | None = None,
+    reference_year: int | None = None,
+) -> Path:
+    """인구통계 매핑을 Parquet로 저장 (ETL 추출 후 호출).
+
+    Parameters
+    ----------
+    demographics : dict[str, dict]
+        {patient_id: {"byear": int, "sex_type": str, "addr_cd": str}}
+        fetch_eligibility_demographics 반환값을 그대로 전달.
+    path : Path, optional
+        저장 경로. 미지정 시 DEMOGRAPHICS_PATH 사용.
+    reference_year : int, optional
+        나이 계산 기준 연도. 지정 시 "age" 열도 함께 저장.
+    """
+    from datetime import date as _date
+
+    out = path or DEMOGRAPHICS_PATH
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ref = reference_year or _date.today().year
+
+    rows = []
+    for pid, d in demographics.items():
+        byear = d.get("byear")
+        rows.append({
+            "patient_id": pid,
+            "byear":      byear,
+            "age":        (ref - int(byear)) if byear is not None else None,
+            "sex_type":   d.get("sex_type"),
+            "addr_cd":    d.get("addr_cd"),
+        })
+    df = pd.DataFrame(rows)
+    df.to_parquet(out, index=False)
+    logger.info("인구통계 매핑 저장: %s (%d명)", out, len(demographics))
+
+    # 구버전 AGE_MAP_PATH 도 동시 갱신 (하위 호환)
+    try:
+        age_df = df[["patient_id", "age"]].dropna(subset=["age"])
+        age_df = age_df.astype({"age": int})
+        age_df.to_parquet(AGE_MAP_PATH, index=False)
+    except Exception as e:
+        logger.warning("나이 매핑 동기화 실패: %s", e)
+
+    return out
+
+
+def _load_age_map() -> dict[str, int]:
+    """저장된 자격DB 나이 매핑 로드.
+
+    DEMOGRAPHICS_PATH가 있으면 그 파일에서 age 열을 읽고,
+    없으면 구버전 AGE_MAP_PATH로 폴백합니다.
+    """
+    for fpath in (DEMOGRAPHICS_PATH, AGE_MAP_PATH):
+        if fpath.exists():
+            try:
+                df = pd.read_parquet(fpath, columns=["patient_id", "age"])
+                df = df.dropna(subset=["age"])
+                return dict(zip(df["patient_id"].astype(str), df["age"].astype(int)))
+            except Exception as e:
+                logger.warning("나이 매핑 로드 실패 (%s): %s", fpath.name, e)
     return {}
 
 
 def save_age_map(age_map: dict[str, int], path: Path | None = None) -> Path:
-    """나이 매핑을 Parquet로 저장 (ETL 추출 후 호출)."""
+    """나이 매핑을 Parquet로 저장 (ETL 추출 후 호출).
+
+    .. deprecated::
+        save_demographics 사용 권장.
+    """
     out = path or AGE_MAP_PATH
     out.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame({"patient_id": list(age_map.keys()), "age": list(age_map.values())})

@@ -443,7 +443,214 @@ class SASExtractor:
             ))
         return records
 
-    # ── 자격 DB (Eligibility) → 환자 나이 ──────────────────────
+    # ── T40 ICD-10 질환 필터 → 환자 ID 추출 ─────────────────────
+
+    def fetch_patients_by_icd10(
+        self,
+        icd10_prefixes: list[str],
+        yyyymm_set: "set[str] | list[str] | None" = None,
+        progress_cb: Callable[[str], None] | None = None,
+    ) -> list[str]:
+        """T40 SAS 파일에서 ICD-10 상병코드에 해당하는 환자 ID 반환.
+
+        Parameters
+        ----------
+        icd10_prefixes : list[str]
+            ICD-10 접두사 목록. 예: ["E11", "I10"]
+        yyyymm_set : set/list[str], optional
+            YYYYMM 필터. None이면 전체 파일을 읽습니다.
+
+        Returns
+        -------
+        list[str] : 중복 제거된 INDI_DSCM_NO 목록.
+        """
+        if not icd10_prefixes:
+            return []
+
+        fpath = self._file_path("t40")
+        if fpath is None:
+            if progress_cb:
+                progress_cb("[건너뜀] T40 SAS 파일 미지정 또는 없음")
+            return []
+
+        c = self.cols["t40"]
+        pid_col  = c["patient_id"]
+        sick_col = c["sick_code"]
+        ym_col   = c.get("yyyymm", "MDCARE_STRT_YYYYMM")
+
+        _ym_set: set[str] | None = set(yyyymm_set) if yyyymm_set is not None else None
+        # prefix 대문자 정규화
+        prefixes = [p.strip().upper() for p in icd10_prefixes]
+        use_cols = [pid_col, sick_col]
+        if _ym_set is not None:
+            use_cols.append(ym_col)
+
+        codes_str = ", ".join(prefixes)
+        if progress_cb:
+            progress_cb(f"T40 SAS ICD-10 필터: {codes_str}")
+
+        pid_set: set[str] = set()
+        for chunk in read_sas_chunks(fpath, self.encoding, use_cols, self.chunksize):
+            if _ym_set is not None and ym_col in chunk.columns:
+                chunk = chunk[chunk[ym_col].astype(str).str.strip().isin(_ym_set)]
+            if chunk.empty:
+                continue
+            # ICD-10 prefix 매칭: startswith any prefix
+            sick_series = chunk[sick_col].astype(str).str.strip().str.upper()
+            mask = sick_series.apply(
+                lambda x: any(x.startswith(pf) for pf in prefixes)
+            )
+            matched = chunk.loc[mask, pid_col].astype(str).str.strip()
+            pid_set.update(matched.unique())
+
+        result = [p for p in pid_set if p]
+        if progress_cb:
+            progress_cb(f"T40 SAS ICD-10 완료: {codes_str} → {len(result):,}명")
+        return result
+
+    # ── 자격 DB (Eligibility) → 전체 인구통계 (층화 샘플링용) ────
+
+    def fetch_eligibility_for_sampling(
+        self,
+        std_year: str,
+        addr_digits: int = 5,
+        progress_cb: Callable[[str], None] | None = None,
+    ) -> pd.DataFrame:
+        """자격DB SAS 파일에서 연도별 전체 인구통계 조회 (사전 층화 샘플링용).
+
+        patient_ids 필터 없이 STD_YYYY = std_year 에 해당하는 전체 레코드를 반환합니다.
+        중복 INDI_DSCM_NO는 마지막 레코드 유지.
+
+        Returns
+        -------
+        pd.DataFrame : INDI_DSCM_NO, BYEAR, SEX_TYPE, RVSN_ADDR_CD(잘린 값) 컬럼.
+        """
+        c = self.cols.get("eligibility", {})
+        pid_col    = c.get("patient_id",   "INDI_DSCM_NO")
+        byear_col  = c.get("byear",        "BYEAR")
+        sex_col    = c.get("sex_type",     "SEX_TYPE")
+        year_col   = c.get("std_year",     "STD_YYYY")
+        addr_col   = c.get("rvsn_addr_cd", "RVSN_ADDR_CD")
+
+        fpath = self._file_path("eligibility")
+        if fpath is None:
+            if progress_cb:
+                progress_cb("[건너뜀] 자격DB SAS 파일 미지정 또는 없음")
+            return pd.DataFrame()
+
+        if progress_cb:
+            progress_cb(
+                f"자격DB SAS 전체 읽기 (층화 샘플링용): {fpath.name} (STD_YYYY={std_year})"
+            )
+
+        use_cols = [pid_col, byear_col, sex_col, addr_col, year_col]
+        rows_acc: list[pd.DataFrame] = []
+
+        for chunk in read_sas_chunks(fpath, self.encoding, use_cols, self.chunksize):
+            if year_col in chunk.columns:
+                chunk = chunk[chunk[year_col].astype(str).str.strip() == str(std_year)]
+            if chunk.empty:
+                continue
+            chunk = chunk[[pid_col, byear_col, sex_col, addr_col]].copy()
+            chunk[addr_col] = chunk[addr_col].astype(str).str[:addr_digits]
+            rows_acc.append(chunk)
+
+        if not rows_acc:
+            return pd.DataFrame(columns=[pid_col, byear_col, sex_col, addr_col])
+
+        df = pd.concat(rows_acc, ignore_index=True)
+        df = df.drop_duplicates(subset=[pid_col], keep="last").reset_index(drop=True)
+
+        if progress_cb:
+            progress_cb(f"자격DB SAS 전체 완료: {len(df):,}명")
+        return df
+
+    # ── 자격 DB (Eligibility) → 인구통계 ────────────────────────
+
+    def fetch_eligibility_demographics(
+        self,
+        patient_ids: list[str],
+        std_year: str,
+        addr_digits: int = 5,
+        progress_cb: Callable[[str], None] | None = None,
+    ) -> dict[str, dict]:
+        """자격 DB SAS 파일에서 BYEAR·SEX_TYPE·RVSN_ADDR_CD 조회.
+
+        Parameters
+        ----------
+        patient_ids : list[str]
+            처방 추출 후 수집한 고유 INDI_DSCM_NO 목록.
+        std_year : str
+            추출 기준 연도 (STD_YYYY 필터, 예: "2023").
+        addr_digits : int
+            RVSN_ADDR_CD 앞 몇 자리를 사용할지 (5 또는 8).
+        progress_cb : callable, optional
+            진행 메시지 콜백.
+
+        Returns
+        -------
+        dict[str, dict]
+            {patient_id: {"byear": int, "sex_type": str, "addr_cd": str}}
+            INDI_DSCM_NO 중복 시 마지막 레코드의 RVSN_ADDR_CD 사용.
+        """
+        c = self.cols.get("eligibility", {})
+        pid_col    = c.get("patient_id",   "INDI_DSCM_NO")
+        byear_col  = c.get("byear",        "BYEAR")
+        sex_col    = c.get("sex_type",     "SEX_TYPE")
+        year_col   = c.get("std_year",     "STD_YYYY")
+        addr_col   = c.get("rvsn_addr_cd", "RVSN_ADDR_CD")
+
+        fpath = self._file_path("eligibility")
+        if fpath is None:
+            if progress_cb:
+                progress_cb("[건너뜀] 자격DB SAS 파일 미지정 또는 없음")
+            return {}
+
+        if progress_cb:
+            progress_cb(
+                f"자격DB SAS 읽기: {fpath.name} "
+                f"(STD_YYYY={std_year}, 대상 {len(patient_ids):,}명)"
+            )
+
+        pid_set = set(patient_ids)
+        use_cols = [pid_col, byear_col, sex_col, addr_col, year_col]
+        # 청크별로 누적 후 최종 drop_duplicates(keep='last')
+        rows_acc: list[dict] = []
+
+        for chunk in read_sas_chunks(fpath, self.encoding, use_cols, self.chunksize):
+            # STD_YYYY 필터
+            year_vals = chunk.get(year_col) if hasattr(chunk, "get") else None
+            if year_col in chunk.columns:
+                chunk = chunk[chunk[year_col].astype(str).str.strip() == str(std_year)]
+            # 대상 환자 필터
+            chunk = chunk[chunk[pid_col].astype(str).str.strip().isin(pid_set)]
+            for row in chunk.itertuples(index=False):
+                pid  = str(getattr(row, pid_col, "")).strip()
+                addr = str(getattr(row, addr_col, "") or "").strip()
+                rows_acc.append({
+                    pid_col:   pid,
+                    byear_col: getattr(row, byear_col, None),
+                    sex_col:   str(getattr(row, sex_col, "") or "").strip() or None,
+                    addr_col:  addr[:addr_digits] if addr else None,
+                })
+
+        # 중복 INDI_DSCM_NO → 마지막 레코드 유지
+        result: dict[str, dict] = {}
+        for r in rows_acc:
+            pid = r[pid_col]
+            if pid:
+                byear = r[byear_col]
+                result[pid] = {
+                    "byear":    int(float(byear)) if byear is not None else None,
+                    "sex_type": r[sex_col],
+                    "addr_cd":  r[addr_col],
+                }
+
+        if progress_cb:
+            progress_cb(f"자격DB 완료: {len(result):,}명 인구통계 매핑")
+        return result
+
+    # ── 자격 DB (Eligibility) → 환자 나이 (구버전, 호환성 유지) ─────
 
     def fetch_eligibility_ages(
         self,
@@ -454,6 +661,10 @@ class SASExtractor:
         """자격 DB SAS 파일에서 BYEAR 조회 → {patient_id: age} 딕셔너리.
 
         나이 = reference_year - BYEAR.
+
+        .. deprecated::
+            fetch_eligibility_demographics 사용 권장.
+            STD_YYYY 필터 없이 전체 파일을 읽으므로 메모리 사용량이 큽니다.
         """
         from datetime import date as _date
 
@@ -507,7 +718,10 @@ class SASExtractor:
         buffer_days: int = 0,
         buffer_after_days: int = 0,
         progress_cb: Callable[[str], None] | None = None,
+        patient_ids: list[str] | None = None,
     ) -> tuple[list[PrescriptionRecord], dict]:
+
+        _pid_set: set[str] | None = set(patient_ids) if patient_ids is not None else None
 
         analysis_start = f"{year_from}{month_from}"
         analysis_end = f"{year_to}{month_to}"
@@ -546,6 +760,8 @@ class SASExtractor:
             c20["start_date"], c20["sex"], c20["age_id"], c20["institution_type"],
         ]
         t20 = self._load_filtered("t20", t20_cols, yyyymm_set, progress_cb)
+        if _pid_set is not None and not t20.empty and c20["patient_id"] in t20.columns:
+            t20 = t20[t20[c20["patient_id"]].isin(_pid_set)]
         stats_t20 = len(t20)
         t20_index = pd.DataFrame()
         if not t20.empty and c20["bill_no"] in t20.columns:
@@ -569,6 +785,8 @@ class SASExtractor:
             c30["efmdc"], c30["dose_once"], c30["dose_freq"], c30["total_days"],
         ]
         t30 = self._load_filtered("t30", t30_cols, yyyymm_set, progress_cb)
+        if _pid_set is not None and not t30.empty and c30["patient_id"] in t30.columns:
+            t30 = t30[t30[c30["patient_id"]].isin(_pid_set)]
         stats_t30 = len(t30)
 
         if progress_cb:
@@ -585,6 +803,8 @@ class SASExtractor:
             c60["sick_code"], c60["institution_id"],
         ]
         t60 = self._load_filtered("t60", t60_cols, yyyymm_set, progress_cb)
+        if _pid_set is not None and not t60.empty and c60["patient_id"] in t60.columns:
+            t60 = t60[t60[c60["patient_id"]].isin(_pid_set)]
         stats_t60 = len(t60)
 
         if progress_cb:
@@ -631,6 +851,7 @@ class SASExtractor:
         buffer_after_days: int = 0,
         memory_limit_mb: int = 0,
         progress_cb: Callable[[str], None] | None = None,
+        patient_ids: list[str] | None = None,
     ) -> tuple[list[Path], dict]:
         """
         SAS 파일 → 청크 Parquet 저장 (메모리 효율화).
@@ -679,6 +900,8 @@ class SASExtractor:
                 f"대상 YYYYMM {len(yyyymm_sorted)}개월"
             )
 
+        _pid_set: set[str] | None = set(patient_ids) if patient_ids is not None else None
+
         c20 = self.cols["t20"]
         c30 = self.cols["t30"]
         c40 = self.cols["t40"]
@@ -691,6 +914,8 @@ class SASExtractor:
             c20["institution_type"],
         ]
         t20 = self._load_filtered("t20", t20_cols, full_yyyymm_set, progress_cb)
+        if _pid_set is not None and not t20.empty and c20["patient_id"] in t20.columns:
+            t20 = t20[t20[c20["patient_id"]].isin(_pid_set)]
         t20_index = pd.DataFrame()
         if not t20.empty and c20["bill_no"] in t20.columns:
             t20_index = t20.set_index(c20["bill_no"])
@@ -729,6 +954,8 @@ class SASExtractor:
             progress_cb("T30/T40/T60 SAS → Parquet 캐시 변환 (1회 읽기)...")
 
         _t30_full = self._load_filtered("t30", t30_cols, full_yyyymm_set, progress_cb)
+        if _pid_set is not None and not _t30_full.empty and c30["patient_id"] in _t30_full.columns:
+            _t30_full = _t30_full[_t30_full[c30["patient_id"]].isin(_pid_set)]
         _t30_cache = None
         _stats_t30 = len(_t30_full)
         if not _t30_full.empty:
@@ -749,6 +976,8 @@ class SASExtractor:
         gc.collect()
 
         _t60_full = self._load_filtered("t60", t60_cols, full_yyyymm_set, progress_cb)
+        if _pid_set is not None and not _t60_full.empty and c60["patient_id"] in _t60_full.columns:
+            _t60_full = _t60_full[_t60_full[c60["patient_id"]].isin(_pid_set)]
         _t60_cache = None
         _stats_t60 = len(_t60_full)
         if not _t60_full.empty:

@@ -41,7 +41,6 @@ venv/
 .venv_hana/
 
 # 미완성 앱 / 비코드 파일 (리뷰 도구 파일명 인코딩 호환성)
-hana_app/pages/
 hana/
 hira/
 error/
