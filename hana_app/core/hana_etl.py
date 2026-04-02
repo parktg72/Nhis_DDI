@@ -40,6 +40,55 @@ _RECORD_COLS = [
     "sick_code", "sex", "age_id", "institution_type", "source",
 ]
 
+_AGE_CASE_SQL = """
+CASE
+    WHEN "{byear_col}" IS NULL THEN 'unknown'
+    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 0 THEN 'unknown'
+    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 20 THEN '0-19'
+    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 40 THEN '20-39'
+    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 60 THEN '40-59'
+    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 75 THEN '60-74'
+    ELSE '75+'
+END
+""".strip()
+
+
+def _allocate_sampling_quotas(
+    counts_df: pd.DataFrame,
+    sample_size: int,
+) -> list[dict[str, object]]:
+    """GROUP BY 결과를 받아 층별 quota를 최대잉여법으로 배분한다."""
+    if counts_df.empty or sample_size <= 0:
+        return []
+
+    total = int(counts_df["POP_COUNT"].sum())
+    if total <= 0:
+        return []
+
+    alloc: list[dict[str, object]] = []
+    for row in counts_df.itertuples(index=False):
+        cnt = int(getattr(row, "POP_COUNT"))
+        exact = cnt / total * sample_size
+        quota = min(int(exact), cnt)
+        alloc.append({
+            "sex": getattr(row, "_SEX"),
+            "age_grp": getattr(row, "_AGE_GRP"),
+            "addr": getattr(row, "_ADDR"),
+            "count": cnt,
+            "quota": quota,
+            "fractional": exact - quota,
+        })
+
+    remaining = sample_size - sum(int(item["quota"]) for item in alloc)
+    for item in sorted(alloc, key=lambda x: x["fractional"], reverse=True):
+        if remaining <= 0:
+            break
+        if int(item["quota"]) < int(item["count"]):
+            item["quota"] = int(item["quota"]) + 1
+            remaining -= 1
+
+    return [item for item in alloc if int(item["quota"]) > 0]
+
 
 # ---------------------------------------------------------------------------
 # 날짜 헬퍼
@@ -473,6 +522,7 @@ class HANAExtractor:
         std_year: str,
         addr_digits: int = 5,
         sample_size: int | None = None,
+        seed: int = 42,
         progress_cb: Callable[[str], None] | None = None,
     ) -> pd.DataFrame:
         """자격DB에서 연도별 인구통계 조회 (사전 층화 샘플링용).
@@ -484,9 +534,11 @@ class HANAExtractor:
         addr_digits : int
             RVSN_ADDR_CD 앞 몇 자리 (5 또는 8).
         sample_size : int, optional
-            지정 시 DB에서 ``sample_size * 2`` 행만 랜덤 추출하여 Python 전송량을
-            제한합니다. 전체 인구를 pandas로 로드하지 않아 메모리 절약.
+            지정 시 전체 모집단의 층별 인원 수를 먼저 집계한 뒤 비례 quota를 계산하고,
+            각 층에서 정확히 quota만큼만 추출합니다.
             None 이면 전체 연도 데이터를 반환합니다 (주의: 대용량).
+        seed : int
+            층별 샘플 행 선택에 사용할 결정적 시드.
 
         Returns
         -------
@@ -508,36 +560,154 @@ class HANAExtractor:
         year_col   = c.get("std_year",     "STD_YYYY")
         addr_col   = c.get("rvsn_addr_cd", "RVSN_ADDR_CD")
 
+        for label, value in (
+            ("patient_id", pid_col),
+            ("byear", byear_col),
+            ("sex_type", sex_col),
+            ("std_year", year_col),
+            ("rvsn_addr_cd", addr_col),
+        ):
+            _assert_safe_identifier(value, label)
+
+        age_expr = _AGE_CASE_SQL.format(byear_col=byear_col)
+        sex_expr = f"COALESCE(NULLIF(TRIM(TO_NVARCHAR(\"{sex_col}\")), ''), 'U')"
+        addr_expr = (
+            f"COALESCE(SUBSTRING(TO_NVARCHAR(\"{addr_col}\"), 1, {int(addr_digits)}), '')"
+        )
+        base_cte = f"""
+WITH base AS (
+    SELECT
+        TO_NVARCHAR("{pid_col}") AS "{pid_col}",
+        "{byear_col}" AS "{byear_col}",
+        "{sex_col}" AS "{sex_col}",
+        "{addr_col}" AS "{addr_col}",
+        ROW_NUMBER() OVER (
+            PARTITION BY TO_NVARCHAR("{pid_col}")
+            ORDER BY
+                TO_NVARCHAR("{pid_col}") DESC,
+                TO_NVARCHAR("{byear_col}") DESC,
+                TO_NVARCHAR("{sex_col}") DESC,
+                TO_NVARCHAR("{addr_col}") DESC
+        ) AS _PID_RN
+    FROM {tbl}
+    WHERE "{year_col}" = ?
+),
+dedup AS (
+    SELECT
+        "{pid_col}",
+        "{byear_col}",
+        "{sex_col}",
+        "{addr_col}",
+        {sex_expr} AS _SEX,
+        {age_expr} AS _AGE_GRP,
+        {addr_expr} AS _ADDR
+    FROM base
+    WHERE _PID_RN = 1
+)
+""".strip()
+
         if sample_size is not None and sample_size > 0:
-            # 메모리 절약: HANA에서 2배 오버샘플 후 Python 전송 (대용량 전체 로드 방지)
-            # ORDER BY RAND() → 결과가 랜덤이어서 stratify_and_sample_patients 재층화 유효
-            oversample = min(sample_size * 2, 10_000_000)
-            sql = (
-                f'SELECT TOP ? "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
-                f'FROM {tbl} WHERE "{year_col}" = ? '
-                f'ORDER BY RAND()'
+            count_sql = (
+                f"{base_cte} "
+                "SELECT _SEX, _AGE_GRP, _ADDR, COUNT(*) AS POP_COUNT "
+                "FROM dedup "
+                "GROUP BY _SEX, _AGE_GRP, _ADDR"
             )
-            params: list = [oversample, std_year]
+            count_params: list = [
+                std_year,
+                int(std_year),
+                int(std_year),
+                int(std_year),
+                int(std_year),
+                int(std_year),
+            ]
+            counts_df = self.conn.query_df(count_sql, count_params)
+            quotas = _allocate_sampling_quotas(counts_df, int(sample_size))
+
             if progress_cb:
                 progress_cb(
-                    f"자격DB 오버샘플 조회 (샘플링용 {oversample:,}행 제한): "
-                    f"{tbl} (STD_YYYY={std_year})"
+                    f"자격DB 층별 quota 계산: {tbl} (STD_YYYY={std_year}, seed={int(seed)})"
                 )
-        else:
-            # 전체 조회 (소규모 데이터 또는 sample_size 미지정)
-            # ORDER BY pid ASC → drop_duplicates(keep="last") 결과가 항상 결정적
-            sql = (
-                f'SELECT "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
-                f'FROM {tbl} WHERE "{year_col}" = ? '
-                f'ORDER BY "{pid_col}" ASC'
+
+            if not quotas:
+                return pd.DataFrame(columns=[pid_col, byear_col, sex_col, addr_col])
+
+            quota_rows_sql: list[str] = []
+            quota_params: list[object] = []
+            for quota in quotas:
+                quota_rows_sql.append(
+                    "SELECT ? AS _SEX, ? AS _AGE_GRP, ? AS _ADDR, ? AS QUOTA FROM DUMMY"
+                )
+                quota_params.extend([
+                    quota["sex"], quota["age_grp"], quota["addr"], int(quota["quota"]),
+                ])
+
+            sample_sql = f"""
+{base_cte},
+quota_map AS (
+    {" UNION ALL ".join(quota_rows_sql)}
+),
+ranked AS (
+    SELECT
+        d."{pid_col}",
+        d."{byear_col}",
+        d."{sex_col}",
+        d."{addr_col}",
+        ROW_NUMBER() OVER (
+            PARTITION BY d._SEX, d._AGE_GRP, d._ADDR
+            ORDER BY HASH_SHA256(
+                COALESCE(d."{pid_col}", '') || '|' || TO_NVARCHAR(?)
             )
-            params = [std_year]
+        ) AS _STRATA_RN,
+        q.QUOTA
+    FROM dedup d
+    INNER JOIN quota_map q
+        ON d._SEX = q._SEX
+       AND d._AGE_GRP = q._AGE_GRP
+       AND d._ADDR = q._ADDR
+)
+SELECT "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}"
+FROM ranked
+WHERE _STRATA_RN <= QUOTA
+ORDER BY "{pid_col}" ASC
+""".strip()
+            params = (
+                [
+                    std_year,
+                    int(std_year),
+                    int(std_year),
+                    int(std_year),
+                    int(std_year),
+                    int(std_year),
+                ]
+                + quota_params
+                + [int(seed)]
+            )
+            if progress_cb:
+                progress_cb(
+                    f"자격DB quota 추출 실행: 총 {int(sample_size):,}명 목표, "
+                    f"{len(quotas):,}개 층"
+                )
+            df = self.conn.query_df(sample_sql, params)
+        else:
+            sql = (
+                f"{base_cte} "
+                f'SELECT "{pid_col}", "{byear_col}", "{sex_col}", "{addr_col}" '
+                f'FROM dedup ORDER BY "{pid_col}" ASC'
+            )
+            params = [
+                std_year,
+                int(std_year),
+                int(std_year),
+                int(std_year),
+                int(std_year),
+                int(std_year),
+            ]
             if progress_cb:
                 progress_cb(
                     f"자격DB 전체 조회 (층화 샘플링용): {tbl} (STD_YYYY={std_year})"
                 )
-
-        df = self.conn.query_df(sql, params)
+            df = self.conn.query_df(sql, params)
 
         # 중복 INDI_DSCM_NO → 마지막 레코드 유지 (결정적)
         if not df.empty:

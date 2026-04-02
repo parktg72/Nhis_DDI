@@ -910,11 +910,16 @@ if run_btn:
                         for pid, d in elig_df.items()
                     ])
                 else:
-                    # 전체 자격DB 조회
-                    log(f"자격DB 전체 인구통계 조회 중 (STD_YYYY={reference_year})...")
+                    # 전체 자격DB 조회 — DB/SAS에서 seed 기반 quota 추출
+                    log(
+                        f"자격DB 인구통계 조회 중 (STD_YYYY={reference_year}, "
+                        f"목표 {int(pre_sample_size):,}명, seed={int(pre_sample_seed)})..."
+                    )
                     elig_df = extractor.fetch_eligibility_for_sampling(
                         std_year=str(int(reference_year)),
                         addr_digits=int(addr_digits),
+                        sample_size=int(pre_sample_size),
+                        seed=int(pre_sample_seed),
                         progress_cb=log,
                     )
 

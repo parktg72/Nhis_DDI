@@ -401,6 +401,35 @@ _DEFAULT_AGE_BINS   = [0,  20,  40,  60,  75,  200]
 _DEFAULT_AGE_LABELS = ["0-19", "20-39", "40-59", "60-74", "75+"]
 
 
+def _allocate_stratum_quotas(
+    strata_counts: pd.Series,
+    sample_size: int,
+) -> dict[str, int]:
+    """층별 모집단 수에 비례해 총 sample_size를 정확히 배분한다."""
+    total = int(strata_counts.sum())
+    if sample_size <= 0 or total <= 0:
+        return {}
+
+    alloc: dict[str, int] = {}
+    fractional: dict[str, float] = {}
+    for st, cnt_raw in strata_counts.items():
+        cnt = int(cnt_raw)
+        exact = cnt / total * sample_size
+        floor_val = min(int(exact), cnt)
+        alloc[st] = floor_val
+        fractional[st] = exact - floor_val
+
+    remaining = sample_size - sum(alloc.values())
+    for st in sorted(fractional, key=fractional.__getitem__, reverse=True):
+        if remaining <= 0:
+            break
+        if alloc[st] < int(strata_counts[st]):
+            alloc[st] += 1
+            remaining -= 1
+
+    return alloc
+
+
 def stratify_and_sample_patients(
     elig_df: pd.DataFrame,
     sample_size: int,
@@ -451,6 +480,16 @@ def stratify_and_sample_patients(
     if df.empty or sample_size <= 0:
         return [], {}, {}
 
+    df[pid_col] = df[pid_col].astype(str).str.strip()
+    df = df[df[pid_col] != ""].copy()
+    df = df.drop_duplicates(subset=[pid_col], keep="last").reset_index(drop=True)
+    unique_patients = int(df[pid_col].nunique())
+    if unique_patients < sample_size:
+        raise ValueError(
+            "사전 조회된 코호트의 고유 환자 수가 요청 샘플 수보다 적습니다: "
+            f"{unique_patients:,}명 < {sample_size:,}명"
+        )
+
     # ── 나이·층화 키 생성 ─────────────────────────────────────────────
     df["_age"] = reference_year - pd.to_numeric(df[byear_col], errors="coerce")
     df["_age_grp"] = pd.cut(
@@ -461,46 +500,40 @@ def stratify_and_sample_patients(
     df["_strata"] = df["_sex"] + "|" + df["_age_grp"] + "|" + df["_addr"]
 
     total = len(df)
-    if total <= sample_size:
+    if total == sample_size:
         sampled = df
     else:
-        # 비례 배분: floor + 최대잉여법(LR) → 항상 정확히 sample_size 명 배분
         strata_counts = df["_strata"].value_counts()
-        alloc: dict[str, int] = {}
-        fractional: dict[str, float] = {}
-        for st, cnt in strata_counts.items():
-            exact = cnt / total * sample_size
-            floor_val = min(int(exact), int(cnt))
-            alloc[st] = floor_val
-            fractional[st] = exact - floor_val  # 소수 부분 (잉여)
-
-        remaining = sample_size - sum(alloc.values())
-        # 소수 부분이 큰 층부터 1씩 추가 배분 (최대잉여법)
-        for st in sorted(fractional, key=fractional.__getitem__, reverse=True):
-            if remaining <= 0:
-                break
-            if alloc[st] < int(strata_counts[st]):
-                alloc[st] += 1
-                remaining -= 1
+        alloc = _allocate_stratum_quotas(strata_counts, sample_size)
 
         rng = np.random.default_rng(seed)
         parts: list[pd.DataFrame] = []
+        zero_eligible_strata: list[str] = []
         for st, a in alloc.items():
             if a <= 0:
                 continue
             sub = df[df["_strata"] == st]
+            if sub.empty:
+                zero_eligible_strata.append(st)
+                continue
             if len(sub) <= a:
                 parts.append(sub)
             else:
                 parts.append(
                     sub.sample(n=a, random_state=int(rng.integers(0, 2**31)))
                 )
+
+        if zero_eligible_strata:
+            raise ValueError(
+                "할당된 층 중 추출 가능한 환자가 없는 층이 있습니다: "
+                + ", ".join(zero_eligible_strata[:10])
+            )
+
         sampled = pd.concat(parts, ignore_index=True) if parts else df.head(0)
-        # 부동소수 오차 등으로 초과 시 정확히 sample_size 로 자르기
-        if len(sampled) > sample_size:
-            sampled = sampled.sample(
-                n=sample_size,
-                random_state=int(rng.integers(0, 2**31)),
+        if len(sampled) != sample_size:
+            raise ValueError(
+                "층화 샘플링 quota를 정확히 충족하지 못했습니다: "
+                f"요청 {sample_size:,}명, 실제 {len(sampled):,}명"
             )
 
     # ── 결과 변환 ─────────────────────────────────────────────────────

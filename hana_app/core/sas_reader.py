@@ -515,6 +515,7 @@ class SASExtractor:
         std_year: str,
         addr_digits: int = 5,
         sample_size: int | None = None,
+        seed: int = 42,
         progress_cb: Callable[[str], None] | None = None,
     ) -> pd.DataFrame:
         """자격DB SAS 파일에서 연도별 인구통계 조회 (사전 층화 샘플링용).
@@ -528,6 +529,8 @@ class SASExtractor:
             지정 시 2-pass 스트리밍 저장소 샘플링을 사용합니다.
             전체 파일을 메모리에 올리지 않고 ``sample_size`` 행만 보유.
             None 이면 전체 데이터를 메모리에 로드합니다 (주의: 대용량).
+        seed : int
+            저장소 샘플링에 사용할 시드.
 
         Returns
         -------
@@ -595,7 +598,7 @@ class SASExtractor:
                 progress_cb(
                     f"자격DB SAS 2차 스캔 (저장소 샘플링 {sample_size:,}명): {fpath.name}"
                 )
-            rng_local = _random.Random(42)
+            rng_local = _random.Random(int(seed))
             reservoirs: dict[str, list] = {k: [] for k in alloc if alloc[k] > 0}
             counts_seen: dict[str, int] = _defaultdict(int)
 
