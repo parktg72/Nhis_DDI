@@ -9,6 +9,7 @@ import gc
 import re
 import time
 import logging
+from decimal import Decimal
 import duckdb
 import pandas as pd
 from pathlib import Path
@@ -30,6 +31,66 @@ def _validate_table_name(name):
     return name
 
 logger = logging.getLogger(__name__)
+
+DUCKDB_WIDE_INTEGER_DECIMAL = 'DECIMAL(18,0)'
+
+
+def _quote_identifier(name):
+    """DuckDB identifier를 안전하게 이스케이프한다."""
+    return f'"{str(name).replace(chr(34), chr(34) * 2)}"'
+
+
+def _build_chunk_select_sql(chunk_df, temp_table_name):
+    """등록된 임시 청크에서 타입 override를 반영한 SELECT SQL 생성."""
+    type_overrides = chunk_df.attrs.get('duckdb_type_overrides', {})
+    select_parts = []
+
+    for col in chunk_df.columns:
+        quoted = _quote_identifier(col)
+        override_type = type_overrides.get(col)
+        if override_type:
+            select_parts.append(f'CAST({quoted} AS {override_type}) AS {quoted}')
+        else:
+            select_parts.append(quoted)
+
+    return f"SELECT {', '.join(select_parts)} FROM {temp_table_name}"
+
+
+def _prepare_chunk_for_duckdb(chunk_df):
+    """DuckDB 등록 전 청크 dtype을 안정화한다.
+
+    Python Decimal object가 첫 청크에서 좁은 DECIMAL(p,s)로 추론되면
+    이후 청크의 더 큰 값이 INSERT 시 범위 초과를 일으킬 수 있다.
+    적재 전 Decimal 컬럼을 숫자 타입으로 유지한 채 명시적으로
+    넉넉한 DECIMAL 타입으로 캐스팅해 청크 간 스키마를 고정한다.
+    """
+    type_overrides = {}
+
+    for col in chunk_df.select_dtypes(include=['category']).columns:
+        chunk_df[col] = chunk_df[col].astype('object')
+
+    for col in chunk_df.columns:
+        series = chunk_df[col]
+        if series.dtype != 'object':
+            continue
+
+        non_null = series[series.notna()]
+        if non_null.empty:
+            continue
+
+        if not non_null.map(lambda value: isinstance(value, Decimal)).all():
+            continue
+
+        if non_null.map(lambda value: value == value.to_integral_value()).all():
+            type_overrides[col] = DUCKDB_WIDE_INTEGER_DECIMAL
+        else:
+            scale = non_null.map(
+                lambda value: max(0, -value.as_tuple().exponent)
+            ).max()
+            type_overrides[col] = f'DECIMAL(38,{scale})'
+
+    chunk_df.attrs['duckdb_type_overrides'] = type_overrides
+    return chunk_df
 
 
 class DuckDBStorage:
@@ -427,19 +488,19 @@ class HANAConnector:
             # DuckDB 적재 시 optimize_dtypes 사용 금지:
             # 청크별 min/max가 달라 첫 청크 기준 스키마와 이후 청크 값이 불일치
             # (예: 첫 청크 max=999999 → DECIMAL(6,0), 이후 값 1031900 → 범위 초과)
-            # DuckDB는 자체 압축이 있으므로 pandas dtype 최적화 불필요
-            for col in chunk_df.select_dtypes(include=['category']).columns:
-                chunk_df[col] = chunk_df[col].astype('object')
+            # Integral Decimal은 적재 전에 넉넉한 DECIMAL(18,0)으로 고정한다.
+            chunk_df = _prepare_chunk_for_duckdb(chunk_df)
+            chunk_sql = _build_chunk_select_sql(chunk_df, '_temp_chunk')
 
             if first_chunk:
                 duckdb_storage.drop_table(duckdb_table)
                 duckdb_storage.conn.register('_temp_chunk', chunk_df)
-                duckdb_storage.execute(f"CREATE TABLE {duckdb_table} AS SELECT * FROM _temp_chunk")
+                duckdb_storage.execute(f"CREATE TABLE {duckdb_table} AS {chunk_sql}")
                 duckdb_storage.conn.unregister('_temp_chunk')
                 first_chunk = False
             else:
                 duckdb_storage.conn.register('_temp_chunk', chunk_df)
-                duckdb_storage.execute(f"INSERT INTO {duckdb_table} SELECT * FROM _temp_chunk")
+                duckdb_storage.execute(f"INSERT INTO {duckdb_table} {chunk_sql}")
                 duckdb_storage.conn.unregister('_temp_chunk')
 
             total += len(chunk_df)
@@ -490,18 +551,18 @@ class SASFileLoader:
         )
 
         for chunk_df, meta in reader:
-            # DuckDB 적재 시 optimize_dtypes 사용 금지 (청크 간 스키마 불일치 방지)
-            for col in chunk_df.select_dtypes(include=['category']).columns:
-                chunk_df[col] = chunk_df[col].astype('object')
+            # Integral Decimal은 적재 전에 넉넉한 DECIMAL(18,0)으로 고정한다.
+            chunk_df = _prepare_chunk_for_duckdb(chunk_df)
+            chunk_sql = _build_chunk_select_sql(chunk_df, '_temp_sas')
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
-                duckdb_storage.execute(f"CREATE TABLE {table_name} AS SELECT * FROM _temp_sas")
+                duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
                 duckdb_storage.conn.unregister('_temp_sas')
                 first_chunk = False
             else:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
-                duckdb_storage.execute(f"INSERT INTO {table_name} SELECT * FROM _temp_sas")
+                duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
                 duckdb_storage.conn.unregister('_temp_sas')
 
             total += len(chunk_df)
@@ -542,18 +603,17 @@ class SASFileLoader:
         for chunk_df in pd.read_csv(str(csv_path), delimiter=delimiter,
                                      chunksize=current_chunk, low_memory=False,
                                      dtype=str):  # dtype=str prevents mixed type issues
-            # DuckDB 적재 시 optimize_dtypes 사용 금지 (청크 간 스키마 불일치 방지)
-            for col in chunk_df.select_dtypes(include=['category']).columns:
-                chunk_df[col] = chunk_df[col].astype('object')
+            chunk_df = _prepare_chunk_for_duckdb(chunk_df)
+            chunk_sql = _build_chunk_select_sql(chunk_df, '_temp_csv')
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_csv', chunk_df)
-                duckdb_storage.execute(f"CREATE TABLE {table_name} AS SELECT * FROM _temp_csv")
+                duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
                 duckdb_storage.conn.unregister('_temp_csv')
                 first_chunk = False
             else:
                 duckdb_storage.conn.register('_temp_csv', chunk_df)
-                duckdb_storage.execute(f"INSERT INTO {table_name} SELECT * FROM _temp_csv")
+                duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
                 duckdb_storage.conn.unregister('_temp_csv')
 
             total += len(chunk_df)
@@ -603,18 +663,17 @@ class SASFileLoader:
         )
 
         for chunk_df, meta in reader:
-            # DuckDB 적재 시 optimize_dtypes 사용 금지 (청크 간 스키마 불일치 방지)
-            for col in chunk_df.select_dtypes(include=['category']).columns:
-                chunk_df[col] = chunk_df[col].astype('object')
+            chunk_df = _prepare_chunk_for_duckdb(chunk_df)
+            chunk_sql = _build_chunk_select_sql(chunk_df, '_temp_sas')
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
-                duckdb_storage.execute(f"CREATE TABLE {table_name} AS SELECT * FROM _temp_sas")
+                duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
                 duckdb_storage.conn.unregister('_temp_sas')
                 first_chunk = False
             else:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
-                duckdb_storage.execute(f"INSERT INTO {table_name} SELECT * FROM _temp_sas")
+                duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
                 duckdb_storage.conn.unregister('_temp_sas')
 
             total += len(chunk_df)
