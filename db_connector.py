@@ -424,10 +424,10 @@ class HANAConnector:
         for chunk_df in self.fetch_table_chunked(
             hana_table, hana_schema, columns, where_clause, chunk_size
         ):
-            # dtype 최적화
-            chunk_df = mem_manager.optimize_dtypes(chunk_df)
-
-            # DuckDB는 pandas category dtype을 지원하지 않음 → object로 복원
+            # DuckDB 적재 시 optimize_dtypes 사용 금지:
+            # 청크별 min/max가 달라 첫 청크 기준 스키마와 이후 청크 값이 불일치
+            # (예: 첫 청크 max=999999 → DECIMAL(6,0), 이후 값 1031900 → 범위 초과)
+            # DuckDB는 자체 압축이 있으므로 pandas dtype 최적화 불필요
             for col in chunk_df.select_dtypes(include=['category']).columns:
                 chunk_df[col] = chunk_df[col].astype('object')
 
@@ -490,8 +490,9 @@ class SASFileLoader:
         )
 
         for chunk_df, meta in reader:
-            # dtype 최적화 → 메모리 절감
-            chunk_df = mem_manager.optimize_dtypes(chunk_df)
+            # DuckDB 적재 시 optimize_dtypes 사용 금지 (청크 간 스키마 불일치 방지)
+            for col in chunk_df.select_dtypes(include=['category']).columns:
+                chunk_df[col] = chunk_df[col].astype('object')
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
@@ -504,7 +505,6 @@ class SASFileLoader:
                 duckdb_storage.conn.unregister('_temp_sas')
 
             total += len(chunk_df)
-            # ★ Pandas 메모리 적층 방지: chunk 즉시 삭제
             del chunk_df
             gc.collect()
 
@@ -542,7 +542,9 @@ class SASFileLoader:
         for chunk_df in pd.read_csv(str(csv_path), delimiter=delimiter,
                                      chunksize=current_chunk, low_memory=False,
                                      dtype=str):  # dtype=str prevents mixed type issues
-            chunk_df = mem_manager.optimize_dtypes(chunk_df)
+            # DuckDB 적재 시 optimize_dtypes 사용 금지 (청크 간 스키마 불일치 방지)
+            for col in chunk_df.select_dtypes(include=['category']).columns:
+                chunk_df[col] = chunk_df[col].astype('object')
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_csv', chunk_df)
@@ -601,7 +603,9 @@ class SASFileLoader:
         )
 
         for chunk_df, meta in reader:
-            chunk_df = mem_manager.optimize_dtypes(chunk_df)
+            # DuckDB 적재 시 optimize_dtypes 사용 금지 (청크 간 스키마 불일치 방지)
+            for col in chunk_df.select_dtypes(include=['category']).columns:
+                chunk_df[col] = chunk_df[col].astype('object')
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
