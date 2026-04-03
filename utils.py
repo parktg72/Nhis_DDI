@@ -68,3 +68,19 @@ def get_disk_usage(path='.'):
             if os.path.exists(fp):
                 total += os.path.getsize(fp)
     return total
+
+
+class CohortStepError(Exception):
+    """CohortBuilder 단계 실패 예외.
+
+    step: 실패한 단계 번호 (1-7)
+    step_name: 단계 이름 (예: '기본 인구 정의')
+    cause: 원인 예외
+    """
+    def __init__(self, step: int, step_name: str, cause: Exception):
+        self.step = step
+        self.step_name = step_name
+        self.cause = cause
+        super().__init__(
+            f"코호트 {step}단계({step_name}) 실패: {cause}"
+        )
