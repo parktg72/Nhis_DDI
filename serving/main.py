@@ -81,9 +81,11 @@ app = FastAPI(
 app.add_middleware(RequestLoggingMiddleware)
 
 # CORS: 환경변수 CORS_ORIGINS로 허용 오리진 제한 가능 (쉼표 구분)
-# 미설정 시 폐쇄망 기본값 "*" 적용
-_cors_origins_env = os.environ.get("CORS_ORIGINS", "*")
+# 미설정 시 외부 오리진 전체 차단
+_cors_origins_env = os.environ.get("CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+if not _cors_origins:
+    logger.info("CORS_ORIGINS 미설정 — 외부 오리진 차단")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
