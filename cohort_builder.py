@@ -474,25 +474,83 @@ class CohortBuilder:
         return events
 
     def build_cohort(self, cb=None):
+        """6단계 코호트 파이프라인 실행.
+
+        각 단계는 duckdb.Error 발생 시 1회 재시도 후 CohortStepError를 발생시킨다.
+        단계 결과가 0건이어도 CohortStepError를 발생시켜 후속 단계 실행을 막는다.
+        """
+        from utils import CohortStepError
+        import duckdb as _duckdb
+
         results = {}
-        results['base_n'] = self.step1_base_population(cb)
+
+        def _safe_step(step_num, step_name, step_fn, result_table):
+            """단계 함수를 실행하고 CohortStepError로 감싼다."""
+            for attempt in range(2):
+                try:
+                    ret = step_fn(cb)
+                    break
+                except CohortStepError:
+                    raise  # 이미 래핑된 예외는 그대로 전파
+                except _duckdb.Error as e:
+                    if attempt == 0:
+                        logger.warning(
+                            f"[{step_num}/6] {step_name} 1차 실패, 1초 후 재시도: {e}"
+                        )
+                        time.sleep(1)
+                    else:
+                        raise CohortStepError(step_num, step_name, e)
+                except Exception as e:
+                    raise CohortStepError(step_num, step_name, e)
+            else:
+                # loop completed without break = both attempts failed via non-raising path
+                pass
+
+            n = self.dm.storage.get_row_count(result_table)
+            if n == 0:
+                raise CohortStepError(
+                    step_num, step_name,
+                    ValueError(f"{result_table} 결과 0건 — 데이터 적재 상태를 확인하세요.")
+                )
+            logger.info(f"[{step_num}/6] {step_name} 완료: {n:,}건")
+            return ret, n
+
+        results['base_n'], _ = _safe_step(
+            1, "기본 대상 인구 정의",
+            self.step1_base_population, "base_population"
+        )
         mem_manager.cleanup_after_step('step1')
 
-        results['dm_claims'] = self.step2_dm_claims(cb)
+        results['dm_claims'], _ = _safe_step(
+            2, "당뇨 진단 청구 식별",
+            self.step2_dm_claims, "dm_claims"
+        )
         mem_manager.cleanup_after_step('step2')
 
-        results['dm_meds'] = self.step3_dm_medications(cb)
+        results['dm_meds'], _ = _safe_step(
+            3, "당뇨 약물 처방 식별",
+            self.step3_dm_medications, "dm_medications"
+        )
         mem_manager.cleanup_after_step('step3')
 
-        results['groups'] = self.step4_classify_groups(cb)
+        results['groups'], _ = _safe_step(
+            4, "노출군 분류",
+            self.step4_classify_groups, "exposure_groups"
+        )
         mem_manager.cleanup_after_step('step4')
 
-        n, excl = self.step5_exclude_dementia(cb)
-        results['final_n'] = n
-        results['excluded_dementia'] = excl
+        (n, excl), _ = _safe_step(
+            5, "기존 치매 및 항치매약 제외",
+            self.step5_exclude_dementia, "study_cohort"
+        )
+        results['cohort_n'] = n
+        results['excluded'] = excl
         mem_manager.cleanup_after_step('step5')
 
-        results['outcomes'] = self.step6_outcomes(cb)
+        results['events'], _ = _safe_step(
+            6, "결과변수 및 추적기간 산출",
+            self.step6_outcomes, "analysis_data"
+        )
         mem_manager.cleanup_after_step('step6')
 
         if cb: cb("코호트 구축 완료!")

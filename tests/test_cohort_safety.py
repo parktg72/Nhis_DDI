@@ -139,3 +139,31 @@ def test_run_step_retries_once_and_succeeds(mock_sleep):
     assert count == 1
     assert attempt['count'] == 2
     mock_sleep.assert_called_once_with(1)
+
+
+@patch("cohort_builder.time.sleep")
+def test_build_cohort_stops_on_step_failure(mock_sleep):
+    """step1이 실패하면 step2가 호출되지 않아야 한다."""
+    dm = MockDM()
+    builder = make_builder(dm)
+
+    step1_called = {'v': False}
+    step2_called = {'v': False}
+
+    def fake_step1(cb=None):
+        step1_called['v'] = True
+        raise duckdb.Error("step1 fail")
+
+    def fake_step2(cb=None):
+        step2_called['v'] = True
+        return 0
+
+    builder.step1_base_population = fake_step1
+    builder.step2_dm_claims = fake_step2
+
+    with pytest.raises(CohortStepError) as exc_info:
+        builder.build_cohort()
+
+    assert step1_called['v'] is True
+    assert step2_called['v'] is False
+    assert exc_info.value.step == 1
