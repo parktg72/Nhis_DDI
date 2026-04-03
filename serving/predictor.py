@@ -401,7 +401,14 @@ class RequestFeatureBuilder:
         # Apply selector (expects DataFrame)
         if selector is not None:
             try:
-                df = pd.DataFrame(selector.transform(df), columns=selector.get_support(indices=False) if hasattr(selector, 'get_support') else df.columns)
+                cols_before = list(df.columns)
+                arr = selector.transform(df)
+                if hasattr(selector, 'get_support'):
+                    # get_support() returns boolean mask → apply to column names
+                    selected_cols = [c for c, keep in zip(cols_before, selector.get_support()) if keep]
+                else:
+                    selected_cols = cols_before[:arr.shape[1]]
+                df = pd.DataFrame(arr, columns=selected_cols)
             except Exception as e:
                 logger.warning("Selector 적용 실패 (원본 사용): %s", e)
 
