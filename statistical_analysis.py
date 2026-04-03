@@ -882,6 +882,8 @@ class StatisticalAnalyzer:
             mem_manager.cleanup_after_step('sensitivity')
 
         self.results['sampling_info'] = info
+        # tabs.py 기존 호환성: _sampling_note 문자열 유지
+        self.results['_sampling_note'] = info.label if info.applied else None
         self._release_cache()
         if info.applied and cb:
             cb(f"[경고] {info.label}")
