@@ -28,6 +28,16 @@ from airflow.operators.empty import EmptyOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.utils.dates import days_ago
 
+from config.settings import (
+    FEATURES_DIR,
+    MODEL_DIR,
+    TRAIN_WEEKS,
+    MODEL_TYPE,
+    OPTUNA_TRIALS,
+    RECALL_THRESHOLD,
+    AUC_THRESHOLD,
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 기본 설정
 # ─────────────────────────────────────────────────────────────────────────────
@@ -39,14 +49,6 @@ DEFAULT_ARGS = {
     "email_on_retry": False,
     "retries": 0,  # 훈련 실패 시 자동 재시도 안 함 (원인 파악 우선)
 }
-
-FEATURES_DIR     = os.environ.get("DDI_FEATURES_DIR", "/app/data/features")
-MODEL_DIR        = os.environ.get("MODEL_DIR", "/app/models")
-TRAIN_WEEKS      = int(os.environ.get("DDI_TRAIN_WEEKS", "4"))
-MODEL_TYPE       = os.environ.get("DDI_MODEL_TYPE", "ensemble")
-OPTUNA_TRIALS    = int(os.environ.get("DDI_OPTUNA_TRIALS", "50"))
-RECALL_THRESHOLD = float(os.environ.get("DDI_RECALL_THRESHOLD", "0.90"))
-AUC_THRESHOLD    = float(os.environ.get("DDI_AUC_THRESHOLD", "0.85"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
