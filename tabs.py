@@ -39,6 +39,7 @@ class AppContext:
         self.work_dir = Path('./work')
         self.results_dir = Path('./results')
         self.main_window = None  # set after MainWindow.__init__
+        self.sampling_label = ""  # 샘플링 적용 시 결과 제목에 표시할 레이블
 
 
 # ---------------------------------------------------------------------------
@@ -795,6 +796,7 @@ class AnalysisTab(QWidget):
         super().__init__(parent)
         self.ctx = ctx
         self.connection_tab = connection_tab
+        self._sampling_label = ""
         self._init_ui()
 
     def _init_ui(self):
@@ -833,6 +835,24 @@ class AnalysisTab(QWidget):
 
     def _ensure_dm(self):
         self.connection_tab._init_dm()
+
+    def _show_sampling_dialog(self, info) -> bool:
+        """샘플링 정보 모달 다이얼로그. 메인 스레드에서만 호출해야 함."""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("데이터 샘플링 적용")
+        msg.setText(
+            f"<b>⚠ 층화 샘플링이 적용됩니다</b><br><br>"
+            f"전체 데이터: <b>{info.total_rows:,}건</b><br>"
+            f"분석 대상: <b>{info.sampled_rows:,}건</b> "
+            f"({info.ratio_pct:.1f}% 샘플링)<br><br>"
+            f"메모리 한계로 인해 비례 층화 샘플링이 적용됩니다.<br>"
+            f"결과 해석 시 이 점을 반드시 고려하세요."
+        )
+        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        msg.button(QMessageBox.Ok).setText("계속 진행")
+        msg.button(QMessageBox.Cancel).setText("취소")
+        return msg.exec_() == QMessageBox.Ok
 
     # --- actions ---
     def start_analysis(self):
@@ -881,10 +901,15 @@ class AnalysisTab(QWidget):
         ar = data.get('result', {})
         self.ctx.all_results['analysis'] = ar
 
-        # 샘플링 경고 팝업 표시
-        sampling_note = ar.get('_sampling_note')
-        if sampling_note:
-            QMessageBox.warning(self, "샘플링 적용", sampling_note)
+        # 샘플링 경고 팝업 표시 (메인 스레드에서 실행됨)
+        sampling_info = ar.get('sampling_info')
+        if sampling_info is not None and sampling_info.applied:
+            self._show_sampling_dialog(sampling_info)
+            self._sampling_label = sampling_info.label
+            self.ctx.sampling_label = sampling_info.label
+        else:
+            self._sampling_label = ""
+            self.ctx.sampling_label = ""
 
         # 시각화 + 내보내기 (GUI 비의존 모듈로 분리)
         from analysis_runner import run_post_analysis
@@ -913,6 +938,10 @@ class ResultsTab(QWidget):
         self.res_combo.addItems(['Table 1', 'Cox (All-cause)', 'Cox (AD)', 'Cox (VaD)', 'PSM', '하위그룹'])
         self.res_combo.currentIndexChanged.connect(self.show_result)
         ly.addWidget(self.res_combo)
+        self.result_title_label = QLabel("")
+        font = QFont(); font.setBold(True)
+        self.result_title_label.setFont(font)
+        ly.addWidget(self.result_title_label)
         self.result_table = QTableWidget()
         ly.addWidget(self.result_table)
 
@@ -958,6 +987,8 @@ class ResultsTab(QWidget):
     # --- actions ---
     def show_result(self, idx):
         df, base_title = self._get_result_df(idx)
+        sampling_suffix = f" ({self.ctx.sampling_label})" if getattr(self.ctx, 'sampling_label', '') else ""
+        self.result_title_label.setText(f"{base_title}{sampling_suffix}")
         if df is not None:
             df2 = df.reset_index() if df.index.name else df
             self.result_table.setRowCount(len(df2))
