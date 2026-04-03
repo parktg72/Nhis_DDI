@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from serving.predictor import get_predictor
 from serving.schemas import HealthResponse, ModelInfoResponse
+from config import settings as _settings
 
 router = APIRouter(tags=["health"])
 
@@ -26,8 +27,8 @@ class ReloadRequest(BaseModel):
 
 APP_VERSION = "1.0.0"
 
-_ADMIN_KEY: str = os.environ.get("ADMIN_API_KEY", "")
-_MODEL_DIR: Path = Path(os.environ.get("MODEL_DIR", "/app/models")).resolve()
+_ADMIN_KEY: str = _settings.ADMIN_API_KEY
+_MODEL_DIR: Path = _settings.MODEL_DIR.resolve()
 
 
 def _require_admin(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:

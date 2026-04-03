@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from serving.middleware import RequestLoggingMiddleware
 from serving.predictor import init_predictor
 from serving.routers import health, predict
+from config import settings as _settings
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 로깅 설정
@@ -45,14 +46,14 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """앱 시작/종료 시 리소스 초기화/해제."""
     logger.info("DDI 위험도 분류 서버 시작")
-    _model_path = os.environ.get("MODEL_PATH") or os.path.join(
-        os.environ.get("MODEL_DIR", "/app/models"), "model_prod.pkl"
-    )
+    if not _settings.ADMIN_API_KEY:
+        logger.warning("ADMIN_API_KEY 미설정 — /admin/reload 비활성화됨")
+    _model_path = os.environ.get("MODEL_PATH") or str(_settings.MODEL_PROD_PATH)
     init_predictor(
         model_path=_model_path,
-        ddi_matrix_path=os.environ.get("DDI_MATRIX_PATH", "data/processed/ddi_matrix_final.parquet"),
-        drug_index_path=os.environ.get("DRUG_INDEX_PATH", "data/processed/drug_name_index.parquet"),
-        cyp_matrix_path=os.environ.get("CYP_MATRIX_PATH", "data/processed/cyp_matrix.parquet"),
+        ddi_matrix_path=str(_settings.DDI_MATRIX_PATH),
+        drug_index_path=str(_settings.DRUG_INDEX_PATH),
+        cyp_matrix_path=str(_settings.CYP_MATRIX_PATH),
     )
     logger.info("예측기 초기화 완료")
     yield
