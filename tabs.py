@@ -21,7 +21,7 @@ from config import APP_SETTINGS, STUDY_SETTINGS, MEMORY_SETTINGS, GPU_SETTINGS, 
 from db_connector import DataManager
 from cohort_builder import CohortBuilder
 from variable_generator import VariableGenerator
-from statistical_analysis import StatisticalAnalyzer, SamplingInfo
+from statistical_analysis import StatisticalAnalyzer
 from visualization import Visualizer
 from memory_manager import mem_manager, gpu_manager, chunk_controller
 from results_exporter import ResultsExporter
@@ -790,13 +790,11 @@ class CohortTab(QWidget):
 # ---------------------------------------------------------------------------
 class AnalysisTab(QWidget):
     log_signal = pyqtSignal(str)
-    sampling_info_ready = pyqtSignal(object)  # SamplingInfo 전달
 
     def __init__(self, ctx: AppContext, connection_tab: ConnectionTab, parent=None):
         super().__init__(parent)
         self.ctx = ctx
         self.connection_tab = connection_tab
-        self._sampling_label = ""
         self._init_ui()
 
     def _init_ui(self):
@@ -827,8 +825,6 @@ class AnalysisTab(QWidget):
         self.analysis_text = QTextEdit(); self.analysis_text.setReadOnly(True)
         ly.addWidget(self.analysis_text)
 
-        self.sampling_info_ready.connect(self._on_sampling_info_ready)
-
     # --- helpers ---
     def _browse_dir(self, edit):
         d = QFileDialog.getExistingDirectory(self, "폴더 선택")
@@ -837,43 +833,6 @@ class AnalysisTab(QWidget):
 
     def _ensure_dm(self):
         self.connection_tab._init_dm()
-
-    def _on_sampling_info_ready(self, info: SamplingInfo):
-        """샘플링 적용 시 사용자에게 확인 요청."""
-        if not info or not info.applied:
-            self._sampling_label = ""
-            return
-
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("데이터 샘플링 적용")
-        msg.setText(
-            f"<b>⚠️ 층화 샘플링이 적용됩니다</b><br><br>"
-            f"전체 데이터: <b>{info.total_rows:,}건</b><br>"
-            f"분석 대상: <b>{info.sampled_rows:,}건</b> "
-            f"({info.ratio_pct:.1f}% 샘플링)<br><br>"
-            f"메모리 한계로 인해 비례 층화 샘플링이 적용됩니다.<br>"
-            f"결과 해석 시 이 점을 반드시 고려하세요."
-        )
-        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-        msg.button(QMessageBox.Ok).setText("계속 진행")
-        msg.button(QMessageBox.Cancel).setText("취소")
-
-        if msg.exec_() == QMessageBox.Cancel:
-            self._cancel_analysis()
-            return
-
-        self._sampling_label = info.label
-
-    def _cancel_analysis(self):
-        mw = self.ctx.main_window
-        if mw.worker and mw.worker.isRunning():
-            mw.worker.cancel()
-            mw.worker.quit()
-            mw.worker.wait()
-        mw.progress_bar.setVisible(False)
-        mw._set_action_buttons_enabled(True)
-        self.log_signal.emit("사용자에 의해 분석이 취소되었습니다.")
 
     # --- actions ---
     def start_analysis(self):
@@ -894,14 +853,9 @@ class AnalysisTab(QWidget):
         run_sens = self.chk_sens.isChecked()
 
         dm = self.ctx.dm
-        self._sampling_label = ""
 
         def do_analysis(progress_callback=None):
             analyzer = StatisticalAnalyzer(dm)
-            # 데이터 로드 후 샘플링 정보 시그널 발생
-            _, info = analyzer._load_data()
-            self.sampling_info_ready.emit(info)
-
             return analyzer.run_selected(
                 progress_callback,
                 run_cox=run_cox, run_psm=run_psm,
@@ -927,8 +881,10 @@ class AnalysisTab(QWidget):
         ar = data.get('result', {})
         self.ctx.all_results['analysis'] = ar
 
-        if self._sampling_label:
-            self.log_signal.emit(f"주의: {self._sampling_label} 적용됨")
+        # 샘플링 경고 팝업 표시
+        sampling_note = ar.get('_sampling_note')
+        if sampling_note:
+            QMessageBox.warning(self, "샘플링 적용", sampling_note)
 
         # 시각화 + 내보내기 (GUI 비의존 모듈로 분리)
         from analysis_runner import run_post_analysis

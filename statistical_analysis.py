@@ -13,39 +13,9 @@ from lifelines.statistics import proportional_hazard_test
 from scipy import stats
 from config import STUDY_SETTINGS, DEMENTIA_DRUG_CODES
 from memory_manager import mem_manager
-from dataclasses import dataclass
 import duckdb
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SamplingInfo:
-    """층화 샘플링 적용 여부 및 규모 정보.
-
-    applied: 샘플링이 적용되었으면 True
-    total_rows: 원본 전체 행 수
-    sampled_rows: 실제 분석에 사용된 행 수
-    """
-    applied: bool
-    total_rows: int
-    sampled_rows: int
-
-    @property
-    def ratio_pct(self) -> float:
-        if self.total_rows == 0:
-            return 0.0
-        return self.sampled_rows / self.total_rows * 100
-
-    @property
-    def label(self) -> str:
-        """UI 및 Excel 헤더용 한줄 요약. 샘플링 없으면 빈 문자열."""
-        if not self.applied:
-            return ""
-        return (
-            f"층화 샘플링: {self.sampled_rows:,}/{self.total_rows:,}건 "
-            f"({self.ratio_pct:.1f}%)"
-        )
 
 
 class StatisticalAnalyzer:
@@ -53,12 +23,11 @@ class StatisticalAnalyzer:
         self.dm = data_manager
         self.results = {}
         self._cached_df = None  # 데이터 1회 로드 후 캐시
-        self._sampling_info = SamplingInfo(applied=False, total_rows=0, sampled_rows=0)
 
     def _load_data(self):
         """메모리 안전 데이터 로드 — 1회 로드 후 캐시 재사용"""
         if self._cached_df is not None:
-            return self._cached_df, self._sampling_info
+            return self._cached_df
 
         max_rows = mem_manager.get_safe_analysis_rows()
         total = self.dm.storage.get_row_count('final_analysis')
@@ -77,10 +46,8 @@ class StatisticalAnalyzer:
                 self._cached_df = self.dm.query(
                     "SELECT * FROM final_analysis WHERE follow_up_days > 0 LIMIT 0"
                 )
-                self._sampling_info = SamplingInfo(
-                    applied=True, total_rows=total, sampled_rows=0
-                )
-                return self._cached_df, self._sampling_info
+                self.results['_sampling_note'] = "추적 가능한 행이 없어 샘플링을 건너뜁니다."
+                return self._cached_df
 
             # DM 그룹은 전부 유지, NON_DM만 남은 예산으로 샘플링
             # → DM 분석 underpowered 방지 + 노출군 비율 왜곡 최소화
@@ -112,24 +79,19 @@ class StatisticalAnalyzer:
                 ) t
                 WHERE rn <= grp_limit
             """)
-            self._sampling_info = SamplingInfo(
-                applied=True,
-                total_rows=total,
-                sampled_rows=len(self._cached_df),
+            self.results['_sampling_note'] = (
+                f"메모리 제한으로 비례 층화 샘플링 적용: 전체 {total:,}건 → "
+                f"총 {len(self._cached_df):,}건 사용 "
+                f"(그룹별 원래 비율 유지)"
             )
         else:
             self._cached_df = self.dm.query("SELECT * FROM final_analysis WHERE follow_up_days > 0")
-            self._sampling_info = SamplingInfo(
-                applied=False,
-                total_rows=total,
-                sampled_rows=len(self._cached_df),
-            )
 
         # dtype 최적화
         self._cached_df = mem_manager.optimize_dtypes(self._cached_df)
         logger.info(f"분석 데이터 로드: {len(self._cached_df):,}건, "
                    f"{self._cached_df.memory_usage(deep=True).sum() / 1024**2:.1f}MB")
-        return self._cached_df, self._sampling_info
+        return self._cached_df
 
     def _release_cache(self):
         """캐시된 데이터 해제"""
@@ -874,10 +836,9 @@ class StatisticalAnalyzer:
             self.run_sensitivity(cb)
             mem_manager.cleanup_after_step('sensitivity')
 
-        self.results['sampling_info'] = self._sampling_info
         self._release_cache()
-        if self._sampling_info.applied and cb:
-            cb(f"[경고] {self._sampling_info.label}")
+        if '_sampling_note' in self.results and cb:
+            cb(f"[경고] {self.results['_sampling_note']}")
         if cb: cb("선택된 분석 완료!")
         return self.results
 
