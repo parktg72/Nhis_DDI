@@ -264,6 +264,7 @@ class EnsembleTrainer(BaseTrainer):
         self._xgb.save(path.with_suffix(".xgb.pkl"))
         self._lgb.save(path.with_suffix(".lgb.pkl"))
         payload = {
+            "trainer_class": self.__class__.__name__,
             "weights": self.weights,
             "best_threshold": self.best_threshold_,
             "feature_importances": self.feature_importances_,

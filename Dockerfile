@@ -50,6 +50,7 @@ USER appuser
 ENV DDI_MATRIX_PATH=/app/data/processed/ddi_matrix_final.parquet \
     DRUG_INDEX_PATH=/app/data/processed/drug_name_index.parquet \
     CYP_MATRIX_PATH=/app/data/processed/cyp_matrix.parquet \
+    MODEL_DIR=/app/models \
     LOG_LEVEL=INFO \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1

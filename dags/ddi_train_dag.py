@@ -156,6 +156,18 @@ def _deploy_model(**context) -> None:
         import logging as _log
         _log.warning(".sha256 사이드카 없음, 서빙 로드 실패 가능: %s", sha_src)
 
+    # 앙상블 서브모델(.xgb.pkl, .lgb.pkl) 및 해시 복사
+    prod_base = prod_path[:-len(".pkl")]
+    for ext in (".xgb.pkl", ".lgb.pkl"):
+        sub_src = model_path[:-len(".pkl")] + ext
+        sub_dst = prod_base + ext
+        if os.path.exists(sub_src):
+            shutil.copy2(sub_src, sub_dst)
+            sub_sha_src = sub_src + ".sha256"
+            sub_sha_dst = sub_dst + ".sha256"
+            if os.path.exists(sub_sha_src):
+                shutil.copy2(sub_sha_src, sub_sha_dst)
+
     # serving API 핫스왑 (가능한 경우)
     serving_url = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
     admin_key = os.environ.get("DDI_ADMIN_API_KEY", "")

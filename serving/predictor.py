@@ -252,6 +252,9 @@ class MLModel:
                     except Exception as e:
                         logger.warning("앙상블 로드 실패: %s", e)
 
+            if self._model is None:
+                logger.error("모델 로드 실패: _model이 None (앙상블 복원 실패 포함): %s", path)
+                return False
             logger.info("ML 모델 로드: %s (threshold=%.3f)", path, self._threshold)
             return True
         except Exception as e:
@@ -538,10 +541,9 @@ class HybridPredictor:
         # Step 2: 중복약물 탐지
         dup_count, dup_reasons = _run_duplicate_detector(req.drugs, dd_instance=self._dup_detector)
 
-        # Rule 등급 보완 (중복약물)
+        # Rule 등급 보완 (중복약물) — rule_level이 NORMAL일 때만 등급 상향
         if dup_count >= 1 and rule_level == RiskLevel.NORMAL:
             rule_level = RiskLevel.YELLOW
-            rule_reasons.extend(dup_reasons)
 
         # Step 3: ML 예측 (모델 있을 때만)
         ml_level: Optional[RiskLevel] = None
@@ -571,7 +573,8 @@ class HybridPredictor:
                 if (alert.drug_a, alert.drug_b) not in existing_pairs:
                     ddi_alerts.append(alert)
 
-        all_reasons = list(rule_reasons)  # dup_reasons already in rule_reasons via extend()
+        # dup_reasons는 등급과 무관하게 항상 포함 (설명 가능성)
+        all_reasons = list(rule_reasons) + [r for r in dup_reasons if r not in rule_reasons]
         if ml_prob is not None and ml_prob > 0.3:
             all_reasons.append(f"ML 모델 Red 확률: {ml_prob:.1%}")
 
