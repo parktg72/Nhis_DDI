@@ -11,7 +11,7 @@ from config import (
     OHA_CODES, INSULIN_EFMDC, INSULIN_CODES, STUDY_SETTINGS
 )
 from memory_manager import mem_manager
-from utils import icd_like
+from utils import icd_like, CohortStepError
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,6 @@ class CohortBuilder:
         성공 시 result_table의 행 수 반환.
         실패(duckdb.Error) 또는 결과 0건 시 CohortStepError 발생.
         """
-        from utils import CohortStepError
         for attempt in range(2):
             try:
                 self.dm.execute(sql)
@@ -35,7 +34,7 @@ class CohortBuilder:
             except duckdb.Error as e:
                 if attempt == 0:
                     logger.warning(
-                        f"[{step_num}/7] {step_name} 1차 실패, 1초 후 재시도: {e}"
+                        f"[{step_num}/6] {step_name} 1차 실패, 1초 후 재시도: {e}"
                     )
                     time.sleep(1)
                 else:
@@ -47,7 +46,7 @@ class CohortBuilder:
                 step_num, step_name,
                 ValueError(f"{result_table} 결과 0건 — 데이터 적재 상태를 확인하세요.")
             )
-        logger.info(f"[{step_num}/7] {step_name}: {n:,}건")
+        logger.info(f"[{step_num}/6] {step_name}: {n:,}건")
         return n
 
     def _flat_oha_codes(self):
@@ -479,9 +478,6 @@ class CohortBuilder:
         각 단계는 duckdb.Error 발생 시 1회 재시도 후 CohortStepError를 발생시킨다.
         단계 결과가 0건이어도 CohortStepError를 발생시켜 후속 단계 실행을 막는다.
         """
-        from utils import CohortStepError
-        import duckdb as _duckdb
-
         results = {}
 
         def _safe_step(step_num, step_name, step_fn, result_table):
@@ -492,7 +488,7 @@ class CohortBuilder:
                     break
                 except CohortStepError:
                     raise  # 이미 래핑된 예외는 그대로 전파
-                except _duckdb.Error as e:
+                except duckdb.Error as e:
                     if attempt == 0:
                         logger.warning(
                             f"[{step_num}/6] {step_name} 1차 실패, 1초 후 재시도: {e}"
@@ -502,9 +498,6 @@ class CohortBuilder:
                         raise CohortStepError(step_num, step_name, e)
                 except Exception as e:
                     raise CohortStepError(step_num, step_name, e)
-            else:
-                # loop completed without break = both attempts failed via non-raising path
-                pass
 
             n = self.dm.storage.get_row_count(result_table)
             if n == 0:
@@ -543,11 +536,11 @@ class CohortBuilder:
             5, "기존 치매 및 항치매약 제외",
             self.step5_exclude_dementia, "study_cohort"
         )
-        results['cohort_n'] = n
-        results['excluded'] = excl
+        results['final_n'] = n
+        results['excluded_dementia'] = excl
         mem_manager.cleanup_after_step('step5')
 
-        results['events'], _ = _safe_step(
+        results['outcomes'], _ = _safe_step(
             6, "결과변수 및 추적기간 산출",
             self.step6_outcomes, "analysis_data"
         )
