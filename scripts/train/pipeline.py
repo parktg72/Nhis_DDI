@@ -133,7 +133,20 @@ class TrainPipeline:
                 )
 
             # ── Step 6: 모델 저장 ─────────────────────────────────────────
+            import os
             model_path = self.model_dir / f"ddi_model_{partition}.pkl"
+            feature_base_resolved = str(Path(self.config.feature_base).resolve())
+            model_dir_resolved = str(self.model_dir.resolve())
+            scaler_abs = Path(self.config.feature_base).resolve() / "scaler.pkl"
+            selector_abs = Path(self.config.feature_base).resolve() / "selector.pkl"
+
+            # feature contract metadata
+            trainer._extra_meta = {
+                "artifact_version": 2,
+                "feature_names": list(dataset.feature_names),
+                "scaler_path": os.path.relpath(str(scaler_abs), start=model_dir_resolved),
+                "selector_path": os.path.relpath(str(selector_abs), start=model_dir_resolved),
+            }
             trainer.save(model_path)
             result.model_path = str(model_path)
             tracker.log_artifact(model_path, "model")

@@ -41,10 +41,16 @@ COPY config/       /app/config/
 # 실행 시 -v $(pwd)/data:/app/data -v $(pwd)/models:/app/models 로 마운트
 RUN mkdir -p /app/data /app/models
 
+# ── 비권한 사용자 (보안) ─────────────────────────────────────────────────────
+RUN groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app/data /app/models
+USER appuser
+
 # ── 환경변수 기본값 ────────────────────────────────────────────────────────
 ENV DDI_MATRIX_PATH=/app/data/processed/ddi_matrix_final.parquet \
     DRUG_INDEX_PATH=/app/data/processed/drug_name_index.parquet \
     CYP_MATRIX_PATH=/app/data/processed/cyp_matrix.parquet \
+    MODEL_DIR=/app/models \
     LOG_LEVEL=INFO \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1

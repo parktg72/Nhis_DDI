@@ -65,6 +65,9 @@ def mock_predictor():
     pred._cyp = None
     pred._std = None
     pred._builder = RequestFeatureBuilder(ddi_matrix=None, cyp_extractor=None, code_standardizer=None)
+    pred._safety_net = None
+    pred._dup_detector = None
+    pred._ml_lock = __import__("threading").Lock()
     return pred
 
 

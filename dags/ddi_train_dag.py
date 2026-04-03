@@ -8,7 +8,7 @@ DDI Model Training DAG
 
 환경변수:
   DDI_FEATURES_DIR   : ML 피처 디렉토리 (기본: /app/data/features)
-  DDI_MODEL_DIR      : 모델 저장 디렉토리 (기본: /app/models)
+  MODEL_DIR          : 모델 저장 디렉토리 (기본: /app/models)
   DDI_TRAIN_WEEKS    : 훈련에 사용할 주 수 (기본: 4)
   DDI_MODEL_TYPE     : xgboost | lightgbm | ensemble (기본: ensemble)
   DDI_OPTUNA_TRIALS  : Optuna 시도 횟수 (기본: 50)
@@ -39,7 +39,7 @@ DEFAULT_ARGS = {
 }
 
 FEATURES_DIR     = os.environ.get("DDI_FEATURES_DIR", "/app/data/features")
-MODEL_DIR        = os.environ.get("DDI_MODEL_DIR", "/app/models")
+MODEL_DIR        = os.environ.get("MODEL_DIR", "/app/models")
 TRAIN_WEEKS      = int(os.environ.get("DDI_TRAIN_WEEKS", "4"))
 MODEL_TYPE       = os.environ.get("DDI_MODEL_TYPE", "ensemble")
 OPTUNA_TRIALS    = int(os.environ.get("DDI_OPTUNA_TRIALS", "50"))
@@ -77,7 +77,7 @@ def _load_features(**context) -> None:
     combined = pd.concat(dfs, ignore_index=True)
     combined = combined.drop_duplicates(subset=["patient_id"])
 
-    staging_path = f"{FEATURES_DIR}/train_staging.parquet"
+    staging_path = f"{FEATURES_DIR}/ml_features_staging.parquet"
     combined.to_parquet(staging_path, index=False)
     context["ti"].xcom_push(key="n_samples", value=len(combined))
     context["ti"].xcom_push(key="staging_path", value=staging_path)
@@ -90,22 +90,18 @@ def _run_training(**context) -> None:
     """Optuna 하이퍼파라미터 튜닝 + 모델 훈련."""
     import sys
     sys.path.insert(0, "/app")
-    import pandas as pd
-    from scripts.train.hyperparams import TrainConfig
     from scripts.train.pipeline import run_training
 
-    staging_path = context["ti"].xcom_pull(key="staging_path", task_ids="load_features")
-    df = pd.read_parquet(staging_path)
-
-    config = TrainConfig(
+    result = run_training(
+        partition="staging",
         model_type=MODEL_TYPE,
-        optuna_trials=OPTUNA_TRIALS,
+        feature_base=FEATURES_DIR,
+        model_dir=MODEL_DIR,
+        use_optuna=OPTUNA_TRIALS > 0,
         recall_threshold=RECALL_THRESHOLD,
         auc_threshold=AUC_THRESHOLD,
-        model_dir=MODEL_DIR,
+        optuna_trials=OPTUNA_TRIALS,
     )
-
-    result = run_training(df, config)
 
     context["ti"].xcom_push(key="val_recall", value=result.val_recall)
     context["ti"].xcom_push(key="val_auc", value=result.val_auc)
@@ -151,12 +147,35 @@ def _deploy_model(**context) -> None:
 
     shutil.copy2(model_path, prod_path)
 
+    # .sha256 사이드카도 함께 복사
+    sha_src = model_path + ".sha256"
+    sha_dst = prod_path + ".sha256"
+    if os.path.exists(sha_src):
+        shutil.copy2(sha_src, sha_dst)
+    else:
+        import logging as _log
+        _log.warning(".sha256 사이드카 없음, 서빙 로드 실패 가능: %s", sha_src)
+
+    # 앙상블 서브모델(.xgb.pkl, .lgb.pkl) 및 해시 복사
+    prod_base = prod_path[:-len(".pkl")]
+    for ext in (".xgb.pkl", ".lgb.pkl"):
+        sub_src = model_path[:-len(".pkl")] + ext
+        sub_dst = prod_base + ext
+        if os.path.exists(sub_src):
+            shutil.copy2(sub_src, sub_dst)
+            sub_sha_src = sub_src + ".sha256"
+            sub_sha_dst = sub_dst + ".sha256"
+            if os.path.exists(sub_sha_src):
+                shutil.copy2(sub_sha_src, sub_sha_dst)
+
     # serving API 핫스왑 (가능한 경우)
     serving_url = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
+    admin_key = os.environ.get("DDI_ADMIN_API_KEY", "")
     try:
         resp = requests.post(
             f"{serving_url}/admin/reload",
             json={"model_path": prod_path},
+            headers={"X-Admin-Key": admin_key},
             timeout=30,
         )
         resp.raise_for_status()

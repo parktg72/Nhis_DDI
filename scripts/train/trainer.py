@@ -71,17 +71,22 @@ class BaseTrainer(ABC):
         return results
 
     def save(self, path: str | Path) -> Path:
+        import hashlib
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "wb") as f:
-            pickle.dump({
-                "model": self.model,
-                "params": self.params,
-                "feature_importances": self.feature_importances_,
-                "best_threshold": self.best_threshold_,
-                "trainer_class": self.__class__.__name__,
-            }, f)
-        logger.info("모델 저장: %s", path)
+        payload = {
+            "model": self.model,
+            "params": self.params,
+            "feature_importances": self.feature_importances_,
+            "best_threshold": self.best_threshold_,
+            "trainer_class": self.__class__.__name__,
+            **getattr(self, "_extra_meta", {}),
+        }
+        content = pickle.dumps(payload)
+        path.write_bytes(content)
+        sha256 = hashlib.sha256(content).hexdigest()
+        path.with_suffix(path.suffix + ".sha256").write_text(f"{sha256}  {path.name}\n")
+        logger.info("모델 저장: %s (sha256=%s…)", path, sha256[:16])
         return path
 
     @classmethod
@@ -253,18 +258,23 @@ class EnsembleTrainer(BaseTrainer):
         return w1 * p_xgb + w2 * p_lgb
 
     def save(self, path: str | Path) -> Path:
+        import hashlib
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._xgb.save(path.with_suffix(".xgb.pkl"))
         self._lgb.save(path.with_suffix(".lgb.pkl"))
-        # 앙상블 메타 저장
-        with open(path, "wb") as f:
-            pickle.dump({
-                "weights": self.weights,
-                "best_threshold": self.best_threshold_,
-                "feature_importances": self.feature_importances_,
-            }, f)
-        logger.info("앙상블 모델 저장: %s", path)
+        payload = {
+            "trainer_class": self.__class__.__name__,
+            "weights": self.weights,
+            "best_threshold": self.best_threshold_,
+            "feature_importances": self.feature_importances_,
+            **getattr(self, "_extra_meta", {}),
+        }
+        content = pickle.dumps(payload)
+        path.write_bytes(content)
+        sha256 = hashlib.sha256(content).hexdigest()
+        path.with_suffix(path.suffix + ".sha256").write_text(f"{sha256}  {path.name}\n")
+        logger.info("앙상블 모델 저장: %s (sha256=%s…)", path, sha256[:16])
         return path
 
 

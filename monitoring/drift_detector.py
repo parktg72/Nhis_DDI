@@ -112,12 +112,13 @@ def compute_psi_continuous(
         (psi, ref_dist, cur_dist, bin_edges)
     """
     # 기준 데이터로 bin edges 결정
-    bin_edges = np.percentile(reference, np.linspace(0, 100, n_bins + 1))
-    bin_edges = np.unique(bin_edges)  # 중복 제거 (uniform 데이터 대응)
+    inner_edges = np.percentile(reference, np.linspace(0, 100, n_bins + 1))
+    inner_edges = np.unique(inner_edges)  # 중복 제거 (uniform 데이터 대응)
 
-    if len(bin_edges) < 2:
-        return 0.0, [], [], list(bin_edges)
+    if len(inner_edges) < 2:
+        return 0.0, [], [], list(inner_edges)
 
+    bin_edges = np.concatenate([[-np.inf], inner_edges[1:-1], [np.inf]])
     ref_counts, _ = np.histogram(reference, bins=bin_edges)
     cur_counts, _ = np.histogram(current,   bins=bin_edges)
 
