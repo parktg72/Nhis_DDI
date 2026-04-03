@@ -1036,7 +1036,9 @@ class ResultsTab(QWidget):
 
     def plot_km(self):
         try:
-            # 필요 컬럼만 + 샘플링으로 메모리 보호
+            # 필요 컬럼만 + 샘플링으로 메모리 보호 (재현 가능한 시드 사용)
+            seed_float = STUDY_SETTINGS.get('SAMPLING_SEED', 42) / 100.0
+            self.ctx.dm.execute(f"SELECT setseed({seed_float})")
             df = self.ctx.dm.query("""
                 SELECT exposure_group, follow_up_years, dementia_event, ad_event, vad_event
                 FROM (

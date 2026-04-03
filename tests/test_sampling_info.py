@@ -61,6 +61,8 @@ def _make_analyzer(rows, max_rows=500_000):
         storage = MockStorage()
         def query(self, sql):
             return conn.execute(sql).df()
+        def execute(self, sql):
+            conn.execute(sql)
 
     analyzer = StatisticalAnalyzer.__new__(StatisticalAnalyzer)
     analyzer.dm = MockDM()

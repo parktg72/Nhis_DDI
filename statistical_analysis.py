@@ -26,10 +26,12 @@ class SamplingInfo:
     applied: 샘플링이 적용되었으면 True
     total_rows: 원본 전체 행 수
     sampled_rows: 실제 분석에 사용된 행 수
+    seed: 재현성을 위한 DuckDB setseed 값 (0–99 정수)
     """
     applied: bool
     total_rows: int
     sampled_rows: int
+    seed: int = 0
 
     @property
     def ratio_pct(self) -> float:
@@ -44,7 +46,7 @@ class SamplingInfo:
             return ""
         return (
             f"층화 샘플링: {self.sampled_rows:,}/{self.total_rows:,}건 "
-            f"({self.ratio_pct:.1f}%)"
+            f"({self.ratio_pct:.1f}%, seed={self.seed})"
         )
 
 
@@ -95,6 +97,10 @@ class StatisticalAnalyzer:
                 for g, n in alloc.items()
             )
 
+            seed = int(STUDY_SETTINGS.get('SAMPLING_SEED', 42))
+            seed_float = seed / 100.0  # DuckDB setseed: float in [0, 1]
+            self.dm.execute(f"SELECT setseed({seed_float})")
+
             self._cached_df = self.dm.query(f"""
                 SELECT * EXCLUDE rn
                 FROM (
@@ -112,6 +118,7 @@ class StatisticalAnalyzer:
                 applied=True,
                 total_rows=total,
                 sampled_rows=len(self._cached_df),
+                seed=seed,
             )
         else:
             self._cached_df = self.dm.query("SELECT * FROM final_analysis WHERE follow_up_days > 0")
