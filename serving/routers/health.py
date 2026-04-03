@@ -91,10 +91,10 @@ async def reload_model(
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"모델 경로는 허용된 디렉토리({_MODEL_DIR}) 내부여야 합니다: {model_path}",
+            detail=f"모델 경로는 허용된 디렉토리({_MODEL_DIR}) 내부여야 합니다: {body.model_path}",
         )
     pred = get_predictor()
     ok = pred.reload_model(resolved)
     if not ok:
-        raise HTTPException(status_code=400, detail=f"모델 로드 실패: {model_path}")
+        raise HTTPException(status_code=400, detail=f"모델 로드 실패: {body.model_path}")
     return {"status": "ok", "model_path": str(resolved)}
