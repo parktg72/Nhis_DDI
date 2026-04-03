@@ -14,10 +14,15 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 from serving.predictor import get_predictor
 from serving.schemas import HealthResponse, ModelInfoResponse
 
 router = APIRouter(tags=["health"])
+
+
+class ReloadRequest(BaseModel):
+    model_path: str
 
 APP_VERSION = "1.0.0"
 
@@ -73,14 +78,14 @@ async def model_info():
 
 @router.post("/admin/reload")
 async def reload_model(
-    model_path: str,
+    body: ReloadRequest,
     _: None = Depends(_require_admin),
 ):
     """모델 핫스왑 (무중단 교체). X-Admin-Key 헤더 인증 필수.
 
     model_path는 MODEL_DIR 환경변수로 지정된 디렉토리 내부 경로만 허용됩니다.
     """
-    resolved = Path(model_path).resolve()
+    resolved = Path(body.model_path).resolve()
     try:
         resolved.relative_to(_MODEL_DIR)
     except ValueError:

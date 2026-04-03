@@ -8,7 +8,7 @@ DDI Model Training DAG
 
 환경변수:
   DDI_FEATURES_DIR   : ML 피처 디렉토리 (기본: /app/data/features)
-  DDI_MODEL_DIR      : 모델 저장 디렉토리 (기본: /app/models)
+  MODEL_DIR          : 모델 저장 디렉토리 (기본: /app/models)
   DDI_TRAIN_WEEKS    : 훈련에 사용할 주 수 (기본: 4)
   DDI_MODEL_TYPE     : xgboost | lightgbm | ensemble (기본: ensemble)
   DDI_OPTUNA_TRIALS  : Optuna 시도 횟수 (기본: 50)
@@ -39,7 +39,7 @@ DEFAULT_ARGS = {
 }
 
 FEATURES_DIR     = os.environ.get("DDI_FEATURES_DIR", "/app/data/features")
-MODEL_DIR        = os.environ.get("DDI_MODEL_DIR", "/app/models")
+MODEL_DIR        = os.environ.get("MODEL_DIR", "/app/models")
 TRAIN_WEEKS      = int(os.environ.get("DDI_TRAIN_WEEKS", "4"))
 MODEL_TYPE       = os.environ.get("DDI_MODEL_TYPE", "ensemble")
 OPTUNA_TRIALS    = int(os.environ.get("DDI_OPTUNA_TRIALS", "50"))
@@ -158,10 +158,12 @@ def _deploy_model(**context) -> None:
 
     # serving API 핫스왑 (가능한 경우)
     serving_url = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
+    admin_key = os.environ.get("DDI_ADMIN_API_KEY", "")
     try:
         resp = requests.post(
             f"{serving_url}/admin/reload",
             json={"model_path": prod_path},
+            headers={"X-Admin-Key": admin_key},
             timeout=30,
         )
         resp.raise_for_status()
