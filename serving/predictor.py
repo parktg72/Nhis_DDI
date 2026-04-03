@@ -207,6 +207,7 @@ class MLModel:
             self._model_type = state.get("trainer_class", "unknown")
             self._feature_names = state.get("feature_names", [])
             self._artifact_version = state.get("artifact_version", 1)
+            self._partition = state.get("partition")
 
             # Resolve scaler/selector paths relative to model file directory
             import os

@@ -6,7 +6,7 @@ POST /admin/reload - 모델 핫스왑 (운영, X-Admin-Key 헤더 필수)
 
 환경변수:
   ADMIN_API_KEY : /admin/* 엔드포인트 인증 키 (미설정 시 엔드포인트 비활성화)
-  MODEL_DIR     : 허용된 모델 파일 디렉토리 (기본: data/models)
+  MODEL_DIR     : 허용된 모델 파일 디렉토리 (기본: /app/models)
                   경로를 이 디렉토리 밖으로 지정하면 거부됩니다.
 """
 import hmac
@@ -27,7 +27,7 @@ class ReloadRequest(BaseModel):
 APP_VERSION = "1.0.0"
 
 _ADMIN_KEY: str = os.environ.get("ADMIN_API_KEY", "")
-_MODEL_DIR: Path = Path(os.environ.get("MODEL_DIR", "data/models")).resolve()
+_MODEL_DIR: Path = Path(os.environ.get("MODEL_DIR", "/app/models")).resolve()
 
 
 def _require_admin(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
@@ -49,7 +49,7 @@ async def health_check():
         return HealthResponse(
             status="ok",
             model_loaded=pred._ml.loaded,
-            rule_loaded=True,
+            rule_loaded=pred._safety_net is not None,
             version=APP_VERSION,
             uptime_sec=round(pred.uptime, 1),
         )
