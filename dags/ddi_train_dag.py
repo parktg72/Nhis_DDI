@@ -147,6 +147,15 @@ def _deploy_model(**context) -> None:
 
     shutil.copy2(model_path, prod_path)
 
+    # .sha256 사이드카도 함께 복사
+    sha_src = model_path + ".sha256"
+    sha_dst = prod_path + ".sha256"
+    if os.path.exists(sha_src):
+        shutil.copy2(sha_src, sha_dst)
+    else:
+        import logging as _log
+        _log.warning(".sha256 사이드카 없음, 서빙 로드 실패 가능: %s", sha_src)
+
     # serving API 핫스왑 (가능한 경우)
     serving_url = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
     try:
