@@ -7,26 +7,37 @@ from unittest.mock import MagicMock, patch
 
 def _ensure_airflow_mock():
     """airflow 미설치 환경에서 DAG 모듈 import 가능하도록 mock."""
-    if "airflow" not in sys.modules:
-        import types
-        airflow = types.ModuleType("airflow")
+    import types
 
-        class DAG:
-            def __init__(self, *a, **kw): pass
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+    # 기존 airflow 모듈 전체 제거 후 재구성
+    for key in list(sys.modules.keys()):
+        if key.startswith("airflow"):
+            del sys.modules[key]
 
-        airflow.DAG = DAG
-        sys.modules["airflow"] = airflow
-        for sub in ("airflow.operators.python", "airflow.operators.empty",
-                    "airflow.sensors.external_task", "airflow.utils.dates"):
-            m = types.ModuleType(sub)
-            m.PythonOperator = lambda **kw: None
-            m.BranchPythonOperator = lambda **kw: None
-            m.EmptyOperator = lambda **kw: None
-            m.ExternalTaskSensor = lambda **kw: None
-            m.days_ago = lambda n: None
-            sys.modules[sub] = m
+    airflow = types.ModuleType("airflow")
+
+    class DAG:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    airflow.DAG = DAG
+    sys.modules["airflow"] = airflow
+
+    class MockOperator:
+        def __init__(self, *a, **kw): pass
+        def __rshift__(self, other): return other
+        def __lshift__(self, other): return other
+
+    for sub in ("airflow.operators.python", "airflow.operators.empty",
+                "airflow.sensors.external_task", "airflow.utils.dates"):
+        m = types.ModuleType(sub)
+        m.PythonOperator = MockOperator
+        m.BranchPythonOperator = MockOperator
+        m.EmptyOperator = MockOperator
+        m.ExternalTaskSensor = MockOperator
+        m.days_ago = lambda n: None
+        sys.modules[sub] = m
 
 
 class _FakeTI:
@@ -51,14 +62,19 @@ def _make_full_artifacts(staging: Path, base_name: str = "model_v1") -> Path:
 
 @pytest.fixture(autouse=True)
 def _fresh_dag_module():
-    """각 테스트마다 DAG 모듈 + config.settings 새로 import."""
+    """각 테스트마다 DAG 모듈 + config.settings 새로 import.
+    /tmp/codex-review-fixes 같은 임시 경로가 sys.path에 있으면 구버전이 로드되므로 제거.
+    """
+    # 임시 경로 제거 (이전 테스트가 삽입한 구버전 경로)
+    sys.path[:] = [p for p in sys.path if "/tmp/codex-review-fixes" not in p]
     _ensure_airflow_mock()
+    # dags 네임스페이스 패키지도 제거 — 캐시된 __path__에 구버전 경로 포함 가능
     for key in list(sys.modules.keys()):
-        if "ddi_train_dag" in key or key == "config.settings":
+        if "ddi_train_dag" in key or key in ("config.settings", "dags"):
             del sys.modules[key]
     yield
     for key in list(sys.modules.keys()):
-        if "ddi_train_dag" in key or key == "config.settings":
+        if "ddi_train_dag" in key or key in ("config.settings", "dags"):
             del sys.modules[key]
 
 

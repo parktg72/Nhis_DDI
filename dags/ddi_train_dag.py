@@ -134,60 +134,78 @@ def _validate_model(**context) -> str:
 
 
 def _deploy_model(**context) -> None:
-    """검증 통과 모델을 production 경로로 복사 + serving 핫스왑."""
+    """검증 통과 모델을 production 경로로 원자적 배포 + serving 핫스왑.
+
+    배포 순서:
+      Phase 1: 전체 아티팩트 존재 검증 (복사 없음 — 실패해도 prod_dir 불변)
+      Phase 2: 임시 디렉터리에 전체 복사
+      Phase 3: 기존 prod 파일 전체 백업 (메인 + 서브모델 + sha256)
+      Phase 4: os.replace로 원자적 promote
+    """
     import sys
     sys.path.insert(0, "/app")
     import os
+    import logging
     import shutil
     import requests
+    from pathlib import Path
+    from config import settings as _s
 
-    model_path = context["ti"].xcom_pull(key="model_path", task_ids="run_training")
-    prod_path  = os.path.join(MODEL_DIR, "model_prod.pkl")
+    model_path = Path(context["ti"].xcom_pull(key="model_path", task_ids="run_training"))
+    prod_dir   = _s.MODEL_DIR
+    prod_path  = prod_dir / "model_prod.pkl"
+    base_src   = model_path.with_suffix("")  # e.g. /app/models/model_v1
 
-    # 이전 모델 백업
-    if os.path.exists(prod_path):
-        backup = prod_path.replace("model_prod", "model_backup")
-        shutil.copy2(prod_path, backup)
-
-    shutil.copy2(model_path, prod_path)
-
-    # .sha256 사이드카도 함께 복사 — 누락 시 배포 자체를 실패 처리
-    sha_src = model_path + ".sha256"
-    sha_dst = prod_path + ".sha256"
-    if not os.path.exists(sha_src):
-        raise RuntimeError(f".sha256 사이드카 없음 — 무결성 보장 불가, 배포 중단: {sha_src}")
-    shutil.copy2(sha_src, sha_dst)
-
-    # 앙상블 서브모델(.xgb.pkl, .lgb.pkl) 및 해시 복사
-    prod_base = prod_path[:-len(".pkl")]
+    # ── Phase 1: 전체 아티팩트 선검증 ────────────────────────────────────────
+    artifacts: list = [
+        (model_path,                              "model_prod.pkl"),
+        (Path(str(model_path) + ".sha256"),        "model_prod.pkl.sha256"),
+    ]
     for ext in (".xgb.pkl", ".lgb.pkl"):
-        sub_src = model_path[:-len(".pkl")] + ext
-        sub_dst = prod_base + ext
-        if os.path.exists(sub_src):
-            shutil.copy2(sub_src, sub_dst)
-            sub_sha_src = sub_src + ".sha256"
-            sub_sha_dst = sub_dst + ".sha256"
-            if not os.path.exists(sub_sha_src):
+        sub_src = Path(str(base_src) + ext)
+        if sub_src.exists():
+            sub_sha = Path(str(sub_src) + ".sha256")
+            if not sub_sha.exists():
                 raise RuntimeError(
-                    f"앙상블 서브모델 해시 파일 없음 — 무결성 보장 불가, 배포 중단: {sub_sha_src}"
+                    f"배포 중단 — 서브모델 해시 없음: {sub_sha}"
                 )
-            shutil.copy2(sub_sha_src, sub_sha_dst)
+            artifacts.append((sub_src, "model_prod" + ext))
+            artifacts.append((sub_sha, "model_prod" + ext + ".sha256"))
 
-    # serving API 핫스왑 (가능한 경우)
-    serving_url = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
-    admin_key = os.environ.get("ADMIN_API_KEY", "")
+    for src, _ in artifacts:
+        if not src.exists():
+            raise RuntimeError(f"배포 중단 — 필수 아티팩트 없음: {src}")
+
+    # ── Phase 2: 임시 디렉터리에 전체 복사 ───────────────────────────────────
+    tmp_dir = prod_dir / ".deploy_tmp"
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    for src, dst_name in artifacts:
+        shutil.copy2(src, tmp_dir / dst_name)
+
+    # ── Phase 3: 기존 prod 전체 백업 ─────────────────────────────────────────
+    backup_dir = prod_dir / "backup"
+    backup_dir.mkdir(exist_ok=True)
+    for f in prod_dir.glob("model_prod*"):
+        if f.is_file():
+            shutil.copy2(f, backup_dir / f.name)
+
+    # ── Phase 4: 원자적 promote ───────────────────────────────────────────────
+    for f in tmp_dir.iterdir():
+        os.replace(f, prod_dir / f.name)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # ── Serving 핫스왑 ────────────────────────────────────────────────────────
     try:
         resp = requests.post(
-            f"{serving_url}/admin/reload",
-            json={"model_path": prod_path},
-            headers={"X-Admin-Key": admin_key},
+            f"{_s.SERVING_URL}/admin/reload",
+            json={"model_path": str(prod_path)},
+            headers={"X-Admin-Key": _s.ADMIN_API_KEY},
             timeout=30,
         )
         resp.raise_for_status()
-        import logging
         logging.info("Serving 핫스왑 완료: %s", resp.json())
     except Exception as exc:
-        import logging
         logging.warning("Serving 핫스왑 실패: %s", exc)
         raise RuntimeError(f"Serving 핫스왑 실패 — 구버전 모델로 서빙 중: {exc}") from exc
 
