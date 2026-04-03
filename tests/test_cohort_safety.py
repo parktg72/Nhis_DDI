@@ -2,7 +2,7 @@
 import time
 import pytest
 import duckdb
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 from cohort_builder import CohortBuilder
 from utils import CohortStepError
 
@@ -40,8 +40,7 @@ class MockDM:
         self.storage.conn.execute(sql)
 
     def query(self, sql):
-        import pandas as pd
-        return pd.read_sql(sql, self.storage.conn)
+        return self.storage.conn.execute(sql).df()
 
 
 def make_builder(dm):
@@ -72,7 +71,8 @@ def test_run_step_succeeds_and_returns_row_count():
     assert count == 3
 
 
-def test_run_step_raises_cohort_step_error_after_retry_on_duckdb_error():
+@patch("cohort_builder.time.sleep")
+def test_run_step_raises_cohort_step_error_after_retry_on_duckdb_error(mock_sleep):
     dm = MockDM()
     dm._fail_on = 1  # fail immediately on first execute
     builder = make_builder(dm)
@@ -89,6 +89,7 @@ def test_run_step_raises_cohort_step_error_after_retry_on_duckdb_error():
     assert err.step == 2
     assert err.step_name == "실패 단계"
     assert isinstance(err.cause, duckdb.Error)
+    mock_sleep.assert_called_once_with(1)
 
 
 def test_run_step_raises_on_zero_rows():
@@ -109,13 +110,12 @@ def test_run_step_raises_on_zero_rows():
     assert "0건" in str(exc_info.value)
 
 
-def test_run_step_retries_once_and_succeeds():
+@patch("cohort_builder.time.sleep")
+def test_run_step_retries_once_and_succeeds(mock_sleep):
     """첫 번째 실행 실패 → 재시도 성공 시 CohortStepError 발생하지 않아야 함."""
     dm = MockDM()
     builder = make_builder(dm)
     attempt = {'count': 0}
-
-    original_execute = dm.execute
 
     def flaky_execute(sql):
         attempt['count'] += 1
@@ -138,3 +138,4 @@ def test_run_step_retries_once_and_succeeds():
     )
     assert count == 1
     assert attempt['count'] == 2
+    mock_sleep.assert_called_once_with(1)
