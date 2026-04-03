@@ -50,3 +50,4 @@ python/
 *.bat
 desktop_app.py
 web-user-guide.md
+.worktrees/
