@@ -233,6 +233,10 @@ class MLModel:
                         import pickle as _pk
                         xgb_content = xgb_path.read_bytes()
                         lgb_content = lgb_path.read_bytes()
+                        if not self._verify_hash(xgb_path, xgb_content):
+                            raise ValueError(f"xgb 서브모델 해시 불일치: {xgb_path}")
+                        if not self._verify_hash(lgb_path, lgb_content):
+                            raise ValueError(f"lgb 서브모델 해시 불일치: {lgb_path}")
                         xgb_state = _pk.loads(xgb_content)
                         lgb_state = _pk.loads(lgb_content)
                         weights = state.get("weights", (0.5, 0.5))

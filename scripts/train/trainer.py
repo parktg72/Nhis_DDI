@@ -230,11 +230,17 @@ class LGBMTrainer(BaseTrainer):
 class EnsembleTrainer(BaseTrainer):
     """XGBoost + LightGBM 소프트 보팅 앙상블."""
 
-    def __init__(self, params: dict, config: Any, weights: tuple[float, float] = (0.5, 0.5)):
-        super().__init__(params, config)
+    def __init__(
+        self,
+        xgb_params: dict,
+        lgb_params: dict,
+        config: Any,
+        weights: tuple[float, float] = (0.5, 0.5),
+    ):
+        super().__init__(xgb_params, config)
         self.weights = weights
-        self._xgb = XGBoostTrainer(params, config)
-        self._lgb = LGBMTrainer(params, config)
+        self._xgb = XGBoostTrainer(xgb_params, config)
+        self._lgb = LGBMTrainer(lgb_params, config)
 
     def fit(self, dataset: TrainDataset) -> "EnsembleTrainer":
         logger.info("앙상블 훈련: XGBoost + LightGBM")
@@ -294,6 +300,6 @@ def build_trainer(config: Any) -> BaseTrainer:
     elif model_type == "lightgbm":
         return LGBMTrainer(config.lgb_params, config)
     elif model_type == "ensemble":
-        return EnsembleTrainer(config.xgb_params, config)
+        return EnsembleTrainer(config.xgb_params, config.lgb_params, config)
     else:
         raise ValueError(f"지원하지 않는 model_type: {model_type}")

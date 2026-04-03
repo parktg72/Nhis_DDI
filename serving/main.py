@@ -11,7 +11,7 @@ FastAPI 애플리케이션 진입점
   CYP_MATRIX_PATH : CYP 매트릭스 경로 (기본: data/processed/cyp_matrix.parquet)
   LOG_LEVEL       : 로그 레벨 (기본: INFO)
   ADMIN_API_KEY   : /admin/reload 인증 키 (미설정 시 엔드포인트 비활성화)
-  MODEL_DIR       : 모델 핫스왑 허용 디렉토리 (기본: data/models)
+  MODEL_DIR       : 모델 핫스왑 허용 디렉토리 (기본: /app/models)
 """
 from __future__ import annotations
 

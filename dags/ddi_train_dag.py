@@ -149,14 +149,12 @@ def _deploy_model(**context) -> None:
 
     shutil.copy2(model_path, prod_path)
 
-    # .sha256 사이드카도 함께 복사
+    # .sha256 사이드카도 함께 복사 — 누락 시 배포 자체를 실패 처리
     sha_src = model_path + ".sha256"
     sha_dst = prod_path + ".sha256"
-    if os.path.exists(sha_src):
-        shutil.copy2(sha_src, sha_dst)
-    else:
-        import logging as _log
-        _log.warning(".sha256 사이드카 없음, 서빙 로드 실패 가능: %s", sha_src)
+    if not os.path.exists(sha_src):
+        raise RuntimeError(f".sha256 사이드카 없음 — 무결성 보장 불가, 배포 중단: {sha_src}")
+    shutil.copy2(sha_src, sha_dst)
 
     # 앙상블 서브모델(.xgb.pkl, .lgb.pkl) 및 해시 복사
     prod_base = prod_path[:-len(".pkl")]
@@ -185,7 +183,8 @@ def _deploy_model(**context) -> None:
         logging.info("Serving 핫스왑 완료: %s", resp.json())
     except Exception as exc:
         import logging
-        logging.warning("Serving 핫스왑 실패 (무시): %s", exc)
+        logging.warning("Serving 핫스왑 실패: %s", exc)
+        raise RuntimeError(f"Serving 핫스왑 실패 — 구버전 모델로 서빙 중: {exc}") from exc
 
 
 def _validation_failed(**context) -> None:
