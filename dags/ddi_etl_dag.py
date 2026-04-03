@@ -35,9 +35,7 @@ DEFAULT_ARGS = {
     "retry_delay": timedelta(minutes=10),
 }
 
-RAW_DIR = os.environ.get("DDI_RAW_DATA_DIR", "/app/data/raw")
-PROC_DIR = os.environ.get("DDI_PROCESSED_DIR", "/app/data/processed")
-DRUG_INDEX = os.environ.get("DDI_DRUG_INDEX_PATH", "/app/data/processed/drug_name_index.parquet")
+from config.settings import RAW_DATA_DIR as RAW_DIR, PROCESSED_DIR as PROC_DIR, DRUG_INDEX_PARQUET as DRUG_INDEX
 
 
 # ─────────────────────────────────────────────────────────────────────────────
