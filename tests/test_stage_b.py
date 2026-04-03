@@ -12,7 +12,6 @@ Task 7: _on_error 트레이스백 미표시
 
 import sys
 import logging
-import importlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pandas as pd
@@ -25,19 +24,19 @@ import pytest
 
 def test_setup_logging_windows_uses_localappdata(tmp_path, monkeypatch):
     """Windows에서 log_dir 생략 시 %LOCALAPPDATA% 하위 경로를 사용한다."""
-    monkeypatch.setattr(sys, 'platform', 'win32')
+    import utils as _utils
+
     fake_local = tmp_path / "AppData" / "Local"
     fake_local.mkdir(parents=True)
     monkeypatch.setenv('LOCALAPPDATA', str(fake_local))
-
-    import utils
-    importlib.reload(utils)
 
     root = logging.getLogger()
     for h in root.handlers[:]:
         root.removeHandler(h)
 
-    utils.setup_logging()
+    # sys.platform 을 패치한 상태에서 setup_logging 직접 호출
+    with patch.object(sys, 'platform', 'win32'):
+        _utils.setup_logging()
 
     expected_dir = fake_local / "NHIS_YOD_DM_Analyzer" / "logs"
     assert expected_dir.exists(), f"로그 디렉토리 미생성: {expected_dir}"
@@ -45,23 +44,32 @@ def test_setup_logging_windows_uses_localappdata(tmp_path, monkeypatch):
     assert file_handlers, "FileHandler가 추가되지 않았습니다"
     assert "NHIS_YOD_DM_Analyzer" in file_handlers[0].baseFilename
 
+    # 핸들러 정리 (다른 테스트에 영향 방지)
+    for h in root.handlers[:]:
+        h.close()
+        root.removeHandler(h)
+
 
 def test_setup_logging_non_windows_uses_dot(tmp_path, monkeypatch):
     """비-Windows에서 log_dir 생략 시 현재 디렉토리(.)를 사용한다."""
-    monkeypatch.setattr(sys, 'platform', 'linux')
-    monkeypatch.chdir(tmp_path)
+    import utils as _utils
 
-    import utils
-    importlib.reload(utils)
+    monkeypatch.chdir(tmp_path)
 
     root = logging.getLogger()
     for h in root.handlers[:]:
         root.removeHandler(h)
 
-    utils.setup_logging()
+    with patch.object(sys, 'platform', 'linux'):
+        _utils.setup_logging()
+
     file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
     assert file_handlers
     assert str(tmp_path) in file_handlers[0].baseFilename
+
+    for h in root.handlers[:]:
+        h.close()
+        root.removeHandler(h)
 
 
 # ---------------------------------------------------------------------------
