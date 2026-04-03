@@ -14,6 +14,8 @@ DDI Model Training DAG
   DDI_OPTUNA_TRIALS  : Optuna 시도 횟수 (기본: 50)
   DDI_RECALL_THRESHOLD: 최소 Recall 기준 (기본: 0.90)
   DDI_AUC_THRESHOLD  : 최소 AUC 기준 (기본: 0.85)
+  DDI_SERVING_URL    : 서빙 API URL (기본: http://localhost:8000)
+  ADMIN_API_KEY      : /admin/reload 인증 키 (serving ADMIN_API_KEY와 동일)
 """
 from __future__ import annotations
 
@@ -170,7 +172,7 @@ def _deploy_model(**context) -> None:
 
     # serving API 핫스왑 (가능한 경우)
     serving_url = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
-    admin_key = os.environ.get("DDI_ADMIN_API_KEY", "")
+    admin_key = os.environ.get("ADMIN_API_KEY", "")
     try:
         resp = requests.post(
             f"{serving_url}/admin/reload",

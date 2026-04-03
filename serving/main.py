@@ -5,7 +5,7 @@ FastAPI 애플리케이션 진입점
   uvicorn serving.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 환경변수:
-  MODEL_PATH      : ML 모델 경로 (없으면 Rule-only 모드)
+  MODEL_PATH      : ML 모델 경로 (미설정 시 MODEL_DIR/model_prod.pkl 자동 사용)
   DDI_MATRIX_PATH : DDI 매트릭스 경로 (기본: data/processed/ddi_matrix_final.parquet)
   DRUG_INDEX_PATH : 약물 인덱스 경로 (기본: data/processed/drug_name_index.parquet)
   CYP_MATRIX_PATH : CYP 매트릭스 경로 (기본: data/processed/cyp_matrix.parquet)
@@ -45,8 +45,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """앱 시작/종료 시 리소스 초기화/해제."""
     logger.info("DDI 위험도 분류 서버 시작")
+    _model_path = os.environ.get("MODEL_PATH") or os.path.join(
+        os.environ.get("MODEL_DIR", "/app/models"), "model_prod.pkl"
+    )
     init_predictor(
-        model_path=os.environ.get("MODEL_PATH"),
+        model_path=_model_path,
         ddi_matrix_path=os.environ.get("DDI_MATRIX_PATH", "data/processed/ddi_matrix_final.parquet"),
         drug_index_path=os.environ.get("DRUG_INDEX_PATH", "data/processed/drug_name_index.parquet"),
         cyp_matrix_path=os.environ.get("CYP_MATRIX_PATH", "data/processed/cyp_matrix.parquet"),
