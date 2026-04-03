@@ -105,14 +105,14 @@ def test_reload_endpoint_uses_body_not_query(tmp_path):
 def test_deploy_dag_sends_admin_key(monkeypatch, tmp_path):
     """_deploy_model must send X-Admin-Key header."""
     import sys, os
-    sys.path.insert(0, "/tmp/codex-review-fixes")
     _ensure_airflow_mock()
 
-    # Remove cached dag module so it reimports with mock airflow
-    if "dags.ddi_train_dag" in sys.modules:
-        del sys.modules["dags.ddi_train_dag"]
+    # Remove cached dag/config modules so they reimport from current source
+    for key in list(sys.modules.keys()):
+        if "ddi_train_dag" in key or key == "config.settings":
+            del sys.modules[key]
 
-    monkeypatch.setenv("DDI_ADMIN_API_KEY", "secret-key")
+    monkeypatch.setenv("ADMIN_API_KEY", "secret-key")
     monkeypatch.setenv("DDI_SERVING_URL", "http://localhost:8000")
 
     model_file = tmp_path / "model.pkl"
