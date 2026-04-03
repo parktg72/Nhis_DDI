@@ -162,8 +162,11 @@ class MLModel:
         self._model = None
         self._threshold: float = 0.5
         self._feature_names: list[str] = []
+        self._artifact_version: int = 1
         self._partition: Optional[str] = None
         self._model_type: str = "none"
+        self._scaler = None
+        self._selector = None
 
     @staticmethod
     def _verify_hash(path: Path, content: bytes) -> bool:
@@ -201,6 +204,53 @@ class MLModel:
             self._model = state.get("model")
             self._threshold = state.get("best_threshold", 0.5)
             self._model_type = state.get("trainer_class", "unknown")
+            self._feature_names = state.get("feature_names", [])
+            self._artifact_version = state.get("artifact_version", 1)
+
+            # Resolve scaler/selector paths relative to model file directory
+            import os
+            model_dir = path.parent
+            for attr, key in [("_scaler", "scaler_path"), ("_selector", "selector_path")]:
+                stored = state.get(key)
+                if stored:
+                    candidate = (model_dir / stored).resolve()
+                    if candidate.exists():
+                        import pickle as _pk
+                        with open(candidate, "rb") as f:
+                            setattr(self, attr, _pk.load(f))
+                        logger.info("%s 로드: %s", key, candidate)
+                    else:
+                        logger.warning("%s 없음 — 미적용: %s", key, candidate)
+
+            # Ensemble model: load from sub-model files
+            if self._model is None and state.get("trainer_class") == "EnsembleTrainer":
+                xgb_path = path.with_suffix(".xgb.pkl")
+                lgb_path = path.with_suffix(".lgb.pkl")
+                if xgb_path.exists() and lgb_path.exists():
+                    try:
+                        import pickle as _pk
+                        xgb_content = xgb_path.read_bytes()
+                        lgb_content = lgb_path.read_bytes()
+                        xgb_state = _pk.loads(xgb_content)
+                        lgb_state = _pk.loads(lgb_content)
+                        weights = state.get("weights", (0.5, 0.5))
+                        # Create a simple callable ensemble wrapper
+                        class _EnsembleWrapper:
+                            def __init__(self, xgb_model, lgb_model, w):
+                                self._xgb = xgb_model
+                                self._lgb = lgb_model
+                                self._w = w
+                            def predict_proba(self, X):
+                                import numpy as np
+                                p_xgb = self._xgb.predict_proba(X)[:, 1]
+                                p_lgb = self._lgb.predict_proba(X)[:, 1]
+                                prob = self._w[0] * p_xgb + self._w[1] * p_lgb
+                                return np.column_stack([1 - prob, prob])
+                        self._model = _EnsembleWrapper(xgb_state["model"], lgb_state["model"], weights)
+                        logger.info("앙상블 모델 로드 완료: %s + %s", xgb_path.name, lgb_path.name)
+                    except Exception as e:
+                        logger.warning("앙상블 로드 실패: %s", e)
+
             logger.info("ML 모델 로드: %s (threshold=%.3f)", path, self._threshold)
             return True
         except Exception as e:
@@ -264,7 +314,7 @@ class RequestFeatureBuilder:
                 if existing is None or order.get(sev, 0) > order.get(existing, 0):
                     self._ddi_index[key] = sev
 
-    def build(self, req: PredictRequest) -> tuple[np.ndarray, dict]:
+    def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None) -> tuple[np.ndarray, dict]:
         """
         요청 → (피처 벡터, 피처 딕셔너리).
         피처 딕셔너리는 logging/debugging용.
@@ -333,7 +383,29 @@ class RequestFeatureBuilder:
         feat["qt_risk_count"] = float(_count_qt_drugs(atc_codes))
         feat["drug_count_7d"] = feat["drug_count"]  # 온라인에서는 동일
 
-        vec = np.array(list(feat.values()), dtype=float)
+        # Align to training feature order
+        if feature_names:
+            aligned = {name: feat.get(name, 0.0) for name in feature_names}
+        else:
+            aligned = feat
+
+        # Apply scaler (expects DataFrame)
+        import pandas as pd
+        df = pd.DataFrame([aligned])
+        if scaler is not None:
+            try:
+                df = pd.DataFrame(scaler.transform(df), columns=df.columns)
+            except Exception as e:
+                logger.warning("Scaler 적용 실패 (원본 사용): %s", e)
+
+        # Apply selector (expects DataFrame)
+        if selector is not None:
+            try:
+                df = pd.DataFrame(selector.transform(df), columns=selector.get_support(indices=False) if hasattr(selector, 'get_support') else df.columns)
+            except Exception as e:
+                logger.warning("Selector 적용 실패 (원본 사용): %s", e)
+
+        vec = df.values.flatten().astype(float)
         return vec, feat
 
 
@@ -451,7 +523,12 @@ class HybridPredictor:
         with self._ml_lock:
             ml_snapshot = self._ml  # 핫스왑 중 교체되더라도 이 참조는 안전
         if ml_snapshot.loaded:
-            feat_vec, _ = self._builder.build(req)
+            feat_vec, _ = self._builder.build(
+                req,
+                feature_names=ml_snapshot._feature_names or None,
+                scaler=ml_snapshot._scaler,
+                selector=ml_snapshot._selector,
+            )
             ml_prob  = ml_snapshot.predict_proba(feat_vec)
             ml_level = ml_snapshot.classify(ml_prob)
 
