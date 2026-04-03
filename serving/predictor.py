@@ -84,6 +84,7 @@ def _detect_risk_flags(drugs: list[DrugItem]) -> tuple[bool, bool]:
 def _run_safety_net(
     drugs: list[DrugItem],
     patient_age: Optional[int] = None,
+    sn_instance=None,
 ) -> tuple[RiskLevel, list[str], list[DDIAlert]]:
     """
     rules/safety_net.py 실행 → (등급, 이유 목록, DDI 알림 목록).
@@ -96,7 +97,7 @@ def _run_safety_net(
 
         has_renal, has_hepatic = _detect_risk_flags(drugs)
 
-        sn = SafetyNet()
+        sn = sn_instance or SafetyNet()
         # SafetyNet.assess는 list[str] (약물명 목록)을 기대
         drug_names = [d.drug_name or d.edi_code for d in drugs]
         assessment = sn.assess(
@@ -130,12 +131,12 @@ def _run_safety_net(
         return RiskLevel.NORMAL, [], []
 
 
-def _run_duplicate_detector(drugs: list[DrugItem]) -> tuple[int, list[str]]:
+def _run_duplicate_detector(drugs: list[DrugItem], dd_instance=None) -> tuple[int, list[str]]:
     """중복약물 탐지 → (중복건수, 이유 목록)."""
     try:
         from rules.duplicate_detector import DuplicateDetector
 
-        dd = DuplicateDetector()
+        dd = dd_instance or DuplicateDetector()
         drug_input = _drugs_to_dup_input(drugs)
         result = dd.detect(drug_input)
 
@@ -484,6 +485,24 @@ class HybridPredictor:
         if model_path and Path(model_path).exists():
             self._ml.load(model_path)
 
+        # Safety Net 싱글턴 (요청당 재생성 방지)
+        self._safety_net = None
+        self._dup_detector = None
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(Path(__file__).parent.parent))
+            from rules.safety_net import SafetyNet
+            self._safety_net = SafetyNet()
+            logger.info("SafetyNet 싱글턴 초기화 완료")
+        except Exception as e:
+            logger.warning("SafetyNet 초기화 실패: %s", e)
+        try:
+            from rules.duplicate_detector import DuplicateDetector
+            self._dup_detector = DuplicateDetector()
+            logger.info("DuplicateDetector 싱글턴 초기화 완료")
+        except Exception as e:
+            logger.warning("DuplicateDetector 초기화 실패: %s", e)
+
         # 피처 빌더
         self._builder = RequestFeatureBuilder(
             ddi_matrix=self._ddi_matrix,
@@ -514,10 +533,10 @@ class HybridPredictor:
         ref = req.reference_date or date.today()
 
         # Step 1: Rule Safety Net
-        rule_level, rule_reasons, ddi_alerts = _run_safety_net(req.drugs, patient_age=req.patient_age)
+        rule_level, rule_reasons, ddi_alerts = _run_safety_net(req.drugs, patient_age=req.patient_age, sn_instance=self._safety_net)
 
         # Step 2: 중복약물 탐지
-        dup_count, dup_reasons = _run_duplicate_detector(req.drugs)
+        dup_count, dup_reasons = _run_duplicate_detector(req.drugs, dd_instance=self._dup_detector)
 
         # Rule 등급 보완 (중복약물)
         if dup_count >= 1 and rule_level == RiskLevel.NORMAL:
@@ -552,7 +571,7 @@ class HybridPredictor:
                 if (alert.drug_a, alert.drug_b) not in existing_pairs:
                     ddi_alerts.append(alert)
 
-        all_reasons = rule_reasons + dup_reasons
+        all_reasons = list(rule_reasons)  # dup_reasons already in rule_reasons via extend()
         if ml_prob is not None and ml_prob > 0.3:
             all_reasons.append(f"ML 모델 Red 확률: {ml_prob:.1%}")
 

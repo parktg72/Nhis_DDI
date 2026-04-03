@@ -163,58 +163,75 @@ def _split_dataset(
     test_ratio: float,
     random_state: int,
 ) -> TrainDataset:
+    import pandas as pd
     rng = np.random.default_rng(random_state)
-
-    # 피처 컬럼 확정
     feature_cols = [c for c in df.columns if c not in NON_FEATURE_COLS]
 
-    # 레이블
+    df = df.copy()
     if "is_high_risk" not in df.columns:
         if "risk_level" in df.columns:
-            df = df.copy()
             df["is_high_risk"] = (df["risk_level"] == "Red").astype(int)
         else:
             raise ValueError("'is_high_risk' 또는 'risk_level' 컬럼 필요")
-
     if "risk_level" in df.columns:
-        df = df.copy()
         df["risk_level_encoded"] = df["risk_level"].map(RISK_ORDER).fillna(0).astype(int)
     else:
-        df = df.copy()
-        df["risk_level_encoded"] = df["is_high_risk"] * 3  # Red=3, else=0
+        df["risk_level_encoded"] = df["is_high_risk"] * 3
 
-    # 셔플
-    idx = rng.permutation(len(df))
-    df = df.iloc[idx].reset_index(drop=True)
+    y = df["is_high_risk"].values
+    classes = np.unique(y)
 
-    n = len(df)
-    n_test = max(1, int(n * test_ratio))
-    n_val  = max(1, int(n * val_ratio))
-    n_train = n - n_val - n_test
+    if len(classes) < 2:
+        logger.warning("단일 클래스 — 층화 불가, 랜덤 분할")
+        idx = rng.permutation(len(df))
+        df = df.iloc[idx].reset_index(drop=True)
+        n = len(df)
+        n_test = max(1, int(n * test_ratio))
+        n_val = max(1, int(n * val_ratio))
+        train_df = df.iloc[:n - n_val - n_test]
+        val_df = df.iloc[n - n_val - n_test:n - n_test]
+        test_df = df.iloc[n - n_test:]
+    else:
+        split_parts = {"train": [], "val": [], "test": []}
+        for cls in classes:
+            cls_df = df[y == cls].copy()
+            cls_idx = rng.permutation(len(cls_df))
+            cls_df = cls_df.iloc[cls_idx].reset_index(drop=True)
+            n_c = len(cls_df)
+            n_c_test = max(1, int(n_c * test_ratio))
+            n_c_val = max(1, int(n_c * val_ratio))
+            n_c_train = n_c - n_c_val - n_c_test
+            if n_c_train < 1:
+                # Too few samples — put all in train, skip val/test for this class
+                logger.warning("클래스 %s 샘플 부족 (%d개) — train만 배분", cls, n_c)
+                split_parts["train"].append(cls_df)
+                continue
+            split_parts["train"].append(cls_df.iloc[:n_c_train])
+            split_parts["val"].append(cls_df.iloc[n_c_train:n_c_train + n_c_val])
+            split_parts["test"].append(cls_df.iloc[n_c_train + n_c_val:])
 
-    train_df = df.iloc[:n_train]
-    val_df   = df.iloc[n_train:n_train + n_val]
-    test_df  = df.iloc[n_train + n_val:]
+        train_df = pd.concat(split_parts["train"]).sample(frac=1, random_state=int(random_state)).reset_index(drop=True)
+        val_df = pd.concat(split_parts["val"]).sample(frac=1, random_state=int(random_state)).reset_index(drop=True) if split_parts["val"] else pd.DataFrame(columns=df.columns)
+        test_df = pd.concat(split_parts["test"]).sample(frac=1, random_state=int(random_state)).reset_index(drop=True) if split_parts["test"] else pd.DataFrame(columns=df.columns)
 
-    def _arrays(sub: pd.DataFrame):
+    def _arrays(sub):
+        if len(sub) == 0:
+            return np.empty((0, len(feature_cols))), np.empty(0, int), np.empty(0, int), pd.DataFrame()
         X = sub[feature_cols].astype(float).values
-        y = sub["is_high_risk"].values.astype(int)
+        y_bin = sub["is_high_risk"].values.astype(int)
         y_multi = sub["risk_level_encoded"].values.astype(int)
-        meta_cols = [c for c in ["patient_id", "risk_level", "window_start", "window_end"]
-                     if c in sub.columns]
+        meta_cols = [c for c in ["patient_id", "risk_level", "window_start", "window_end"] if c in sub.columns]
         meta = sub[meta_cols].reset_index(drop=True)
-        return X, y, y_multi, meta
+        return X, y_bin, y_multi, meta
 
     X_tr, y_tr, ym_tr, m_tr = _arrays(train_df)
     X_va, y_va, ym_va, m_va = _arrays(val_df)
     X_te, y_te, ym_te, m_te = _arrays(test_df)
 
-    ds = TrainDataset(
-        X_train=X_tr, X_val=X_va, X_test=X_te,
-        y_train=y_tr, y_val=y_va, y_test=y_te,
-        y_multi_train=ym_tr, y_multi_val=ym_va, y_multi_test=ym_te,
-        feature_names=feature_cols,
-        meta_train=m_tr, meta_val=m_va, meta_test=m_te,
-    )
+    ds = TrainDataset(X_train=X_tr, X_val=X_va, X_test=X_te,
+                      y_train=y_tr, y_val=y_va, y_test=y_te,
+                      y_multi_train=ym_tr, y_multi_val=ym_va, y_multi_test=ym_te,
+                      feature_names=feature_cols,
+                      meta_train=m_tr, meta_val=m_va, meta_test=m_te)
     ds.print_summary()
     return ds

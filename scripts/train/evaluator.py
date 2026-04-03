@@ -105,8 +105,12 @@ def compute_metrics(
 
     if sklearn_fns is not None:
         roc_auc_score, average_precision_score, precision_recall_curve, confusion_matrix = sklearn_fns
-        result.auc_roc = float(roc_auc_score(y_true, y_prob))
-        result.auc_pr  = float(average_precision_score(y_true, y_prob))
+        if len(np.unique(y_true)) < 2:
+            result.auc_roc = 0.0
+            result.auc_pr = 0.0
+        else:
+            result.auc_roc = float(roc_auc_score(y_true, y_prob))
+            result.auc_pr  = float(average_precision_score(y_true, y_prob))
     else:
         # sklearn 없을 때 numpy 기반 근사 AUC (trapezoidal)
         result.auc_roc = _numpy_auc_roc(y_true, y_prob)
