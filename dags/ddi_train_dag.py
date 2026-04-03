@@ -77,7 +77,7 @@ def _load_features(**context) -> None:
     combined = pd.concat(dfs, ignore_index=True)
     combined = combined.drop_duplicates(subset=["patient_id"])
 
-    staging_path = f"{FEATURES_DIR}/train_staging.parquet"
+    staging_path = f"{FEATURES_DIR}/ml_features_staging.parquet"
     combined.to_parquet(staging_path, index=False)
     context["ti"].xcom_push(key="n_samples", value=len(combined))
     context["ti"].xcom_push(key="staging_path", value=staging_path)
@@ -90,22 +90,18 @@ def _run_training(**context) -> None:
     """Optuna 하이퍼파라미터 튜닝 + 모델 훈련."""
     import sys
     sys.path.insert(0, "/app")
-    import pandas as pd
-    from scripts.train.hyperparams import TrainConfig
     from scripts.train.pipeline import run_training
 
-    staging_path = context["ti"].xcom_pull(key="staging_path", task_ids="load_features")
-    df = pd.read_parquet(staging_path)
-
-    config = TrainConfig(
+    result = run_training(
+        partition="staging",
         model_type=MODEL_TYPE,
-        optuna_trials=OPTUNA_TRIALS,
+        feature_base=FEATURES_DIR,
+        model_dir=MODEL_DIR,
+        use_optuna=OPTUNA_TRIALS > 0,
         recall_threshold=RECALL_THRESHOLD,
         auc_threshold=AUC_THRESHOLD,
-        model_dir=MODEL_DIR,
+        optuna_trials=OPTUNA_TRIALS,
     )
-
-    result = run_training(df, config)
 
     context["ti"].xcom_push(key="val_recall", value=result.val_recall)
     context["ti"].xcom_push(key="val_auc", value=result.val_auc)
