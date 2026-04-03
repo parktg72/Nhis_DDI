@@ -165,8 +165,11 @@ def _deploy_model(**context) -> None:
             shutil.copy2(sub_src, sub_dst)
             sub_sha_src = sub_src + ".sha256"
             sub_sha_dst = sub_dst + ".sha256"
-            if os.path.exists(sub_sha_src):
-                shutil.copy2(sub_sha_src, sub_sha_dst)
+            if not os.path.exists(sub_sha_src):
+                raise RuntimeError(
+                    f"앙상블 서브모델 해시 파일 없음 — 무결성 보장 불가, 배포 중단: {sub_sha_src}"
+                )
+            shutil.copy2(sub_sha_src, sub_sha_dst)
 
     # serving API 핫스왑 (가능한 경우)
     serving_url = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
