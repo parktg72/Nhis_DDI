@@ -84,3 +84,31 @@ class CohortStepError(Exception):
         super().__init__(
             f"코호트 {step}단계({step_name}) 실패: {cause}"
         )
+
+
+def format_error_for_user(exc: Exception) -> str:
+    """예외를 사용자 친화적 메시지로 변환한다.
+
+    tabs.py, statistical_analysis.py 등에서 except 블록에 사용.
+    로그에는 별도로 logger.exception()으로 스택 트레이스를 남길 것.
+    """
+    import duckdb as _duckdb
+    import pandas as _pd
+
+    if isinstance(exc, CohortStepError):
+        return str(exc)
+    if isinstance(exc, _duckdb.Error):
+        return (
+            f"데이터베이스 오류: {exc}\n"
+            "재시도하거나 데이터를 다시 적재해 주세요."
+        )
+    if isinstance(exc, _pd.errors.EmptyDataError):
+        return "분석 대상 데이터가 없습니다. 코호트 구성 단계를 확인해 주세요."
+    if isinstance(exc, ValueError):
+        return f"입력값 오류: {exc}"
+    if isinstance(exc, MemoryError):
+        return "메모리 부족 — 청크 크기를 줄이거나 데이터 범위를 축소하세요."
+    return (
+        f"예기치 않은 오류가 발생했습니다. 로그를 확인해 주세요: "
+        f"{type(exc).__name__}: {exc}"
+    )
