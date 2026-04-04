@@ -504,6 +504,55 @@ def test_hotswap_partial_failure_sends_compensating_reload(tmp_path):
     assert ".v_1000" in old_path, f"보상 롤백 호출이 구버전 경로 아님: {old_path}"
 
 
+def test_compensating_rollback_failure_included_in_error(tmp_path):
+    """보상 롤백 자체 실패 시 최종 RuntimeError 메시지에 보상롤백 실패 정보 포함."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+
+    old_dir = prod_dir / ".v_1000"
+    old_dir.mkdir()
+    for fname in ("model_prod.pkl", "model_prod.pkl.sha256",
+                  "model_prod.xgb.pkl", "model_prod.xgb.pkl.sha256",
+                  "model_prod.lgb.pkl", "model_prod.lgb.pkl.sha256"):
+        (old_dir / fname).write_bytes(b"old")
+    (prod_dir / "current").symlink_to(".v_1000")
+
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://inst1:8000"
+    s.SERVING_URLS = ["http://inst1:8000", "http://inst2:8000"]
+    s.ADMIN_API_KEY = "key"
+    s.BACKUP_KEEP_N = 5
+
+    import requests as _req
+    call_count = [0]
+
+    def fake_post(url, **kw):
+        call_count[0] += 1
+        r = MagicMock()
+        # inst1 첫 호출 성공, 이후 모든 호출 실패 (inst2 실패 + inst1 보상 롤백 실패)
+        if "inst1" in url and call_count[0] == 1:
+            r.raise_for_status.return_value = None
+            r.json.return_value = {"status": "ok"}
+        else:
+            r.raise_for_status.side_effect = _req.HTTPError("503")
+        return r
+
+    with patch("requests.post", side_effect=fake_post):
+        from dags.ddi_train_dag import _deploy_model
+        with pytest.raises(RuntimeError) as exc_info:
+            _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    msg = str(exc_info.value)
+    assert "핫스왑 실패" in msg
+    assert "보상롤백 실패" in msg, f"보상롤백 실패 정보가 에러 메시지에 없음: {msg}"
+
+
 def test_versioned_dir_name_is_unique_nanoseconds(tmp_path):
     """두 번 연속 배포해도 .v_<ts_ns> 이름이 충돌하지 않음 (나노초 해상도)."""
     import time as _time
