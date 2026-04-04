@@ -44,13 +44,16 @@ class EvalResult:
     n_negative: int = 0
     warnings: list[str] = field(default_factory=list)
 
+    min_recall: float = 0.90   # 합격 기준 — TrainConfig에서 주입
+    min_auc:    float = 0.85   # 합격 기준 — TrainConfig에서 주입
+
     @property
     def passed_recall(self) -> bool:
-        return self.recall >= 0.90
+        return self.recall >= self.min_recall
 
     @property
     def passed_auc(self) -> bool:
-        return self.auc_roc >= 0.85
+        return self.auc_roc >= self.min_auc
 
     @property
     def passed(self) -> bool:
@@ -198,11 +201,15 @@ def evaluate_all_splits(
     y_true_va: np.ndarray, y_prob_va: np.ndarray,
     y_true_te: np.ndarray, y_prob_te: np.ndarray,
     min_recall: float = 0.90,
+    min_auc: float = 0.85,
 ) -> dict[str, EvalResult]:
     """Val로 임계값 최적화 후 Train/Test에 동일 임계값 적용."""
     thresh, val_result = find_optimal_threshold(y_true_va, y_prob_va, min_recall, "val")
     train_result = compute_metrics(y_true_tr, y_prob_tr, thresh, "train")
     test_result  = compute_metrics(y_true_te, y_prob_te, thresh, "test")
+    for r in (val_result, train_result, test_result):
+        r.min_recall = min_recall
+        r.min_auc    = min_auc
     return {"train": train_result, "val": val_result, "test": test_result}
 
 

@@ -121,14 +121,20 @@ class TestPredictRequestEdgeCases:
         assert len(req.drugs) == 1
 
     def test_reference_date_none_replaced_by_today(self):
-        """reference_date=None → model_validator가 date.today()로 대체."""
+        """reference_date=None → model_validator가 date.today()로 대체.
+
+        date.today()를 before/after로 감싸 자정 경계(23:59:59→00:00:00)
+        에서의 flakiness를 방지한다.
+        """
+        before = date.today()
         req = PredictRequest(
             patient_id="TEST001",
             drugs=[DrugItem(edi_code="A001", total_days=7)],
             reference_date=None,
         )
-        # set_default_dates() model_validator가 None을 date.today()로 교체한다
-        assert req.reference_date == date.today()
+        after = date.today()
+        # set_default_dates() model_validator가 None을 date.today()로 교체
+        assert before <= req.reference_date <= after
 
     def test_patient_age_none_is_valid(self):
         """patient_age=None 허용."""

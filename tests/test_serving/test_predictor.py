@@ -231,6 +231,17 @@ class TestRunSafetyNet:
             level, reasons, alerts = _run_safety_net(drugs, sn_instance=None)
         assert level == RiskLevel.NORMAL
 
+    def test_attribute_error_propagates_when_instance_provided(self, drugs):
+        """sn_instance 있을 때 assess()에서 AttributeError → 전파 (M-1).
+
+        H-1 수정 이후: AttributeError는 outer except Exception에서 처리되어
+        sn_instance is not None이면 전파됨.
+        """
+        mock_sn = MagicMock()
+        mock_sn.assess.side_effect = AttributeError("assessment 객체 필드 누락")
+        with pytest.raises(AttributeError, match="assessment 객체 필드 누락"):
+            _run_safety_net(drugs, sn_instance=mock_sn)
+
 
 # ─── HybridPredictor.reload_model 테스트 ─────────────────────────────────────
 

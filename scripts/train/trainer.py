@@ -55,7 +55,12 @@ class BaseTrainer(ABC):
         t = threshold if threshold is not None else self.best_threshold_
         return (self.predict_proba(X) >= t).astype(int)
 
-    def evaluate(self, dataset: TrainDataset, min_recall: float = 0.90) -> dict[str, EvalResult]:
+    def evaluate(
+        self,
+        dataset: TrainDataset,
+        min_recall: float = 0.90,
+        min_auc: float = 0.85,
+    ) -> dict[str, EvalResult]:
         if not self._trained:
             raise RuntimeError("fit() 먼저 호출하세요.")
         results = evaluate_all_splits(
@@ -66,6 +71,7 @@ class BaseTrainer(ABC):
             y_true_te=dataset.y_test,
             y_prob_te=self.predict_proba(dataset.X_test),
             min_recall=min_recall,
+            min_auc=min_auc,
         )
         self.best_threshold_ = results["val"].threshold
         return results

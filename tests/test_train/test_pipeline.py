@@ -183,6 +183,12 @@ class TestEnsembleTrainerSave:
 # ─── build_trainer 팩토리 테스트 ──────────────────────────────────────────────
 
 class TestBuildTrainer:
+    """build_trainer 팩토리 테스트.
+
+    XGBoostTrainer/LGBMTrainer 인스턴스 생성은 실제 xgboost/lightgbm import를
+    유발하지 않는다 (lazy import: fit() 호출 시에만 import). 따라서 이 테스트는
+    xgboost/lightgbm 미설치 환경에서도 안전하게 실행된다.
+    """
 
     @pytest.fixture
     def base_config(self):
@@ -292,19 +298,16 @@ class TestTrainPipelineRun:
         )
 
     def test_run_success_creates_model_file(self, pipeline_config):
-        """MockTrainer → run() 완료 → pkl 파일 생성.
+        """MockTrainer → run() 성공 → passed=True + pkl 파일 생성.
 
-        EvalResult.passed_recall/passed_auc 는 0.90/0.85 고정값 사용 (TrainConfig 무관).
-        이 테스트는 파이프라인이 예외 없이 완료되고 모델 파일이 생성됨을 검증한다.
+        pipeline_config: recall_threshold=0.0, auc_threshold=0.0 →
+        EvalResult.min_recall=0.0, min_auc=0.0 → 모든 점수 통과.
         """
         with patch("scripts.train.pipeline.build_trainer", return_value=MockTrainer()):
             pipeline = TrainPipeline(pipeline_config)
             result = pipeline.run()
-        # 모델 파일 생성 확인 (임계값 미달은 허용 — 목적은 파이프라인 완료 검증)
+        assert result.passed is True
         assert Path(result.model_path).exists()
-        # 데이터 로드나 훈련 자체 오류가 아닌 경우만 확인
-        unexpected = [e for e in result.errors if "Recall" not in e and "AUC" not in e]
-        assert unexpected == [], f"예상치 못한 오류: {unexpected}"
 
     def test_run_stores_feature_meta(self, pipeline_config):
         """run() 결과 모델 pkl에 feature_names, artifact_version 포함."""
@@ -316,7 +319,7 @@ class TestTrainPipelineRun:
         assert state.get("artifact_version") == 2
 
     def test_run_dataset_missing_raises_gracefully(self, tmp_path):
-        """데이터셋 파일 없으면 run() → passed=False, errors 비어있지 않음."""
+        """데이터셋 파일 없으면 run() → passed=False, 파일 관련 오류 메시지 포함."""
         config = TrainConfig(
             model_type="xgboost", partition="missing",
             feature_base=str(tmp_path / "no_such_dir"),
@@ -325,14 +328,19 @@ class TestTrainPipelineRun:
         )
         pipeline = TrainPipeline(config)
         result = pipeline.run()
-        assert result.passed is False
+        assert not result.passed
         assert len(result.errors) > 0
+        # 오류 메시지에 파일 미존재 관련 키워드 포함 확인 (L-4)
+        assert any(
+            "없음" in e or "parquet" in e.lower() or "missing" in e.lower()
+            for e in result.errors
+        ), f"파일 관련 오류 메시지 없음: {result.errors}"
 
     def test_run_failed_recall_threshold(self, pipeline_config):
-        """predict_proba=0 → recall=0 → recall_threshold=0.5 미달 → passed=False.
+        """recall_threshold=1.01 (달성 불가) → passed=False.
 
-        recall_threshold=1.0은 MockTrainer가 우연히 달성할 수 있어 비결정적.
-        predict_proba를 항상 0 반환하는 서브클래스로 recall=0을 보장한다.
+        recall은 최대 1.0이므로 1.01은 항상 미달. 이로써 MockTrainer의
+        predict_proba 출력과 무관하게 결정적으로 failed 상태를 검증한다.
         """
         config = TrainConfig(
             model_type="xgboost",
@@ -340,15 +348,9 @@ class TestTrainPipelineRun:
             feature_base=pipeline_config.feature_base,
             model_dir=pipeline_config.model_dir,
             use_optuna=False,
-            recall_threshold=0.5,  # 0 recall < 0.5 → 반드시 실패
+            recall_threshold=1.01,  # recall ≤ 1.0 → 반드시 미달
             auc_threshold=0.0,
         )
-
-        class _ZeroProbaTrainer(MockTrainer):
-            """항상 0 확률을 반환해 recall=0을 보장하는 테스트용 Trainer."""
-            def predict_proba(self, X: np.ndarray) -> np.ndarray:
-                return np.zeros(len(X))
-
-        with patch("scripts.train.pipeline.build_trainer", return_value=_ZeroProbaTrainer()):
+        with patch("scripts.train.pipeline.build_trainer", return_value=MockTrainer()):
             result = TrainPipeline(config).run()
-        assert result.passed is False
+        assert not result.passed

@@ -114,7 +114,9 @@ class TrainPipeline:
             # ── Step 4: 평가 + 임계값 최적화 ──────────────────────────────
             logger.info("[Step 4] 평가")
             eval_results = trainer.evaluate(
-                dataset, min_recall=self.config.recall_threshold
+                dataset,
+                min_recall=self.config.recall_threshold,
+                min_auc=self.config.auc_threshold,
             )
             result.eval_results = eval_results
             for split, res in eval_results.items():
