@@ -150,3 +150,5 @@ def test_run_psm_skips_on_too_few_rows():
         result = analyzer.run_psm(df_prepared=df)
     assert result.get('skipped') is True, \
         f"MIN_VALID_ROWS=30 인데 행 수 {n}건으로 PSM skip 안 됨: {result}"
+    assert "PSM 스킵" in result.get('reason', ''), \
+        f"skip 이유에 'PSM 스킵' 없음 — 잘못된 분기에서 skip 됨: {result.get('reason')!r}"

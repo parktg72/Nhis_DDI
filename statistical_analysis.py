@@ -330,7 +330,6 @@ class StatisticalAnalyzer:
             self._check_min_rows(df_ps, context="run_psm")
         except InsufficientDataError as e:
             msg = f"PSM 스킵: {e}"
-            logger.warning(msg)
             if cb: cb(msg)
             self.results['psm'] = {'skipped': True, 'reason': msg}
             return self.results['psm']
