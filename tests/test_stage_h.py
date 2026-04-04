@@ -122,3 +122,31 @@ def test_run_competing_risks_respects_min_valid_rows_from_config():
     outcome_keys = [k for k in result if k not in ('_method_warning', 'implemented')]
     assert len(outcome_keys) > 0, \
         "run_competing_risks 가 MIN_VALID_ROWS=30 임에도 모든 outcome 을 skip 함 — 하드코딩 100 의심"
+
+
+def test_run_psm_skips_on_too_few_rows():
+    """run_psm() 이 MIN_VALID_ROWS 미만의 df_ps 에서 skip 결과를 반환한다."""
+    n = 10  # MIN_VALID_ROWS(30) 미만
+    df = pd.DataFrame({
+        'follow_up_years': [1.0] * n,
+        'dementia_event': [0] * n,
+        'ad_event': [0] * n,
+        'vad_event': [0] * n,
+        'exposure_group': (['T1DM'] * 5) + (['T2DM_OHA'] * 5),
+        'is_t1dm': [1] * 5 + [0] * 5,
+        'is_t2dm_oha': [0] * 5 + [1] * 5,
+        'is_t2dm_insulin': [0] * n,
+        'is_t2dm_nomed': [0] * n,
+        'male': [1] * n,
+        'age_at_index': [60.0] * n,
+        'income_q': [3.0] * n,
+        'comor_hypertension': [0] * n,
+        'comor_dyslipidemia': [0] * n,
+        'dm_duration_years': [5.0] * n,
+    })
+    analyzer = StatisticalAnalyzer.__new__(StatisticalAnalyzer)
+    analyzer.results = {}
+    with patch('statistical_analysis.STUDY_SETTINGS', {'MIN_VALID_ROWS': 30, 'MIN_EVENTS': 10, 'SAMPLING_SEED': 42}):
+        result = analyzer.run_psm(df_prepared=df)
+    assert result.get('skipped') is True, \
+        f"MIN_VALID_ROWS=30 인데 행 수 {n}건으로 PSM skip 안 됨: {result}"

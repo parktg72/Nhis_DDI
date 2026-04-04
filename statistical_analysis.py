@@ -326,6 +326,15 @@ class StatisticalAnalyzer:
         ps_vars = [c for c in ps_vars if c in df_dm.columns]
         df_ps = df_dm[ps_vars + ['is_t1dm']].dropna()
 
+        try:
+            self._check_min_rows(df_ps, context="run_psm")
+        except InsufficientDataError as e:
+            msg = f"PSM 스킵: {e}"
+            logger.warning(msg)
+            if cb: cb(msg)
+            self.results['psm'] = {'skipped': True, 'reason': msg}
+            return self.results['psm']
+
         # PSM 실행 가능 여부 검증: T1DM과 non-T1DM 모두 존재해야 함
         n_treated = (df_ps['is_t1dm'] == 1).sum()
         n_control = (df_ps['is_t1dm'] == 0).sum()
