@@ -20,8 +20,8 @@ PREDICTIONS_DIR = Path(os.environ.get("DDI_PREDICTIONS_DIR","/app/data/predictio
 RAW_DATA_DIR    = Path(os.environ.get("DDI_RAW_DATA_DIR",   "/app/data/raw"))
 
 # 파생 경로 (MODEL_DIR 기반)
-MODEL_PROD_PATH   = MODEL_DIR / "model_prod.pkl"
-MODEL_BACKUP_PATH = MODEL_DIR / "model_backup.pkl"
+MODEL_PROD_PATH   = MODEL_DIR / "current" / "model_prod.pkl"
+MODEL_BACKUP_PATH = MODEL_DIR / "backup" / "model_prod.pkl"
 
 # ── 로깅 / CORS ────────────────────────────────────────────────────────────────
 LOG_LEVEL    = os.environ.get("LOG_LEVEL",    "INFO")

@@ -133,18 +133,31 @@ def _validate_model(**context) -> str:
         return "validation_failed"
 
 
+def _atomic_symlink_update(link_path, target_name: str) -> None:
+    """POSIX 원자적 심링크 교체: tmp 심링크 생성 후 os.replace로 swap."""
+    import os
+    from pathlib import Path
+    link_path = Path(link_path)
+    tmp_link = link_path.parent / (link_path.name + ".tmp")
+    if tmp_link.exists() or tmp_link.is_symlink():
+        tmp_link.unlink()
+    tmp_link.symlink_to(target_name)
+    os.replace(tmp_link, link_path)
+
+
 def _deploy_model(**context) -> None:
     """검증 통과 모델을 production 경로로 원자적 배포 + serving 핫스왑.
 
     배포 순서:
       Phase 1: 전체 아티팩트 존재 검증 (복사 없음 — 실패해도 prod_dir 불변)
       Phase 2: 임시 디렉터리에 전체 복사
-      Phase 3: 기존 prod 파일 전체 백업 (메인 + 서브모델 + sha256)
-      Phase 4: os.replace로 원자적 promote
+      Phase 3: 기존 current→versioned_dir 파일 backup/ 에 보존
+      Phase 4: tmp_dir → versioned_dir rename + current 심링크 원자적 교체
     """
     import sys
     sys.path.insert(0, "/app")
     import os
+    import time
     import logging
     import shutil
     import requests
@@ -153,7 +166,7 @@ def _deploy_model(**context) -> None:
 
     model_path = Path(context["ti"].xcom_pull(key="model_path", task_ids="run_training"))
     prod_dir   = _s.MODEL_DIR
-    prod_path  = prod_dir / "model_prod.pkl"
+    prod_path  = _s.MODEL_PROD_PATH
     base_src   = model_path.with_suffix("")  # e.g. /app/models/model_v1
 
     # ── Phase 1: 전체 아티팩트 선검증 ────────────────────────────────────────
@@ -183,17 +196,21 @@ def _deploy_model(**context) -> None:
     for src, dst_name in artifacts:
         shutil.copy2(src, tmp_dir / dst_name)
 
-    # ── Phase 3: 기존 prod 전체 백업 ─────────────────────────────────────────
+    # ── Phase 3: 기존 current → backup/ 에 보존 ──────────────────────────────
+    current_link = prod_dir / "current"
     backup_dir = prod_dir / "backup"
     backup_dir.mkdir(exist_ok=True)
-    for f in prod_dir.glob("model_prod*"):
-        if f.is_file():
-            shutil.copy2(f, backup_dir / f.name)
+    if current_link.is_symlink():
+        old_version_dir = current_link.resolve()
+        for f in old_version_dir.glob("model_prod*"):
+            if f.is_file():
+                shutil.copy2(f, backup_dir / f.name)
 
-    # ── Phase 4: 원자적 promote ───────────────────────────────────────────────
-    for f in tmp_dir.iterdir():
-        os.replace(f, prod_dir / f.name)
-    shutil.rmtree(tmp_dir, ignore_errors=True)
+    # ── Phase 4: versioned_dir rename + current 심링크 원자적 교체 ───────────
+    versioned_name = f".v_{int(time.time())}"
+    versioned_dir = prod_dir / versioned_name
+    os.rename(tmp_dir, versioned_dir)
+    _atomic_symlink_update(current_link, versioned_name)
 
     # ── Serving 핫스왑 ────────────────────────────────────────────────────────
     try:
@@ -206,8 +223,8 @@ def _deploy_model(**context) -> None:
         resp.raise_for_status()
         logging.info("Serving 핫스왑 완료: %s", resp.json())
     except Exception as exc:
-        logging.warning("Serving 핫스왑 실패: %s", exc)
-        raise RuntimeError(f"Serving 핫스왑 실패 — 구버전 모델로 서빙 중: {exc}") from exc
+        logging.warning("핫스왑 실패: %s", exc)
+        raise RuntimeError(f"핫스왑 실패 — 구버전 모델로 서빙 중: {exc}") from exc
 
 
 def _validation_failed(**context) -> None:

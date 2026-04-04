@@ -96,15 +96,18 @@ def test_deploy_atomic_no_files_on_missing_submodel_sha256(tmp_path):
 
     import config.settings as s
     s.MODEL_DIR = prod_dir
-    s.MODEL_PROD_PATH = prod_dir / "model_prod.pkl"
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
     s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
 
     from dags.ddi_train_dag import _deploy_model
     with pytest.raises(RuntimeError, match="배포 중단"):
         _deploy_model(ti=_FakeTI(str(main_pkl)))
 
-    assert list(prod_dir.glob("model_prod*")) == [], \
-        "RuntimeError 발생 전 파일이 prod_dir에 복사됨 — 원자성 깨짐"
+    assert not (prod_dir / "current").exists(), \
+        "RuntimeError 발생 전 current 심링크가 생성됨 — 원자성 깨짐"
+    assert not list(prod_dir.glob(".v_*")), \
+        "RuntimeError 발생 전 버전 디렉터리가 생성됨 — 원자성 깨짐"
 
 
 def test_deploy_atomic_no_files_on_missing_main_sha256(tmp_path):
@@ -120,18 +123,20 @@ def test_deploy_atomic_no_files_on_missing_main_sha256(tmp_path):
 
     import config.settings as s
     s.MODEL_DIR = prod_dir
-    s.MODEL_PROD_PATH = prod_dir / "model_prod.pkl"
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
     s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
 
     from dags.ddi_train_dag import _deploy_model
     with pytest.raises(RuntimeError, match="배포 중단"):
         _deploy_model(ti=_FakeTI(str(main_pkl)))
 
-    assert list(prod_dir.glob("model_prod*")) == []
+    assert not (prod_dir / "current").exists()
+    assert not list(prod_dir.glob(".v_*"))
 
 
 def test_deploy_success_creates_all_files(tmp_path):
-    """완전한 아티팩트로 배포 시 model_prod* 파일 전부 생성."""
+    """완전한 아티팩트로 배포 시 current 심링크 + 버전 디렉터리에 파일 전부 생성."""
     staging = tmp_path / "staging"
     staging.mkdir()
     prod_dir = tmp_path / "models"
@@ -141,8 +146,9 @@ def test_deploy_success_creates_all_files(tmp_path):
 
     import config.settings as s
     s.MODEL_DIR = prod_dir
-    s.MODEL_PROD_PATH = prod_dir / "model_prod.pkl"
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
     s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
     s.ADMIN_API_KEY = "test-key"
 
     def fake_post(url, **kw):
@@ -155,33 +161,39 @@ def test_deploy_success_creates_all_files(tmp_path):
         from dags.ddi_train_dag import _deploy_model
         _deploy_model(ti=_FakeTI(str(main_pkl)))
 
-    assert (prod_dir / "model_prod.pkl").exists()
-    assert (prod_dir / "model_prod.pkl.sha256").exists()
-    assert (prod_dir / "model_prod.xgb.pkl").exists()
-    assert (prod_dir / "model_prod.xgb.pkl.sha256").exists()
-    assert (prod_dir / "model_prod.lgb.pkl").exists()
-    assert (prod_dir / "model_prod.lgb.pkl.sha256").exists()
+    current = prod_dir / "current"
+    assert current.is_symlink(), "current 심링크 없음"
+    assert (current / "model_prod.pkl").exists()
+    assert (current / "model_prod.pkl.sha256").exists()
+    assert (current / "model_prod.xgb.pkl").exists()
+    assert (current / "model_prod.xgb.pkl.sha256").exists()
+    assert (current / "model_prod.lgb.pkl").exists()
+    assert (current / "model_prod.lgb.pkl.sha256").exists()
 
 
 def test_deploy_backup_covers_all_files(tmp_path):
-    """배포 성공 시 backup/ 에 기존 model_prod* 전체 보관."""
+    """배포 성공 시 backup/ 에 기존 current→versioned_dir 파일 전체 보관."""
     staging = tmp_path / "staging"
     staging.mkdir()
     prod_dir = tmp_path / "models"
     prod_dir.mkdir()
 
-    # 기존 prod 파일 준비
-    (prod_dir / "model_prod.pkl").write_bytes(b"old_model")
-    (prod_dir / "model_prod.pkl.sha256").write_text("oldhash\n")
-    (prod_dir / "model_prod.xgb.pkl").write_bytes(b"old_xgb")
-    (prod_dir / "model_prod.xgb.pkl.sha256").write_text("oldhash\n")
+    # 기존 버전 디렉터리 + current 심링크 준비
+    old_dir = prod_dir / ".v_old"
+    old_dir.mkdir()
+    (old_dir / "model_prod.pkl").write_bytes(b"old_model")
+    (old_dir / "model_prod.pkl.sha256").write_text("oldhash\n")
+    (old_dir / "model_prod.xgb.pkl").write_bytes(b"old_xgb")
+    (old_dir / "model_prod.xgb.pkl.sha256").write_text("oldhash\n")
+    (prod_dir / "current").symlink_to(".v_old")
 
     main_pkl = _make_full_artifacts(staging)
 
     import config.settings as s
     s.MODEL_DIR = prod_dir
-    s.MODEL_PROD_PATH = prod_dir / "model_prod.pkl"
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
     s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
     s.ADMIN_API_KEY = "key"
 
     def fake_post(url, **kw):
@@ -212,6 +224,7 @@ def test_hotswap_failure_raises(tmp_path):
     s.MODEL_DIR = prod_dir
     s.MODEL_PROD_PATH = prod_dir / "model_prod.pkl"
     s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
     s.ADMIN_API_KEY = "key"
 
     import requests as _req
@@ -239,6 +252,7 @@ def test_hotswap_timeout_raises(tmp_path):
     s.MODEL_DIR = prod_dir
     s.MODEL_PROD_PATH = prod_dir / "model_prod.pkl"
     s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
     s.ADMIN_API_KEY = "key"
 
     import requests as _req
