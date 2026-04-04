@@ -62,9 +62,9 @@ class EvalResult:
     def print(self) -> None:
         status = "PASS" if self.passed else "FAIL"
         print(f"\n[{self.split.upper()}] {status}")
-        print(f"  AUC-ROC  : {self.auc_roc:.4f}  {'✓' if self.passed_auc else '✗ (<0.85)'}")
+        print(f"  AUC-ROC  : {self.auc_roc:.4f}  {'✓' if self.passed_auc else f'✗ (<{self.min_auc:.2f})'}")
         print(f"  AUC-PR   : {self.auc_pr:.4f}")
-        print(f"  Recall   : {self.recall:.4f}  {'✓' if self.passed_recall else '✗ (<0.90)'}")
+        print(f"  Recall   : {self.recall:.4f}  {'✓' if self.passed_recall else f'✗ (<{self.min_recall:.2f})'}")
         print(f"  Precision: {self.precision:.4f}")
         print(f"  F1-score : {self.f1:.4f}")
         print(f"  Threshold: {self.threshold:.3f}")

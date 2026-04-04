@@ -306,7 +306,7 @@ class TestTrainPipelineRun:
         with patch("scripts.train.pipeline.build_trainer", return_value=MockTrainer()):
             pipeline = TrainPipeline(pipeline_config)
             result = pipeline.run()
-        assert result.passed is True
+        assert result.passed
         assert Path(result.model_path).exists()
 
     def test_run_stores_feature_meta(self, pipeline_config):

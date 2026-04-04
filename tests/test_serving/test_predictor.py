@@ -242,6 +242,24 @@ class TestRunSafetyNet:
         with pytest.raises(AttributeError, match="assessment 객체 필드 누락"):
             _run_safety_net(drugs, sn_instance=mock_sn)
 
+    def test_instance_used_even_when_module_unavailable(self, drugs):
+        """sn_instance 제공 + rules.safety_net 모듈 없음 → 인스턴스 정상 사용.
+
+        Codex HIGH 수정: import는 sn_instance=None 경로에서만 실행되므로
+        모듈이 sys.modules에서 제거되어도 sn_instance가 있으면 DDI 탐지 계속.
+        """
+        import sys
+        mock_sn = MagicMock()
+        mock_sn.assess.return_value = MagicMock(
+            risk_grade="Normal",
+            triggered_rules=[],
+            ddi_pairs=[],
+        )
+        with patch.dict(sys.modules, {"rules.safety_net": None}):
+            level, reasons, alerts = _run_safety_net(drugs, sn_instance=mock_sn)
+        assert level == RiskLevel.NORMAL
+        mock_sn.assess.assert_called_once()  # 인스턴스가 실제로 호출됨
+
 
 # ─── HybridPredictor.reload_model 테스트 ─────────────────────────────────────
 

@@ -95,13 +95,16 @@ def _run_safety_net(
       (선택적 기능 미설치 환경 지원)
     """
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from rules.safety_net import SafetyNet
+        if sn_instance is None:
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            from rules.safety_net import SafetyNet
+            sn = SafetyNet()
+        else:
+            sn = sn_instance
 
         has_renal, has_hepatic = _detect_risk_flags(drugs)
 
-        sn = sn_instance or SafetyNet()
         # SafetyNet.assess는 list[str] (약물명 목록)을 기대
         drug_names = [d.drug_name or d.edi_code for d in drugs]
         assessment = sn.assess(
@@ -132,8 +135,7 @@ def _run_safety_net(
         return level, reasons, alerts
 
     except ImportError:
-        # 모듈 미설치 (선택적 기능) → 묵과
-        # sn_instance 제공 여부와 무관: ImportError는 항상 모듈 미설치 상황
+        # sn_instance=None 경로에서만 발생 — 모듈 미설치 → 묵과
         logger.warning("Safety Net 미설치 (Normal 반환)")
         return RiskLevel.NORMAL, [], []
     except Exception as e:
