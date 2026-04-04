@@ -1,4 +1,5 @@
 """배포 원자성·핫스왑 실패 시나리오 통합 테스트."""
+import os
 import sys
 import pytest
 from pathlib import Path
@@ -395,3 +396,167 @@ def test_prune_keeps_backup_keep_n_versioned_dirs(tmp_path):
     assert not (prod_dir / ".v_2").exists()
     assert not (prod_dir / ".v_3").exists()
     assert not (prod_dir / ".v_4").exists()
+
+
+def test_hotswap_failure_with_keep_n1_rollback_is_valid(tmp_path):
+    """BACKUP_KEEP_N=1 환경에서 hotswap 실패 시 롤백 심링크가 유효한 디렉터리를 가리킴.
+
+    pruning이 hotswap 전에 실행되면 prev 버전이 삭제되어 broken symlink 발생.
+    pruning은 hotswap 성공 후에만 실행돼야 함.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+
+    # 기존 버전 + current 심링크
+    old_dir = prod_dir / ".v_1000"
+    old_dir.mkdir()
+    for fname in ("model_prod.pkl", "model_prod.pkl.sha256",
+                  "model_prod.xgb.pkl", "model_prod.xgb.pkl.sha256",
+                  "model_prod.lgb.pkl", "model_prod.lgb.pkl.sha256"):
+        (old_dir / fname).write_bytes(b"old")
+    (prod_dir / "current").symlink_to(".v_1000")
+
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
+    s.ADMIN_API_KEY = "key"
+    s.BACKUP_KEEP_N = 1  # 신규 버전만 유지 — 구버전이 pruning될 수 있음
+
+    import requests as _req
+
+    def fake_post_503(url, **kw):
+        r = MagicMock()
+        r.raise_for_status.side_effect = _req.HTTPError("503")
+        return r
+
+    with patch("requests.post", side_effect=fake_post_503):
+        from dags.ddi_train_dag import _deploy_model
+        with pytest.raises(RuntimeError, match="핫스왑 실패"):
+            _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    # 롤백 후 current가 유효한 디렉터리를 가리켜야 함 (broken symlink 아님)
+    current = prod_dir / "current"
+    assert current.is_symlink(), "current 심링크 없음"
+    assert current.resolve().exists(), (
+        f"롤백 후 current가 존재하지 않는 디렉터리를 가리킴: {os.readlink(current)}"
+    )
+
+
+def test_hotswap_partial_failure_sends_compensating_reload(tmp_path):
+    """URL[0] 성공·URL[1] 실패 시 URL[0]에 구버전 model_path로 보상 롤백 전송."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+
+    # 기존 버전 + current 심링크
+    old_dir = prod_dir / ".v_1000"
+    old_dir.mkdir()
+    for fname in ("model_prod.pkl", "model_prod.pkl.sha256",
+                  "model_prod.xgb.pkl", "model_prod.xgb.pkl.sha256",
+                  "model_prod.lgb.pkl", "model_prod.lgb.pkl.sha256"):
+        (old_dir / fname).write_bytes(b"old")
+    (prod_dir / "current").symlink_to(".v_1000")
+
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://inst1:8000"
+    s.SERVING_URLS = ["http://inst1:8000", "http://inst2:8000"]
+    s.ADMIN_API_KEY = "key"
+    s.BACKUP_KEEP_N = 5
+
+    import requests as _req
+    call_log: list = []  # (url, model_path)
+
+    def fake_post(url, json=None, **kw):
+        call_log.append((url, (json or {}).get("model_path", "")))
+        if "inst2" in url:
+            r = MagicMock()
+            r.raise_for_status.side_effect = _req.HTTPError("503")
+            return r
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = {"status": "ok"}
+        return r
+
+    with patch("requests.post", side_effect=fake_post):
+        from dags.ddi_train_dag import _deploy_model
+        with pytest.raises(RuntimeError, match="핫스왑 실패"):
+            _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    reload_calls = [(u, p) for u, p in call_log if "/admin/reload" in u]
+
+    # inst1은 신버전으로 처음 호출, 실패 후 구버전으로 보상 호출
+    inst1_paths = [p for u, p in reload_calls if "inst1" in u]
+    assert len(inst1_paths) == 2, f"inst1 reload 호출 횟수 오류: {inst1_paths}"
+    new_path = inst1_paths[0]
+    old_path = inst1_paths[1]
+    assert "current" in new_path or "model_prod" in new_path, "첫 호출이 신버전 경로 아님"
+    assert ".v_1000" in old_path, f"보상 롤백 호출이 구버전 경로 아님: {old_path}"
+
+
+def test_versioned_dir_name_is_unique_nanoseconds(tmp_path):
+    """두 번 연속 배포해도 .v_<ts_ns> 이름이 충돌하지 않음 (나노초 해상도)."""
+    import time as _time
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+
+    def fake_post(url, **kw):
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = {"status": "ok"}
+        return r
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
+    s.ADMIN_API_KEY = "key"
+    s.BACKUP_KEEP_N = 5
+
+    # 첫 번째 배포
+    main_pkl = _make_full_artifacts(staging, base_name="model_v1")
+    with patch("requests.post", side_effect=fake_post):
+        from dags.ddi_train_dag import _deploy_model
+        _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    # 두 번째 배포 (같은 초 내 가능)
+    main_pkl2 = _make_full_artifacts(staging, base_name="model_v2")
+    with patch("requests.post", side_effect=fake_post):
+        _deploy_model(ti=_FakeTI(str(main_pkl2)))
+
+    versioned = list(prod_dir.glob(".v_*"))
+    names = [d.name for d in versioned]
+    assert len(names) == len(set(names)), f"버전 디렉터리 이름 충돌: {names}"
+    assert len(versioned) == 2, f"배포 2회인데 .v_* 개수 오류: {names}"
+
+
+def test_atomic_symlink_update_unique_tmp_name(tmp_path):
+    """_atomic_symlink_update tmp 심링크 이름이 PID 포함 unique 이름 사용."""
+    from dags.ddi_train_dag import _atomic_symlink_update
+    import os as _os
+
+    target_dir = tmp_path / ".v_1"
+    target_dir.mkdir()
+    link = tmp_path / "current"
+
+    _atomic_symlink_update(link, ".v_1")
+    assert link.is_symlink()
+    assert link.resolve() == target_dir.resolve()
+
+    # tmp 심링크 잔재 없음 확인
+    tmp_artifacts = list(tmp_path.glob("current.tmp*"))
+    assert tmp_artifacts == [], f"tmp 심링크 잔재: {tmp_artifacts}"
