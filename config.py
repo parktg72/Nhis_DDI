@@ -203,6 +203,7 @@ STUDY_SETTINGS = {
     'SAMPLING_SEED': 42,          # 층화 샘플링 재현성 시드 (0–99 정수)
     'MIN_VALID_ROWS': 30,         # Cox 분석 최소 유효 행 수 (EPV ≥ 10 기준)
     'MIN_EVENTS': 10,             # Cox 분석 최소 이벤트 수 (EPV heuristic)
+    'MIN_SUBGROUP_EVENTS': 5,     # 서브그룹/Fine-Gray 분석 최소 이벤트 수
 }
 
 DUCKDB_SETTINGS = {
