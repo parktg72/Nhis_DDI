@@ -854,12 +854,45 @@ class AnalysisTab(QWidget):
         msg.button(QMessageBox.Cancel).setText("취소")
         return msg.exec_() == QMessageBox.Ok
 
+    def _confirm_sampling_if_needed(self) -> bool:
+        """분석 시작 전 샘플링 필요 여부 확인. True = 진행, False = 취소.
+
+        final_analysis 행 수를 동기적으로 조회하여 샘플링이 필요하면 확인 다이얼로그를
+        보여준다. DB 없거나 테이블 없으면 True 반환 (분석 시 실패로 처리).
+        """
+        if self.ctx.dm is None:
+            return True
+        try:
+            total = self.ctx.dm.storage.get_row_count('final_analysis')
+        except Exception:
+            return True  # 테이블 없음 — 분석 실행 시 실패로 처리
+
+        from memory_manager import mem_manager as _mm
+        max_rows = _mm.get_safe_analysis_rows()
+        if total <= max_rows:
+            return True  # 샘플링 불필요, 바로 진행
+
+        from statistical_analysis import SamplingInfo
+        seed = int(STUDY_SETTINGS.get('SAMPLING_SEED', 42))
+        preview = SamplingInfo(
+            applied=True,
+            total_rows=total,
+            sampled_rows=max_rows,  # 실제 값은 분석 후 확정; 예상치로 표시
+            seed=seed,
+        )
+        return self._show_sampling_dialog(preview)
+
     # --- actions ---
     def start_analysis(self):
         mw = self.ctx.main_window
         if mw._is_worker_running():
             return
         self._ensure_dm()
+
+        # 샘플링 사전 확인 — 분석 시작 전, Cancel 시 워커 미시작
+        if not self._confirm_sampling_if_needed():
+            return
+
         self.ctx.results_dir = Path(self.res_dir_edit.text())
         self.ctx.results_dir.mkdir(parents=True, exist_ok=True)
         mw.progress_bar.setVisible(True)
@@ -901,10 +934,9 @@ class AnalysisTab(QWidget):
         ar = data.get('result', {})
         self.ctx.all_results['analysis'] = ar
 
-        # 샘플링 경고 팝업 표시 (메인 스레드에서 실행됨)
+        # 샘플링 레이블 갱신 (다이얼로그는 start_analysis 에서 이미 표시됨)
         sampling_info = ar.get('sampling_info')
         if sampling_info is not None and sampling_info.applied:
-            self._show_sampling_dialog(sampling_info)
             self._sampling_label = sampling_info.label
             self.ctx.sampling_label = sampling_info.label
         else:
@@ -1014,8 +1046,12 @@ class ResultsTab(QWidget):
         if not path:
             return
         try:
+            ar = self.ctx.all_results.get('analysis', {})
+            sampling_info = ar.get('sampling_info') if ar else None
             df2 = df.reset_index() if hasattr(df, 'index') and df.index.name else df
-            df2.to_excel(path, index=False, sheet_name=sheet[:31])
+            exp = ResultsExporter(str(self.ctx.results_dir))
+            with pd.ExcelWriter(path, engine='openpyxl') as writer:
+                exp._write_df_with_sampling_header(writer, df2, sheet[:31], sampling_info)
             self.log_signal.emit(f"내보내기 완료: {path}")
         except (duckdb.Error, pd.errors.EmptyDataError, ValueError,
                 MemoryError, CohortStepError) as e:
@@ -1030,13 +1066,24 @@ class ResultsTab(QWidget):
         if not ar:
             QMessageBox.warning(self, "안내", "분석 결과 없음")
             return
+        sampling_info = ar.get('sampling_info')
         exp = ResultsExporter(str(self.ctx.results_dir))
-        files = exp.export_all(ar)
-        QMessageBox.information(self, "완료", f"{len(files)}개 파일 저장")
+        try:
+            files = exp.export_all(ar, sampling_info=sampling_info)
+            QMessageBox.information(self, "완료", f"{len(files)}개 파일 저장")
+        except (duckdb.Error, pd.errors.EmptyDataError, ValueError,
+                MemoryError, CohortStepError) as e:
+            logger.exception("전체 내보내기 실패")
+            QMessageBox.critical(self, "오류", format_error_for_user(e))
+        except Exception as e:
+            logger.exception("전체 내보내기 중 예기치 않은 오류")
+            QMessageBox.critical(self, "오류", format_error_for_user(e))
 
     def plot_km(self):
         try:
-            # 필요 컬럼만 + 샘플링으로 메모리 보호
+            # 필요 컬럼만 + 샘플링으로 메모리 보호 (재현 가능한 시드 사용)
+            seed_float = STUDY_SETTINGS.get('SAMPLING_SEED', 42) / 100.0
+            self.ctx.dm.execute(f"SELECT setseed({seed_float})")
             df = self.ctx.dm.query("""
                 SELECT exposure_group, follow_up_years, dementia_event, ad_event, vad_event
                 FROM (

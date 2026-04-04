@@ -148,7 +148,9 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self._set_action_buttons_enabled(True)
         self.log(f"오류: {msg}")
-        QMessageBox.critical(self, "오류", msg[:500])
+        # 다이얼로그에는 첫 번째 줄(예외 메시지)만 표시; 전체 트레이스백은 로그에 기록됨
+        user_msg = msg.split('\n')[0][:300]
+        QMessageBox.critical(self, "오류", user_msg)
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():

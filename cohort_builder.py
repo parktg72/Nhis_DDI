@@ -38,7 +38,7 @@ class CohortBuilder:
                     )
                     time.sleep(1)
                 else:
-                    raise CohortStepError(step_num, step_name, e)
+                    raise CohortStepError(step_num, step_name, e) from e
 
         n = self.dm.storage.get_row_count(result_table)
         if n == 0:

@@ -26,10 +26,12 @@ class SamplingInfo:
     applied: 샘플링이 적용되었으면 True
     total_rows: 원본 전체 행 수
     sampled_rows: 실제 분석에 사용된 행 수
+    seed: 재현성을 위한 DuckDB setseed 값 (0–99 정수)
     """
     applied: bool
     total_rows: int
     sampled_rows: int
+    seed: int = 0
 
     @property
     def ratio_pct(self) -> float:
@@ -44,7 +46,7 @@ class SamplingInfo:
             return ""
         return (
             f"층화 샘플링: {self.sampled_rows:,}/{self.total_rows:,}건 "
-            f"({self.ratio_pct:.1f}%)"
+            f"({self.ratio_pct:.1f}%, seed={self.seed})"
         )
 
 
@@ -73,14 +75,10 @@ class StatisticalAnalyzer:
             valid_total = sum(group_counts.values())
 
             if valid_total == 0:
-                logger.warning("추적 가능한 행(follow_up_days > 0)이 없어 분석을 건너뜁니다.")
-                self._cached_df = self.dm.query(
-                    "SELECT * FROM final_analysis WHERE follow_up_days > 0 LIMIT 0"
+                raise pd.errors.EmptyDataError(
+                    "추적 가능한 행(follow_up_days > 0)이 없습니다. "
+                    "코호트 구성 단계를 확인하세요."
                 )
-                self._sampling_info = SamplingInfo(
-                    applied=True, total_rows=total, sampled_rows=0
-                )
-                return self._cached_df, self._sampling_info
 
             # DM 그룹은 전부 유지, NON_DM만 남은 예산으로 샘플링
             # → DM 분석 underpowered 방지 + 노출군 비율 왜곡 최소화
@@ -99,6 +97,10 @@ class StatisticalAnalyzer:
                 for g, n in alloc.items()
             )
 
+            seed = int(STUDY_SETTINGS.get('SAMPLING_SEED', 42))
+            seed_float = seed / 100.0  # DuckDB setseed: float in [0, 1]
+            self.dm.execute(f"SELECT setseed({seed_float})")
+
             self._cached_df = self.dm.query(f"""
                 SELECT * EXCLUDE rn
                 FROM (
@@ -116,6 +118,7 @@ class StatisticalAnalyzer:
                 applied=True,
                 total_rows=total,
                 sampled_rows=len(self._cached_df),
+                seed=seed,
             )
         else:
             self._cached_df = self.dm.query("SELECT * FROM final_analysis WHERE follow_up_days > 0")

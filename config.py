@@ -200,6 +200,7 @@ STUDY_SETTINGS = {
     'PSM_RATIO': 3,
     'INCOME_DECILES': 10,
     'CENSORING_EVENTS': ['yod', 'age65', 'death', 'withdrawal', 'study_end'],
+    'SAMPLING_SEED': 42,          # 층화 샘플링 재현성 시드 (0–99 정수)
 }
 
 DUCKDB_SETTINGS = {
