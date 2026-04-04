@@ -302,7 +302,7 @@ def test_hotswap_failure_raises(tmp_path):
 
     import config.settings as s
     s.MODEL_DIR = prod_dir
-    s.MODEL_PROD_PATH = prod_dir / "model_prod.pkl"
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
     s.SERVING_URL = "http://localhost:9999"
     s.SERVING_URLS = ["http://localhost:9999"]
     s.ADMIN_API_KEY = "key"
@@ -330,7 +330,7 @@ def test_hotswap_timeout_raises(tmp_path):
 
     import config.settings as s
     s.MODEL_DIR = prod_dir
-    s.MODEL_PROD_PATH = prod_dir / "model_prod.pkl"
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
     s.SERVING_URL = "http://localhost:9999"
     s.SERVING_URLS = ["http://localhost:9999"]
     s.ADMIN_API_KEY = "key"
@@ -652,8 +652,8 @@ def test_mid_deploy_crash_leftover_tmp_dir_does_not_block_next_deploy(tmp_path):
     current = prod_dir / "current"
     assert current.is_symlink(), "잔재 tmp 디렉터리로 인해 배포 실패"
     assert (current / "model_prod.pkl").exists()
-    # 잔재 디렉터리는 그대로 (prune 대상 아님)
-    assert leftover.exists(), "잔재 tmp 디렉터리가 예기치 않게 삭제됨"
+    # M1 수정: 배포 시작 시 .deploy_tmp_* 잔재 자동 정리
+    assert not leftover.exists(), "잔재 tmp 디렉터리가 자동 정리되지 않음"
 
 
 def test_phase2_copy_failure_leaves_prod_dir_intact(tmp_path):
@@ -683,3 +683,66 @@ def test_phase2_copy_failure_leaves_prod_dir_intact(tmp_path):
     assert not list(prod_dir.glob(".v_*")), "Phase 2 실패 후 버전 디렉터리 생성됨"
     # tmp 디렉터리도 정리됨
     assert not list(prod_dir.glob(".deploy_tmp_*")), "Phase 2 실패 후 tmp 잔재 존재"
+
+
+def test_hotswap_sends_versioned_path_not_symlink(tmp_path):
+    """C1 수정: 핫스왑 reload 요청이 symlink 경로(current/)가 아닌 versioned 절대 경로 전송.
+
+    동시 배포 경쟁 시 serving이 정확히 의도한 버전을 로드함을 보장.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
+    s.ADMIN_API_KEY = "key"
+    s.BACKUP_KEEP_N = 5
+
+    received_paths: list = []
+
+    def fake_post(url, json=None, **kw):
+        received_paths.append((json or {}).get("model_path", ""))
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = {"status": "ok"}
+        return r
+
+    with patch("requests.post", side_effect=fake_post):
+        from dags.ddi_train_dag import _deploy_model
+        _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    reload_paths = [p for p in received_paths if "model_prod" in p]
+    assert reload_paths, "reload 요청 없음"
+    for rp in reload_paths:
+        assert "current" not in rp, f"C1: symlink 경로가 전송됨 — {rp}"
+        assert ".v_" in rp, f"C1: versioned 경로가 아님 — {rp}"
+
+
+def test_missing_admin_api_key_raises_before_filesystem_changes(tmp_path):
+    """H2 수정: ADMIN_API_KEY 미설정 시 파일시스템 변경 없이 즉시 RuntimeError."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
+    s.ADMIN_API_KEY = ""  # 미설정
+
+    from dags.ddi_train_dag import _deploy_model
+    with pytest.raises(RuntimeError, match="ADMIN_API_KEY"):
+        _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    # 파일시스템 변경 없음
+    assert not (prod_dir / "current").exists(), "pre-flight 실패임에도 current 생성됨"
+    assert not list(prod_dir.glob(".v_*")), "pre-flight 실패임에도 버전 디렉터리 생성됨"

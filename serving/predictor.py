@@ -247,6 +247,12 @@ class MLModel:
                 stored = state.get(key)
                 if stored:
                     candidate = (model_dir / stored).resolve()
+                    # M2: path traversal 방어 — model_dir 외부 경로 거부
+                    try:
+                        candidate.relative_to(model_dir.resolve())
+                    except ValueError:
+                        logger.error("%s 경로가 model_dir 외부 — 로드 거부: %s", key, candidate)
+                        continue
                     if candidate.exists():
                         import pickle as _pk
                         with open(candidate, "rb") as f:

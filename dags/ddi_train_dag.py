@@ -25,7 +25,6 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.empty import EmptyOperator
-from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.utils.dates import days_ago
 
 from config.settings import (
@@ -194,10 +193,20 @@ def _deploy_model(**context) -> None:
     from pathlib import Path
     from config import settings as _s
 
+    # H2: 사전 검증 (파일시스템 변경 전) — 실패 시 prod_dir 불변
+    if not _s.ADMIN_API_KEY:
+        raise RuntimeError("ADMIN_API_KEY 미설정 — serving 핫스왑 불가, 배포 중단")
+
     model_path = Path(context["ti"].xcom_pull(key="model_path", task_ids="run_training"))
     prod_dir   = _s.MODEL_DIR
     prod_path  = _s.MODEL_PROD_PATH
     base_src   = model_path.with_suffix("")  # e.g. /app/models/model_v1
+
+    # M1: 이전 배포 크래시로 남겨진 .deploy_tmp_* 잔재 자동 정리
+    import glob as _glob
+    for _stale in _glob.glob(str(prod_dir / ".deploy_tmp_*")):
+        shutil.rmtree(_stale, ignore_errors=True)
+        logging.warning("크래시 잔재 정리: %s", _stale)
 
     # ── Phase 1: 전체 아티팩트 선검증 ────────────────────────────────────────
     artifacts: list = [
@@ -244,9 +253,18 @@ def _deploy_model(**context) -> None:
     versioned_name = f".v_{time.time_ns()}"
     versioned_dir = prod_dir / versioned_name
     os.rename(tmp_dir, versioned_dir)
+    # H1: os.rename 후 prod_dir fsync — versioned_dir가 저널에 커밋됨을 보장
+    _dirfd = os.open(str(prod_dir), os.O_RDONLY)
+    try:
+        os.fsync(_dirfd)
+    finally:
+        os.close(_dirfd)
     _atomic_symlink_update(current_link, versioned_name)
 
     # ── Serving 핫스왑 (SERVING_URLS 다중 인스턴스 브로드캐스트) ─────────────
+    # C1: symlink 경로(prod_path) 대신 versioned 절대 경로 전송
+    #     → 동시 배포 경쟁 시 serving이 정확히 의도한 버전을 로드
+    new_versioned_prod_path = versioned_dir / prod_path.name
     serving_urls = getattr(_s, "SERVING_URLS", None) or [_s.SERVING_URL]
     failures: list = []
     succeeded_urls: list = []
@@ -254,7 +272,7 @@ def _deploy_model(**context) -> None:
         try:
             resp = requests.post(
                 f"{url}/admin/reload",
-                json={"model_path": str(prod_path)},
+                json={"model_path": str(new_versioned_prod_path)},
                 headers={"X-Admin-Key": _s.ADMIN_API_KEY},
                 timeout=30,
             )
