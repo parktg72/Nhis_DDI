@@ -134,6 +134,11 @@ def format_error_for_user(exc: Exception) -> str:
             f"데이터베이스 오류: {exc}\n"
             "재시도하거나 데이터를 다시 적재해 주세요."
         )
+    if isinstance(exc, InsufficientDataError):
+        return (
+            f"유효 데이터 부족: {exc.valid_rows:,}건 (최소 {exc.min_rows:,}건 필요). "
+            "코호트 크기를 확인하거나 MIN_VALID_ROWS 설정을 조정하세요."
+        )
     if isinstance(exc, _pd.errors.EmptyDataError):
         return "분석 대상 데이터가 없습니다. 코호트 구성 단계를 확인해 주세요."
     if isinstance(exc, ValueError):
