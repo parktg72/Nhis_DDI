@@ -157,6 +157,17 @@ class StatisticalAnalyzer:
                    f"{self._cached_df.memory_usage(deep=True).sum() / 1024**2:.1f}MB")
         return self._cached_df, self._sampling_info
 
+    def _check_min_rows(self, df: pd.DataFrame, context: str = "") -> None:
+        """dropna 등 필터 후 행 수가 MIN_VALID_ROWS 미만이면 InsufficientDataError 발생.
+
+        run_cox, run_subgroup 등 분석 함수에서 cph.fit() 직전에 호출.
+        """
+        min_valid = int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30))
+        if len(df) < min_valid:
+            logger.warning("%s: dropna 후 행 수 %d < min_valid %d — InsufficientDataError",
+                           context, len(df), min_valid)
+            raise InsufficientDataError(valid_rows=len(df), min_rows=min_valid)
+
     def _release_cache(self):
         """캐시된 데이터 해제"""
         if self._cached_df is not None:
@@ -242,6 +253,7 @@ class StatisticalAnalyzer:
         for mname, mcols in models.items():
             cols = [c for c in mcols if c in df_prepared.columns] + [T, E]
             df_model = df_prepared[cols].dropna()
+            self._check_min_rows(df_model, context=f"run_cox {mname}")
             try:
                 cph = CoxPHFitter()
                 cph.fit(df_model, duration_col=T, event_col=E)
