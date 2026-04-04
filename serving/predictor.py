@@ -88,7 +88,11 @@ def _run_safety_net(
 ) -> tuple[RiskLevel, list[str], list[DDIAlert]]:
     """
     rules/safety_net.py 실행 → (등급, 이유 목록, DDI 알림 목록).
-    safety_net 미설치/오류 시 Normal 반환.
+
+    sn_instance 제공 + assess() 런타임 오류 → RuntimeError 전파
+      (초기화된 SafetyNet이 충돌하면 DDI 탐지 실패를 숨겨선 안 됨)
+    sn_instance 미제공 + 모듈 없음/초기화 실패 → Normal 묵과
+      (선택적 기능 미설치 환경 지원)
     """
     try:
         import sys
@@ -126,7 +130,19 @@ def _run_safety_net(
             ))
 
         return level, reasons, alerts
+
+    except (ImportError, AttributeError):
+        # 모듈 미설치 또는 SafetyNet 초기화 실패 (선택적 기능) → 묵과
+        if sn_instance is not None:
+            # 인스턴스가 있는데 AttributeError라면 런타임 버그 → 전파
+            raise
+        logger.warning("Safety Net 미설치 또는 초기화 실패 (Normal 반환)")
+        return RiskLevel.NORMAL, [], []
     except Exception as e:
+        if sn_instance is not None:
+            # 초기화된 Safety Net이 충돌 → DDI 탐지 실패, 전파
+            logger.error("Safety Net assess() 런타임 오류: %s", e)
+            raise
         logger.warning("Safety Net 실행 오류 (Normal 반환): %s", e)
         return RiskLevel.NORMAL, [], []
 
