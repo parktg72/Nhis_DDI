@@ -681,7 +681,7 @@ class StatisticalAnalyzer:
                 if group_col not in df_cr.columns:
                     continue
                 mask = df_cr[group_col].values == 1
-                if mask.sum() < _min_cr:
+                if mask.sum() < _min_cr or (event_type[mask] == 1).sum() < _min_cr_events:
                     continue
                 times_g = df_cr.loc[mask, T].values.astype(float)
                 events_g = event_type[mask]
@@ -699,7 +699,8 @@ class StatisticalAnalyzer:
                            (df_cr.get('is_t2dm_oha', 0) == 0) &
                            (df_cr.get('is_t2dm_insulin', 0) == 0) &
                            (df_cr.get('is_t2dm_nomed', 0) == 0))
-            if non_dm_mask.sum() >= _min_cr:
+            if (non_dm_mask.sum() >= _min_cr and
+                    (event_type[non_dm_mask.values] == 1).sum() >= _min_cr_events):
                 times_g = df_cr.loc[non_dm_mask, T].values.astype(float)
                 events_g = event_type[non_dm_mask.values]
                 if use_gpu_cif:
