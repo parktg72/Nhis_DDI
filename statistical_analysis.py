@@ -243,7 +243,7 @@ class StatisticalAnalyzer:
         if event_count < min_events:
             logger.warning("run_cox: 이벤트 수 %d < min_events %d — InsufficientDataError",
                            event_count, min_events)
-            raise InsufficientDataError(valid_rows=event_count, min_rows=min_events)
+            raise InsufficientDataError(valid_rows=event_count, min_rows=min_events, kind='events')
 
         T, E = 'follow_up_years', outcome
         results = {}

@@ -104,18 +104,25 @@ class CohortStepError(Exception):
 
 
 class InsufficientDataError(ValueError):
-    """분석에 필요한 최소 유효 행 수를 충족하지 못할 때 발생.
+    """분석에 필요한 최소 유효 행/이벤트 수를 충족하지 못할 때 발생.
 
-    Cox 회귀에서 EPV(Events Per Variable) ≥ 10 을 만족하려면
-    최소 수십 건의 유효 행이 필요하다.
+    kind='rows'  — 행 수 부족 (MIN_VALID_ROWS 관련)
+    kind='events' — 이벤트 수 부족 (MIN_EVENTS/EPV 관련)
     """
-    def __init__(self, valid_rows: int, min_rows: int):
-        super().__init__(
-            f"유효 행 수({valid_rows:,}건)가 최소 분석 기준({min_rows:,}건)에 미달합니다. "
-            "코호트 크기를 확인하거나 MIN_VALID_ROWS 설정을 낮추세요."
-        )
+    def __init__(self, valid_rows: int, min_rows: int, kind: str = "rows"):
         self.valid_rows = valid_rows
         self.min_rows = min_rows
+        self.kind = kind
+        if kind == "events":
+            super().__init__(
+                f"이벤트 수({valid_rows:,}건)가 EPV 최소 기준({min_rows:,}건)에 미달합니다. "
+                "코호트 크기를 확인하거나 MIN_EVENTS 설정을 조정하세요."
+            )
+        else:
+            super().__init__(
+                f"유효 행 수({valid_rows:,}건)가 최소 분석 기준({min_rows:,}건)에 미달합니다. "
+                "코호트 크기를 확인하거나 MIN_VALID_ROWS 설정을 낮추세요."
+            )
 
 
 def format_error_for_user(exc: Exception) -> str:
@@ -135,6 +142,11 @@ def format_error_for_user(exc: Exception) -> str:
             "재시도하거나 데이터를 다시 적재해 주세요."
         )
     if isinstance(exc, InsufficientDataError):
+        if exc.kind == "events":
+            return (
+                f"이벤트(결과 발생) 수 부족: {exc.valid_rows:,}건 (EPV 최소 {exc.min_rows:,}건 필요). "
+                "코호트 크기를 확인하거나 MIN_EVENTS 설정을 조정하세요."
+            )
         return (
             f"유효 데이터 부족: {exc.valid_rows:,}건 (최소 {exc.min_rows:,}건 필요). "
             "코호트 크기를 확인하거나 MIN_VALID_ROWS 설정을 조정하세요."
