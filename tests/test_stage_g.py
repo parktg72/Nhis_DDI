@@ -57,23 +57,25 @@ def test_check_min_rows_passes_on_sufficient_df():
 
 
 def test_run_cox_raises_on_insufficient_events():
-    """run_cox() 에서 이벤트 수가 MIN_EVENTS 미만이면 InsufficientDataError 발생."""
-    conn = duckdb.connect(':memory:')
-    # 30건이지만 치매 이벤트 0건
-    conn.execute("""
-        CREATE TABLE final_analysis AS
-        SELECT 'T2DM_OHA' AS exposure_group,
-               365 AS follow_up_days,
-               1.0 AS follow_up_years,
-               0 AS dementia_event
-        FROM range(30)
-    """)
-    analyzer = _make_analyzer_with_conn(conn)
-    with patch('statistical_analysis.mem_manager') as mock_mm:
-        mock_mm.get_safe_analysis_rows.return_value = 200
-        mock_mm.optimize_dtypes.side_effect = lambda df: df
-        with pytest.raises(InsufficientDataError):
-            analyzer.run_cox()
+    """run_cox() 에서 이벤트 수가 MIN_EVENTS 미만이면 InsufficientDataError 발생.
+
+    df_prepared 직접 주입 경로(run_selected 시나리오)도 체크함.
+    이전에는 if df_prepared is None 블록 안에 EPV 체크가 있어 이 경로를 우회했음.
+    """
+    analyzer = StatisticalAnalyzer.__new__(StatisticalAnalyzer)
+    analyzer.results = {}
+    # 30행이지만 치매 이벤트 0건인 prepared df 직접 주입
+    prepared_df = pd.DataFrame({
+        'follow_up_years': [1.0] * 30,
+        'dementia_event': [0] * 30,
+        'exposure_group': ['T2DM_OHA'] * 30,
+        'is_t1dm': [0] * 30,
+        'is_t2dm_oha': [1] * 30,
+        'is_t2dm_insulin': [0] * 30,
+        'is_t2dm_nomed': [0] * 30,
+    })
+    with pytest.raises(InsufficientDataError):
+        analyzer.run_cox(df_prepared=prepared_df)
 
 
 def test_load_data_raises_on_invalid_min_valid_rows():

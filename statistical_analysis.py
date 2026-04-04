@@ -234,13 +234,16 @@ class StatisticalAnalyzer:
         if cb: cb(f"Cox 회귀 ({outcome})...")
         if df_prepared is None:
             raw, _ = self._load_data()
-            min_events = int(STUDY_SETTINGS.get('MIN_EVENTS', 10))
-            event_count = int(raw[outcome].sum())
-            if event_count < min_events:
-                logger.warning("run_cox: 이벤트 수 %d < min_events %d — InsufficientDataError",
-                               event_count, min_events)
-                raise InsufficientDataError(valid_rows=event_count, min_rows=min_events)
             df_prepared = self._prepare(raw)
+
+        min_events = int(STUDY_SETTINGS.get('MIN_EVENTS', 10))
+        if min_events <= 0:
+            raise ValueError(f"MIN_EVENTS 는 양의 정수여야 합니다: {min_events}")
+        event_count = int(df_prepared[outcome].sum())
+        if event_count < min_events:
+            logger.warning("run_cox: 이벤트 수 %d < min_events %d — InsufficientDataError",
+                           event_count, min_events)
+            raise InsufficientDataError(valid_rows=event_count, min_rows=min_events)
 
         T, E = 'follow_up_years', outcome
         results = {}
