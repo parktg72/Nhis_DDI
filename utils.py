@@ -110,6 +110,8 @@ class InsufficientDataError(ValueError):
     kind='events' — 이벤트 수 부족 (MIN_EVENTS/EPV 관련)
     """
     def __init__(self, valid_rows: int, min_rows: int, kind: str = "rows"):
+        if kind not in ("rows", "events"):
+            raise ValueError(f"kind 는 'rows' 또는 'events' 여야 합니다: {kind!r}")
         self.valid_rows = valid_rows
         self.min_rows = min_rows
         self.kind = kind

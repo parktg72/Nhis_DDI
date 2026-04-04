@@ -648,7 +648,8 @@ class StatisticalAnalyzer:
             need_cols = [T, outcome, 'competing_death_event', 'dementia_event',
                          'is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin',
                          'is_t2dm_nomed', 'age_at_index', 'male']
-            need_cols = [c for c in need_cols if c in df_prepared.columns]
+            # dict.fromkeys 로 순서 유지하며 중복 제거 (outcome='dementia_event' 일 때 방지)
+            need_cols = list(dict.fromkeys(c for c in need_cols if c in df_prepared.columns))
             df_cr = df_prepared[need_cols].dropna().copy()
             df_cr = df_cr[df_cr[T] > 0]
 
@@ -678,7 +679,7 @@ class StatisticalAnalyzer:
                 if group_col not in df_cr.columns:
                     continue
                 mask = df_cr[group_col].values == 1
-                if mask.sum() < 10:
+                if mask.sum() < _min_cr:
                     continue
                 times_g = df_cr.loc[mask, T].values.astype(float)
                 events_g = event_type[mask]
@@ -696,7 +697,7 @@ class StatisticalAnalyzer:
                            (df_cr.get('is_t2dm_oha', 0) == 0) &
                            (df_cr.get('is_t2dm_insulin', 0) == 0) &
                            (df_cr.get('is_t2dm_nomed', 0) == 0))
-            if non_dm_mask.sum() >= 10:
+            if non_dm_mask.sum() >= _min_cr:
                 times_g = df_cr.loc[non_dm_mask, T].values.astype(float)
                 events_g = event_type[non_dm_mask.values]
                 if use_gpu_cif:
