@@ -32,7 +32,7 @@ from config import settings as _settings
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
-    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    level=getattr(logging, _settings.LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
     logger.info("DDI 위험도 분류 서버 시작")
     if not _settings.ADMIN_API_KEY:
         logger.warning("ADMIN_API_KEY 미설정 — /admin/reload 비활성화됨")
+    # MODEL_PATH: 런타임 오버라이드 전용 — settings.py에 포함하지 않음
     _model_path = os.environ.get("MODEL_PATH") or str(_settings.MODEL_PROD_PATH)
     init_predictor(
         model_path=_model_path,
@@ -86,7 +87,7 @@ app.add_middleware(RequestLoggingMiddleware)
 
 # CORS: 환경변수 CORS_ORIGINS로 허용 오리진 제한 가능 (쉼표 구분)
 # 미설정 시 외부 오리진 전체 차단
-_cors_origins_env = os.environ.get("CORS_ORIGINS", "")
+_cors_origins_env = _settings.CORS_ORIGINS
 _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
 if not _cors_origins:
     logger.info("CORS_ORIGINS 미설정 — 외부 오리진 차단")

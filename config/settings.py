@@ -23,9 +23,26 @@ RAW_DATA_DIR    = Path(os.environ.get("DDI_RAW_DATA_DIR",   "/app/data/raw"))
 MODEL_PROD_PATH   = MODEL_DIR / "model_prod.pkl"
 MODEL_BACKUP_PATH = MODEL_DIR / "model_backup.pkl"
 
+# ── 로깅 / CORS ────────────────────────────────────────────────────────────────
+LOG_LEVEL    = os.environ.get("LOG_LEVEL",    "INFO")
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "")
+
 # ── API / 서비스 ───────────────────────────────────────────────────────────────
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 SERVING_URL   = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
+
+# 다중 인스턴스 핫스왑: 쉼표 구분 URL 목록
+# DDI_SERVING_URLS=http://inst1:8000,http://inst2:8000
+# 미설정 시 DDI_SERVING_URL 단일 인스턴스 사용
+_serving_urls_raw = os.environ.get("DDI_SERVING_URLS", "")
+SERVING_URLS: list = (
+    [u.strip() for u in _serving_urls_raw.split(",") if u.strip()]
+    if _serving_urls_raw
+    else ([SERVING_URL] if SERVING_URL else [])
+)
+
+# ── 배포 보존 정책 ──────────────────────────────────────────────────────────────
+BACKUP_KEEP_N = max(1, int(os.environ.get("DDI_BACKUP_KEEP_N", "5")))
 
 # ── 훈련 파라미터 ──────────────────────────────────────────────────────────────
 TRAIN_WEEKS      = int(os.environ.get("DDI_TRAIN_WEEKS",        "4"))

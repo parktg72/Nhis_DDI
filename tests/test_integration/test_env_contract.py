@@ -49,6 +49,52 @@ def test_no_hardcoded_app_models():
     )
 
 
+def test_settings_log_level_default(monkeypatch):
+    """LOG_LEVEL 기본값은 INFO."""
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    import config.settings as s
+    importlib.reload(s)
+    assert s.LOG_LEVEL == "INFO"
+    importlib.reload(s)
+
+
+def test_settings_cors_origins_default(monkeypatch):
+    """CORS_ORIGINS 기본값은 빈 문자열."""
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    import config.settings as s
+    importlib.reload(s)
+    assert s.CORS_ORIGINS == ""
+    importlib.reload(s)
+
+
+def test_settings_serving_urls_single(monkeypatch):
+    """DDI_SERVING_URLS 미설정 시 DDI_SERVING_URL 단일 URL 사용."""
+    monkeypatch.delenv("DDI_SERVING_URLS", raising=False)
+    monkeypatch.setenv("DDI_SERVING_URL", "http://host1:8000")
+    import config.settings as s
+    importlib.reload(s)
+    assert s.SERVING_URLS == ["http://host1:8000"]
+    importlib.reload(s)
+
+
+def test_settings_serving_urls_multi(monkeypatch):
+    """DDI_SERVING_URLS 설정 시 쉼표 구분 URL 목록 반환."""
+    monkeypatch.setenv("DDI_SERVING_URLS", "http://a:8000,http://b:8000")
+    import config.settings as s
+    importlib.reload(s)
+    assert s.SERVING_URLS == ["http://a:8000", "http://b:8000"]
+    importlib.reload(s)
+
+
+def test_settings_backup_keep_n_default(monkeypatch):
+    """BACKUP_KEEP_N 기본값은 5."""
+    monkeypatch.delenv("DDI_BACKUP_KEEP_N", raising=False)
+    import config.settings as s
+    importlib.reload(s)
+    assert s.BACKUP_KEEP_N == 5
+    importlib.reload(s)
+
+
 def test_admin_api_key_no_drift():
     """DDI_ADMIN_API_KEY 잔재 없음 — ADMIN_API_KEY 로 통일됨."""
     violations = []
