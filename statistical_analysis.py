@@ -532,7 +532,8 @@ class StatisticalAnalyzer:
                 dm = df.loc[mask, cols].dropna()
                 dm = dm[dm['follow_up_years'] > 0]
 
-                if len(dm) < 100 or dm['dementia_event'].sum() < 5:
+                _min_sg = int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30))
+                if len(dm) < _min_sg or dm['dementia_event'].sum() < 5:
                     continue
 
                 cph = CoxPHFitter()
@@ -642,7 +643,8 @@ class StatisticalAnalyzer:
             df_cr = df_prepared[need_cols].dropna().copy()
             df_cr = df_cr[df_cr[T] > 0]
 
-            if len(df_cr) < 100:
+            _min_cr = int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30))
+            if len(df_cr) < _min_cr:
                 continue
 
             # --- 1) 이벤트 유형 분류 ---
@@ -732,7 +734,7 @@ class StatisticalAnalyzer:
                 df_fit = df_fg[fit_cols].dropna()
                 df_fit = df_fit[df_fit[T] > 0]
 
-                if len(df_fit) >= 100 and df_fit[outcome].sum() >= 5:
+                if len(df_fit) >= int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30)) and df_fit[outcome].sum() >= 5:
                     cph = CoxPHFitter()
                     cph.fit(df_fit, duration_col=T, event_col=outcome, weights_col='_weight')
                     fg_summary = cph.summary
