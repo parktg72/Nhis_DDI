@@ -258,6 +258,7 @@ def _deploy_model(**context) -> None:
             _atomic_symlink_update(current_link, prev_versioned_name)
             logging.warning("핫스왑 실패 — current를 %s 로 롤백", prev_versioned_name)
         # 보상 롤백: 이미 성공한 서버들에 구버전 경로 재전송
+        comp_failures: list = []
         if succeeded_urls and prev_versioned_name:
             old_prod_path = prod_dir / prev_versioned_name / prod_path.name
             for url in succeeded_urls:
@@ -271,7 +272,13 @@ def _deploy_model(**context) -> None:
                     logging.info("보상 롤백 완료 [%s]", url)
                 except Exception as comp_exc:
                     logging.error("보상 롤백 실패 [%s]: %s", url, comp_exc)
+                    comp_failures.append((url, comp_exc))
         detail = "; ".join(f"{u}: {e}" for u, e in failures)
+        if comp_failures:
+            comp_detail = "; ".join(f"{u}: {e}" for u, e in comp_failures)
+            raise RuntimeError(
+                f"핫스왑 실패 — {detail}; 보상롤백 실패(수동 확인 필요) — {comp_detail}"
+            )
         raise RuntimeError(f"핫스왑 실패 — {detail}")
 
     # ── hotswap 성공 후 오래된 버전 디렉터리 정리 ─────────────────────────────
