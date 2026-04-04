@@ -54,3 +54,23 @@ def test_check_min_rows_passes_on_sufficient_df():
     analyzer.results = {}
     ok_df = pd.DataFrame({'a': range(30)})
     analyzer._check_min_rows(ok_df, context="테스트")  # 예외 없음
+
+
+def test_run_cox_raises_on_insufficient_events():
+    """run_cox() 에서 이벤트 수가 MIN_EVENTS 미만이면 InsufficientDataError 발생."""
+    conn = duckdb.connect(':memory:')
+    # 30건이지만 치매 이벤트 0건
+    conn.execute("""
+        CREATE TABLE final_analysis AS
+        SELECT 'T2DM_OHA' AS exposure_group,
+               365 AS follow_up_days,
+               1.0 AS follow_up_years,
+               0 AS dementia_event
+        FROM range(30)
+    """)
+    analyzer = _make_analyzer_with_conn(conn)
+    with patch('statistical_analysis.mem_manager') as mock_mm:
+        mock_mm.get_safe_analysis_rows.return_value = 200
+        mock_mm.optimize_dtypes.side_effect = lambda df: df
+        with pytest.raises(InsufficientDataError):
+            analyzer.run_cox()

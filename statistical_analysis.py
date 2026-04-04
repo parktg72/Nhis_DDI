@@ -232,6 +232,12 @@ class StatisticalAnalyzer:
         if cb: cb(f"Cox 회귀 ({outcome})...")
         if df_prepared is None:
             raw, _ = self._load_data()
+            min_events = int(STUDY_SETTINGS.get('MIN_EVENTS', 10))
+            event_count = int(raw[outcome].sum())
+            if event_count < min_events:
+                logger.warning("run_cox: 이벤트 수 %d < min_events %d — InsufficientDataError",
+                               event_count, min_events)
+                raise InsufficientDataError(valid_rows=event_count, min_rows=min_events)
             df_prepared = self._prepare(raw)
 
         T, E = 'follow_up_years', outcome
