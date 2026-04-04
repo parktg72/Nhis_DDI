@@ -105,3 +105,33 @@ def test_run_subgroup_respects_min_subgroup_events():
         f"MIN_SUBGROUP_EVENTS=4 인데 이벤트 5건 서브그룹이 실행 안 됨 (하드코딩 5 사용 중일 수 있음)"
     assert len(result_skips) == 0, \
         f"MIN_SUBGROUP_EVENTS=10 인데 이벤트 5건 서브그룹이 skip 안 됨: {list(result_skips.keys())}"
+
+
+def test_run_competing_risks_dementia_event_no_duplicate_column_error():
+    """outcome='dementia_event' 일 때 need_cols 중복으로 인한 오류 없이 실행돼야 한다.
+
+    Stage H 즉시 반영: dict.fromkeys 로 need_cols 중복 제거.
+    이 테스트는 회귀 방지 — 중복 dedup 이 제거되면 여기서 실패한다.
+    """
+    n = 35
+    df = pd.DataFrame({
+        'follow_up_years': [1.0] * n,
+        'dementia_event': [1] * 5 + [0] * (n - 5),
+        'competing_death_event': [0] * n,
+        'is_t1dm': [0] * n,
+        'is_t2dm_oha': [1] * n,
+        'is_t2dm_insulin': [0] * n,
+        'is_t2dm_nomed': [0] * n,
+        'age_at_index': [60.0] * n,
+        'male': [1] * n,
+    })
+    analyzer = _make_analyzer_with_df(df)
+    with patch('statistical_analysis.STUDY_SETTINGS',
+               {'MIN_VALID_ROWS': 30, 'MIN_EVENTS': 10, 'MIN_SUBGROUP_EVENTS': 5, 'SAMPLING_SEED': 42}):
+        with patch('gpu_accelerator.is_gpu_enabled', return_value=False):
+            with patch('gpu_accelerator.compute_cif_gpu', return_value=None):
+                # 예외 없이 실행되어야 함 (중복 컬럼 IndexError 방지)
+                result = analyzer.run_competing_risks(df_prepared=df)
+    # dementia_event 키가 결과에 있어야 함
+    assert 'dementia_event' in result, \
+        f"outcome='dementia_event' 결과 없음 (중복 컬럼 버그 재발 의심): {list(result.keys())}"
