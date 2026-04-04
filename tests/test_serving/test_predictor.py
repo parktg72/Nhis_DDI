@@ -333,3 +333,52 @@ class TestHybridPredictorReloadModel:
 
         assert errors == [], f"동시 reload 오류: {errors}"
         assert predictor_no_model._ml.loaded is True
+
+
+# ─── _run_duplicate_detector 테스트 ──────────────────────────────────────────
+
+class TestRunDuplicateDetector:
+    """_run_duplicate_detector 실패 처리 검증."""
+
+    @pytest.fixture
+    def drugs(self):
+        return [
+            DrugItem(edi_code="A001", total_days=30),
+            DrugItem(edi_code="A001", total_days=30),  # 동일 약물 중복
+        ]
+
+    def test_import_error_degrades_gracefully(self, drugs):
+        """DuplicateDetector 모듈 미설치 → (0, []) 묵과."""
+        import sys
+        with patch.dict(sys.modules, {"rules.duplicate_detector": None}):
+            count, reasons = _run_duplicate_detector(drugs, dd_instance=None)
+        assert count == 0
+        assert reasons == []
+
+    def test_runtime_error_propagates_when_instance_provided(self, drugs):
+        """dd_instance 제공 + detect() 런타임 오류 → 전파."""
+        mock_dd = MagicMock()
+        mock_dd.detect.side_effect = RuntimeError("탐지 내부 오류")
+        with pytest.raises(RuntimeError, match="탐지 내부 오류"):
+            _run_duplicate_detector(drugs, dd_instance=mock_dd)
+
+    def test_instance_used_even_when_module_unavailable(self, drugs):
+        """dd_instance 제공 + 모듈 없음 → 인스턴스 정상 사용."""
+        import sys
+        mock_dd = MagicMock()
+        mock_dd.detect.return_value = MagicMock(
+            duplicate_level1_count=1,
+            duplicate_level2_count=0,
+        )
+        with patch.dict(sys.modules, {"rules.duplicate_detector": None}):
+            count, reasons = _run_duplicate_detector(drugs, dd_instance=mock_dd)
+        assert count == 1
+        mock_dd.detect.assert_called_once()
+
+    def test_no_instance_runtime_error_degrades(self, drugs):
+        """dd_instance=None + DuplicateDetector() 초기화 실패 → (0, []) 묵과."""
+        with patch("rules.duplicate_detector.DuplicateDetector",
+                   side_effect=RuntimeError("초기화 실패")):
+            count, reasons = _run_duplicate_detector(drugs, dd_instance=None)
+        assert count == 0
+        assert reasons == []

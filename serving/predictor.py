@@ -148,11 +148,18 @@ def _run_safety_net(
 
 
 def _run_duplicate_detector(drugs: list[DrugItem], dd_instance=None) -> tuple[int, list[str]]:
-    """중복약물 탐지 → (중복건수, 이유 목록)."""
-    try:
-        from rules.duplicate_detector import DuplicateDetector
+    """중복약물 탐지 → (중복건수, 이유 목록).
 
-        dd = dd_instance or DuplicateDetector()
+    dd_instance 제공 + detect() 런타임 오류 → 전파 (중복약물 탐지 실패 은닉 방지)
+    dd_instance 미제공 + 모듈 없음/초기화 실패 → (0, []) 묵과
+    """
+    try:
+        if dd_instance is None:
+            from rules.duplicate_detector import DuplicateDetector
+            dd = DuplicateDetector()
+        else:
+            dd = dd_instance
+
         drug_input = _drugs_to_dup_input(drugs)
         result = dd.detect(drug_input)
 
@@ -163,7 +170,15 @@ def _run_duplicate_detector(drugs: list[DrugItem], dd_instance=None) -> tuple[in
         if result.duplicate_level2_count:
             reasons.append(f"동일약리군중복 {result.duplicate_level2_count}건")
         return dup_count, reasons
+    except ImportError:
+        # dd_instance=None 경로에서만 발생 — 모듈 미설치 → 묵과
+        logger.warning("DuplicateDetector 미설치 (중복 탐지 스킵)")
+        return 0, []
     except Exception as e:
+        if dd_instance is not None:
+            # 초기화된 DuplicateDetector 런타임 오류 → 탐지 실패, 전파
+            logger.error("DuplicateDetector detect() 런타임 오류: %s", e)
+            raise
         logger.warning("DuplicateDetector 오류: %s", e)
         return 0, []
 
