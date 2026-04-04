@@ -152,16 +152,26 @@ def _prune_old_versioned_dirs(prod_dir, keep_n: int) -> None:
 
 
 def _atomic_symlink_update(link_path, target_name: str) -> None:
-    """POSIX 원자적 심링크 교체: tmp 심링크 생성 후 os.replace로 swap."""
-    import os
+    """POSIX 원자적 심링크 교체: tmp 심링크 생성 후 os.replace로 swap.
+
+    os.replace는 reader 동시성을 보장하나 전원 손실 내구성(crash durability)은
+    부모 디렉터리 fsync 없이는 보장되지 않는다.
+    아래에서 부모 디렉터리를 fsync해 저널 커밋을 강제한다.
+    """
+    import os as _os
     from pathlib import Path
     link_path = Path(link_path)
-    import os as _os
     tmp_link = link_path.parent / f"{link_path.name}.tmp.{_os.getpid()}"
     if tmp_link.exists() or tmp_link.is_symlink():
         tmp_link.unlink()
     tmp_link.symlink_to(target_name)
     _os.replace(tmp_link, link_path)
+    # 부모 디렉터리 fsync: 심링크 교체가 저널에 커밋됨을 보장
+    dirfd = _os.open(str(link_path.parent), _os.O_RDONLY)
+    try:
+        _os.fsync(dirfd)
+    finally:
+        _os.close(dirfd)
 
 
 def _deploy_model(**context) -> None:
@@ -177,6 +187,7 @@ def _deploy_model(**context) -> None:
     sys.path.insert(0, "/app")
     import os
     import time
+    import tempfile
     import logging
     import shutil
     import requests
@@ -208,12 +219,14 @@ def _deploy_model(**context) -> None:
         if not src.exists():
             raise RuntimeError(f"배포 중단 — 필수 아티팩트 없음: {src}")
 
-    # ── Phase 2: 임시 디렉터리에 전체 복사 ───────────────────────────────────
-    tmp_dir = prod_dir / ".deploy_tmp"
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    for src, dst_name in artifacts:
-        shutil.copy2(src, tmp_dir / dst_name)
+    # ── Phase 2: 임시 디렉터리에 전체 복사 (per-run 격리 — 동시 배포 안전) ────
+    tmp_dir = Path(tempfile.mkdtemp(dir=prod_dir, prefix=".deploy_tmp_"))
+    try:
+        for src, dst_name in artifacts:
+            shutil.copy2(src, tmp_dir / dst_name)
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
     # ── Phase 3: 기존 current → backup/ 에 보존 ──────────────────────────────
     current_link = prod_dir / "current"

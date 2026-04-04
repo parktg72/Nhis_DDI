@@ -609,3 +609,77 @@ def test_atomic_symlink_update_unique_tmp_name(tmp_path):
     # tmp 심링크 잔재 없음 확인
     tmp_artifacts = list(tmp_path.glob("current.tmp*"))
     assert tmp_artifacts == [], f"tmp 심링크 잔재: {tmp_artifacts}"
+
+
+def test_mid_deploy_crash_leftover_tmp_dir_does_not_block_next_deploy(tmp_path):
+    """Phase 2 도중 크래시 → .deploy_tmp_* 잔재가 다음 배포를 방해하지 않음.
+
+    per-run tempfile.mkdtemp 격리로 다음 배포는 별도 tmp 디렉터리 사용.
+    잔재 .deploy_tmp_* 는 배포 성공 후 prune 대상이 아니므로 수동 정리 필요하지만
+    배포 자체는 정상 완료돼야 한다.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+
+    # 이전 배포 크래시로 남겨진 잔재 tmp 디렉터리
+    leftover = prod_dir / ".deploy_tmp_crashed"
+    leftover.mkdir()
+    (leftover / "model_prod.pkl").write_bytes(b"crashed_deploy")
+
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
+    s.ADMIN_API_KEY = "key"
+    s.BACKUP_KEEP_N = 5
+
+    def fake_post(url, **kw):
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = {"status": "ok"}
+        return r
+
+    with patch("requests.post", side_effect=fake_post):
+        from dags.ddi_train_dag import _deploy_model
+        _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    # 새 배포가 성공하고 current 심링크가 존재해야 함
+    current = prod_dir / "current"
+    assert current.is_symlink(), "잔재 tmp 디렉터리로 인해 배포 실패"
+    assert (current / "model_prod.pkl").exists()
+    # 잔재 디렉터리는 그대로 (prune 대상 아님)
+    assert leftover.exists(), "잔재 tmp 디렉터리가 예기치 않게 삭제됨"
+
+
+def test_phase2_copy_failure_leaves_prod_dir_intact(tmp_path):
+    """Phase 2 복사 실패(디스크 풀 등) → prod_dir 변경 없음, tmp 자동 정리."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
+    s.ADMIN_API_KEY = "key"
+
+    # shutil.copy2 실패 시뮬레이션 (디스크 풀)
+    with patch("shutil.copy2", side_effect=OSError("No space left on device")):
+        from dags.ddi_train_dag import _deploy_model
+        with pytest.raises(OSError, match="No space left"):
+            _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    # prod_dir에 current 심링크나 .v_* 디렉터리 없음
+    assert not (prod_dir / "current").exists(), "Phase 2 실패 후 current 생성됨"
+    assert not list(prod_dir.glob(".v_*")), "Phase 2 실패 후 버전 디렉터리 생성됨"
+    # tmp 디렉터리도 정리됨
+    assert not list(prod_dir.glob(".deploy_tmp_*")), "Phase 2 실패 후 tmp 잔재 존재"
