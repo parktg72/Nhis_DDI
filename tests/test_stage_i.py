@@ -49,9 +49,12 @@ def test_run_psm_skip_reason_uses_format_error_for_user():
         result = analyzer.run_psm(df_prepared=df)
     assert result.get('skipped') is True
     reason = result.get('reason', '')
-    # format_error_for_user 경유 시 "유효 데이터 부족:" 형식, str(e) 경유 시 "유효 행 수(" 형식
+    # format_error_for_user 경유 시 "유효 데이터 부족: ... MIN_VALID_ROWS ..." 형식
+    # str(e) 경유 시 "유효 행 수(..." 형식 — MIN_VALID_ROWS 언급 없음
     assert '유효 데이터 부족' in reason, \
         f"skip reason 에 '유효 데이터 부족' 없음 — format_error_for_user 미사용(str(e) 사용 중): {reason!r}"
+    assert 'MIN_VALID_ROWS' in reason, \
+        f"skip reason 에 'MIN_VALID_ROWS' 없음 — format_error_for_user 미경유(str(e) 사용 중): {reason!r}"
 
 
 def test_run_subgroup_respects_min_subgroup_events():

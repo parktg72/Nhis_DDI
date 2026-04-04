@@ -530,7 +530,7 @@ class StatisticalAnalyzer:
                            'follow_up_years', 'dementia_event']
 
         sg_results = {}
-        _min_sg = int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30))
+        _min_sg_rows = int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30))
         _min_sg_events = int(STUDY_SETTINGS.get('MIN_SUBGROUP_EVENTS', 5))
         for name, mask in subgroups.items():
             try:
@@ -542,7 +542,7 @@ class StatisticalAnalyzer:
                 dm = df.loc[mask, cols].dropna()
                 dm = dm[dm['follow_up_years'] > 0]
 
-                if len(dm) < _min_sg or dm['dementia_event'].sum() < _min_sg_events:
+                if len(dm) < _min_sg_rows or dm['dementia_event'].sum() < _min_sg_events:
                     continue
 
                 cph = CoxPHFitter()
