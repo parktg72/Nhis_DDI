@@ -17,6 +17,43 @@ def _make_analyzer_with_df(df):
     return analyzer
 
 
+def test_run_psm_skip_reason_uses_format_error_for_user():
+    """run_psm skip reason 이 format_error_for_user 메시지를 포함해야 한다.
+
+    MIN_VALID_ROWS=30 으로 패치, 10건 df → skip 됨.
+    reason 에 'MIN_VALID_ROWS' 가 포함되어야 한다 (format_error_for_user 경유).
+    현재 str(e) 사용 시 reason 에는 원본 예외 메시지만 포함됨.
+    """
+    n = 10
+    df = pd.DataFrame({
+        'follow_up_years': [1.0] * n,
+        'dementia_event': [0] * n,
+        'ad_event': [0] * n,
+        'vad_event': [0] * n,
+        'exposure_group': (['T1DM'] * 5) + (['T2DM_OHA'] * 5),
+        'is_t1dm': [1] * 5 + [0] * 5,
+        'is_t2dm_oha': [0] * 5 + [1] * 5,
+        'is_t2dm_insulin': [0] * n,
+        'is_t2dm_nomed': [0] * n,
+        'male': [1] * n,
+        'age_at_index': [60.0] * n,
+        'income_q': [3.0] * n,
+        'comor_hypertension': [0] * n,
+        'comor_dyslipidemia': [0] * n,
+        'dm_duration_years': [5.0] * n,
+    })
+    analyzer = StatisticalAnalyzer.__new__(StatisticalAnalyzer)
+    analyzer.results = {}
+    with patch('statistical_analysis.STUDY_SETTINGS',
+               {'MIN_VALID_ROWS': 30, 'MIN_EVENTS': 10, 'MIN_SUBGROUP_EVENTS': 5, 'SAMPLING_SEED': 42}):
+        result = analyzer.run_psm(df_prepared=df)
+    assert result.get('skipped') is True
+    reason = result.get('reason', '')
+    # format_error_for_user 경유 시 "유효 데이터 부족:" 형식, str(e) 경유 시 "유효 행 수(" 형식
+    assert '유효 데이터 부족' in reason, \
+        f"skip reason 에 '유효 데이터 부족' 없음 — format_error_for_user 미사용(str(e) 사용 중): {reason!r}"
+
+
 def test_run_subgroup_respects_min_subgroup_events():
     """run_subgroup 이 하드코딩 5 대신 MIN_SUBGROUP_EVENTS 를 사용한다.
 

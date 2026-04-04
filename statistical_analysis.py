@@ -13,7 +13,7 @@ from lifelines.statistics import proportional_hazard_test
 from scipy import stats
 from config import STUDY_SETTINGS, DEMENTIA_DRUG_CODES
 from memory_manager import mem_manager
-from utils import InsufficientDataError
+from utils import InsufficientDataError, format_error_for_user
 from dataclasses import dataclass
 import duckdb
 
@@ -329,7 +329,7 @@ class StatisticalAnalyzer:
         try:
             self._check_min_rows(df_ps, context="run_psm")
         except InsufficientDataError as e:
-            msg = f"PSM 스킵: {e}"
+            msg = f"PSM 스킵: {format_error_for_user(e)}"
             if cb: cb(msg)
             self.results['psm'] = {'skipped': True, 'reason': msg}
             return self.results['psm']
