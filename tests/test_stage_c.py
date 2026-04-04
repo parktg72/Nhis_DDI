@@ -76,7 +76,12 @@ def test_nonzero_budget_stratum_included():
         df, info = analyzer._load_data()
 
     non_dm_rows = df[df['exposure_group'] == 'NON_DM']
-    assert len(non_dm_rows) > 0, "예산 있는 NON_DM 그룹이 샘플에 포함되어야 함"
+    # non_dm_budget = max_rows(400) - dm_total(300) = 100
+    assert len(non_dm_rows) == 100, \
+        f"NON_DM 샘플 건수가 예산(100)과 다름: {len(non_dm_rows)}건"
+    dm_rows = df[df['exposure_group'] == 'T2DM_OHA']
+    assert len(dm_rows) == 300, \
+        f"DM 그룹 전수 포함되어야 하나 {len(dm_rows)}건"
 
 
 def test_worker_thread_logs_exception_to_file_logger():
