@@ -212,6 +212,85 @@ def test_deploy_backup_covers_all_files(tmp_path):
     assert (backup_dir / "model_prod.xgb.pkl").read_bytes() == b"old_xgb"
 
 
+def test_hotswap_failure_rolls_back_current_symlink(tmp_path):
+    """핫스왑 실패 시 current 심링크가 이전 버전으로 복구됨."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+
+    # 기존 버전 디렉터리 + current 심링크 준비
+    old_dir = prod_dir / ".v_old"
+    old_dir.mkdir()
+    (old_dir / "model_prod.pkl").write_bytes(b"old_model")
+    (old_dir / "model_prod.pkl.sha256").write_text("oldhash\n")
+    (old_dir / "model_prod.xgb.pkl").write_bytes(b"old_xgb")
+    (old_dir / "model_prod.xgb.pkl.sha256").write_text("oldhash\n")
+    (old_dir / "model_prod.lgb.pkl").write_bytes(b"old_lgb")
+    (old_dir / "model_prod.lgb.pkl.sha256").write_text("oldhash\n")
+    (prod_dir / "current").symlink_to(".v_old")
+
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
+    s.ADMIN_API_KEY = "key"
+
+    import requests as _req
+
+    def fake_post_503(url, **kw):
+        r = MagicMock()
+        r.raise_for_status.side_effect = _req.HTTPError("503 Server Error")
+        return r
+
+    with patch("requests.post", side_effect=fake_post_503):
+        from dags.ddi_train_dag import _deploy_model
+        with pytest.raises(RuntimeError, match="핫스왑 실패"):
+            _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    current = prod_dir / "current"
+    assert current.is_symlink(), "current 심링크 없음"
+    assert current.resolve() == old_dir.resolve(), \
+        "핫스왑 실패 후 current가 이전 버전(.v_old)으로 복구되지 않음"
+    assert (current / "model_prod.pkl").read_bytes() == b"old_model"
+
+
+def test_hotswap_multi_url_all_called(tmp_path):
+    """SERVING_URLS 여러 인스턴스 모두에 reload 요청 전송."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://inst1:8000"
+    s.SERVING_URLS = ["http://inst1:8000", "http://inst2:8000"]
+    s.ADMIN_API_KEY = "key"
+
+    called_urls: list = []
+
+    def fake_post(url, **kw):
+        called_urls.append(url)
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = {"status": "ok"}
+        return r
+
+    with patch("requests.post", side_effect=fake_post):
+        from dags.ddi_train_dag import _deploy_model
+        _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    reload_urls = [u for u in called_urls if "/admin/reload" in u]
+    assert "http://inst1:8000/admin/reload" in reload_urls
+    assert "http://inst2:8000/admin/reload" in reload_urls
+
+
 def test_hotswap_failure_raises(tmp_path):
     """serving reload 503 시 RuntimeError."""
     staging = tmp_path / "staging"

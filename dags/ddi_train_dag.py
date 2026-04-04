@@ -200,7 +200,9 @@ def _deploy_model(**context) -> None:
     current_link = prod_dir / "current"
     backup_dir = prod_dir / "backup"
     backup_dir.mkdir(exist_ok=True)
+    prev_versioned_name: str | None = None
     if current_link.is_symlink():
+        prev_versioned_name = os.readlink(current_link)
         old_version_dir = current_link.resolve()
         for f in old_version_dir.glob("model_prod*"):
             if f.is_file():
@@ -212,19 +214,30 @@ def _deploy_model(**context) -> None:
     os.rename(tmp_dir, versioned_dir)
     _atomic_symlink_update(current_link, versioned_name)
 
-    # ── Serving 핫스왑 ────────────────────────────────────────────────────────
-    try:
-        resp = requests.post(
-            f"{_s.SERVING_URL}/admin/reload",
-            json={"model_path": str(prod_path)},
-            headers={"X-Admin-Key": _s.ADMIN_API_KEY},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        logging.info("Serving 핫스왑 완료: %s", resp.json())
-    except Exception as exc:
-        logging.warning("핫스왑 실패: %s", exc)
-        raise RuntimeError(f"핫스왑 실패 — 구버전 모델로 서빙 중: {exc}") from exc
+    # ── Serving 핫스왑 (SERVING_URLS 다중 인스턴스 브로드캐스트) ─────────────
+    serving_urls = getattr(_s, "SERVING_URLS", None) or [_s.SERVING_URL]
+    failures: list = []
+    for url in serving_urls:
+        try:
+            resp = requests.post(
+                f"{url}/admin/reload",
+                json={"model_path": str(prod_path)},
+                headers={"X-Admin-Key": _s.ADMIN_API_KEY},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            logging.info("Serving 핫스왑 완료 [%s]: %s", url, resp.json())
+        except Exception as exc:
+            logging.warning("핫스왑 실패 [%s]: %s", url, exc)
+            failures.append((url, exc))
+
+    if failures:
+        # 롤백: current를 이전 버전으로 복구
+        if prev_versioned_name:
+            _atomic_symlink_update(current_link, prev_versioned_name)
+            logging.warning("핫스왑 실패 — current를 %s 로 롤백", prev_versioned_name)
+        detail = "; ".join(f"{u}: {e}" for u, e in failures)
+        raise RuntimeError(f"핫스왑 실패 — {detail}")
 
 
 def _validation_failed(**context) -> None:
