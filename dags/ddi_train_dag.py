@@ -28,6 +28,16 @@ from airflow.operators.empty import EmptyOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.utils.dates import days_ago
 
+from config.settings import (
+    FEATURES_DIR,
+    MODEL_DIR,
+    TRAIN_WEEKS,
+    MODEL_TYPE,
+    OPTUNA_TRIALS,
+    RECALL_THRESHOLD,
+    AUC_THRESHOLD,
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 기본 설정
 # ─────────────────────────────────────────────────────────────────────────────
@@ -39,14 +49,6 @@ DEFAULT_ARGS = {
     "email_on_retry": False,
     "retries": 0,  # 훈련 실패 시 자동 재시도 안 함 (원인 파악 우선)
 }
-
-FEATURES_DIR     = os.environ.get("DDI_FEATURES_DIR", "/app/data/features")
-MODEL_DIR        = os.environ.get("MODEL_DIR", "/app/models")
-TRAIN_WEEKS      = int(os.environ.get("DDI_TRAIN_WEEKS", "4"))
-MODEL_TYPE       = os.environ.get("DDI_MODEL_TYPE", "ensemble")
-OPTUNA_TRIALS    = int(os.environ.get("DDI_OPTUNA_TRIALS", "50"))
-RECALL_THRESHOLD = float(os.environ.get("DDI_RECALL_THRESHOLD", "0.90"))
-AUC_THRESHOLD    = float(os.environ.get("DDI_AUC_THRESHOLD", "0.85"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,63 +133,130 @@ def _validate_model(**context) -> str:
         return "validation_failed"
 
 
+def _prune_old_versioned_dirs(prod_dir, keep_n: int) -> None:
+    """오래된 .v_* 버전 디렉터리를 삭제해 keep_n 개만 유지.
+
+    타임스탬프 숫자 기준 오름차순 정렬 — 오래된 순으로 삭제.
+    """
+    import shutil
+    from pathlib import Path
+    prod_dir = Path(prod_dir)
+
+    def _ts(p):
+        suffix = p.name[3:]  # ".v_" 제거
+        return int(suffix) if suffix.isdigit() else 0
+
+    versioned = sorted(prod_dir.glob(".v_*"), key=_ts)
+    for old_dir in versioned[:-keep_n]:
+        shutil.rmtree(old_dir, ignore_errors=True)
+
+
+def _atomic_symlink_update(link_path, target_name: str) -> None:
+    """POSIX 원자적 심링크 교체: tmp 심링크 생성 후 os.replace로 swap."""
+    import os
+    from pathlib import Path
+    link_path = Path(link_path)
+    tmp_link = link_path.parent / (link_path.name + ".tmp")
+    if tmp_link.exists() or tmp_link.is_symlink():
+        tmp_link.unlink()
+    tmp_link.symlink_to(target_name)
+    os.replace(tmp_link, link_path)
+
+
 def _deploy_model(**context) -> None:
-    """검증 통과 모델을 production 경로로 복사 + serving 핫스왑."""
+    """검증 통과 모델을 production 경로로 원자적 배포 + serving 핫스왑.
+
+    배포 순서:
+      Phase 1: 전체 아티팩트 존재 검증 (복사 없음 — 실패해도 prod_dir 불변)
+      Phase 2: 임시 디렉터리에 전체 복사
+      Phase 3: 기존 current→versioned_dir 파일 backup/ 에 보존
+      Phase 4: tmp_dir → versioned_dir rename + current 심링크 원자적 교체
+    """
     import sys
     sys.path.insert(0, "/app")
     import os
+    import time
+    import logging
     import shutil
     import requests
+    from pathlib import Path
+    from config import settings as _s
 
-    model_path = context["ti"].xcom_pull(key="model_path", task_ids="run_training")
-    prod_path  = os.path.join(MODEL_DIR, "model_prod.pkl")
+    model_path = Path(context["ti"].xcom_pull(key="model_path", task_ids="run_training"))
+    prod_dir   = _s.MODEL_DIR
+    prod_path  = _s.MODEL_PROD_PATH
+    base_src   = model_path.with_suffix("")  # e.g. /app/models/model_v1
 
-    # 이전 모델 백업
-    if os.path.exists(prod_path):
-        backup = prod_path.replace("model_prod", "model_backup")
-        shutil.copy2(prod_path, backup)
-
-    shutil.copy2(model_path, prod_path)
-
-    # .sha256 사이드카도 함께 복사 — 누락 시 배포 자체를 실패 처리
-    sha_src = model_path + ".sha256"
-    sha_dst = prod_path + ".sha256"
-    if not os.path.exists(sha_src):
-        raise RuntimeError(f".sha256 사이드카 없음 — 무결성 보장 불가, 배포 중단: {sha_src}")
-    shutil.copy2(sha_src, sha_dst)
-
-    # 앙상블 서브모델(.xgb.pkl, .lgb.pkl) 및 해시 복사
-    prod_base = prod_path[:-len(".pkl")]
+    # ── Phase 1: 전체 아티팩트 선검증 ────────────────────────────────────────
+    artifacts: list = [
+        (model_path,                              "model_prod.pkl"),
+        (Path(str(model_path) + ".sha256"),        "model_prod.pkl.sha256"),
+    ]
     for ext in (".xgb.pkl", ".lgb.pkl"):
-        sub_src = model_path[:-len(".pkl")] + ext
-        sub_dst = prod_base + ext
-        if os.path.exists(sub_src):
-            shutil.copy2(sub_src, sub_dst)
-            sub_sha_src = sub_src + ".sha256"
-            sub_sha_dst = sub_dst + ".sha256"
-            if not os.path.exists(sub_sha_src):
+        sub_src = Path(str(base_src) + ext)
+        if sub_src.exists():
+            sub_sha = Path(str(sub_src) + ".sha256")
+            if not sub_sha.exists():
                 raise RuntimeError(
-                    f"앙상블 서브모델 해시 파일 없음 — 무결성 보장 불가, 배포 중단: {sub_sha_src}"
+                    f"배포 중단 — 서브모델 해시 없음: {sub_sha}"
                 )
-            shutil.copy2(sub_sha_src, sub_sha_dst)
+            artifacts.append((sub_src, "model_prod" + ext))
+            artifacts.append((sub_sha, "model_prod" + ext + ".sha256"))
 
-    # serving API 핫스왑 (가능한 경우)
-    serving_url = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
-    admin_key = os.environ.get("ADMIN_API_KEY", "")
-    try:
-        resp = requests.post(
-            f"{serving_url}/admin/reload",
-            json={"model_path": prod_path},
-            headers={"X-Admin-Key": admin_key},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        import logging
-        logging.info("Serving 핫스왑 완료: %s", resp.json())
-    except Exception as exc:
-        import logging
-        logging.warning("Serving 핫스왑 실패: %s", exc)
-        raise RuntimeError(f"Serving 핫스왑 실패 — 구버전 모델로 서빙 중: {exc}") from exc
+    for src, _ in artifacts:
+        if not src.exists():
+            raise RuntimeError(f"배포 중단 — 필수 아티팩트 없음: {src}")
+
+    # ── Phase 2: 임시 디렉터리에 전체 복사 ───────────────────────────────────
+    tmp_dir = prod_dir / ".deploy_tmp"
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    for src, dst_name in artifacts:
+        shutil.copy2(src, tmp_dir / dst_name)
+
+    # ── Phase 3: 기존 current → backup/ 에 보존 ──────────────────────────────
+    current_link = prod_dir / "current"
+    backup_dir = prod_dir / "backup"
+    backup_dir.mkdir(exist_ok=True)
+    prev_versioned_name: str | None = None
+    if current_link.is_symlink():
+        prev_versioned_name = os.readlink(current_link)
+        old_version_dir = current_link.resolve()
+        for f in old_version_dir.glob("model_prod*"):
+            if f.is_file():
+                shutil.copy2(f, backup_dir / f.name)
+
+    # ── Phase 4: versioned_dir rename + current 심링크 원자적 교체 ───────────
+    versioned_name = f".v_{int(time.time())}"
+    versioned_dir = prod_dir / versioned_name
+    os.rename(tmp_dir, versioned_dir)
+    _atomic_symlink_update(current_link, versioned_name)
+    _prune_old_versioned_dirs(prod_dir, keep_n=getattr(_s, "BACKUP_KEEP_N", 5))
+
+    # ── Serving 핫스왑 (SERVING_URLS 다중 인스턴스 브로드캐스트) ─────────────
+    serving_urls = getattr(_s, "SERVING_URLS", None) or [_s.SERVING_URL]
+    failures: list = []
+    for url in serving_urls:
+        try:
+            resp = requests.post(
+                f"{url}/admin/reload",
+                json={"model_path": str(prod_path)},
+                headers={"X-Admin-Key": _s.ADMIN_API_KEY},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            logging.info("Serving 핫스왑 완료 [%s]: %s", url, resp.json())
+        except Exception as exc:
+            logging.warning("핫스왑 실패 [%s]: %s", url, exc)
+            failures.append((url, exc))
+
+    if failures:
+        # 롤백: current를 이전 버전으로 복구
+        if prev_versioned_name:
+            _atomic_symlink_update(current_link, prev_versioned_name)
+            logging.warning("핫스왑 실패 — current를 %s 로 롤백", prev_versioned_name)
+        detail = "; ".join(f"{u}: {e}" for u, e in failures)
+        raise RuntimeError(f"핫스왑 실패 — {detail}")
 
 
 def _validation_failed(**context) -> None:

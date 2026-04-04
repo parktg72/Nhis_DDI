@@ -105,20 +105,22 @@ def test_reload_endpoint_uses_body_not_query(tmp_path):
 def test_deploy_dag_sends_admin_key(monkeypatch, tmp_path):
     """_deploy_model must send X-Admin-Key header."""
     import sys, os
-    sys.path.insert(0, "/tmp/codex-review-fixes")
+    # 구버전 임시 경로 제거
+    sys.path[:] = [p for p in sys.path if "/tmp/codex-review-fixes" not in p]
     _ensure_airflow_mock()
 
-    # Remove cached dag module so it reimports with mock airflow
-    if "dags.ddi_train_dag" in sys.modules:
-        del sys.modules["dags.ddi_train_dag"]
+    # Remove cached dag/config modules so they reimport from current source
+    for key in list(sys.modules.keys()):
+        if "ddi_train_dag" in key or key in ("config.settings", "dags"):
+            del sys.modules[key]
 
-    monkeypatch.setenv("DDI_ADMIN_API_KEY", "secret-key")
+    monkeypatch.setenv("ADMIN_API_KEY", "secret-key")
     monkeypatch.setenv("DDI_SERVING_URL", "http://localhost:8000")
+    monkeypatch.setenv("MODEL_DIR", str(tmp_path))  # _deploy_model이 실제 디렉터리 생성
 
     model_file = tmp_path / "model.pkl"
     model_file.write_bytes(b"fake")
     (tmp_path / "model.pkl.sha256").write_text("abc  model.pkl\n")
-    prod_path = str(tmp_path / "model_prod.pkl")
 
     captured = {}
     from unittest.mock import MagicMock, patch
@@ -134,8 +136,7 @@ def test_deploy_dag_sends_admin_key(monkeypatch, tmp_path):
         def xcom_pull(self, key, task_ids): return str(model_file)
 
     with patch("requests.post", side_effect=fake_post), \
-         patch("shutil.copy2"), \
-         patch("os.path.exists", return_value=True):
+         patch("shutil.copy2"):
         from dags.ddi_train_dag import _deploy_model
         _deploy_model(ti=FakeTI())
 

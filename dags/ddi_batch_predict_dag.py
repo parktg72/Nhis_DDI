@@ -39,12 +39,14 @@ DEFAULT_ARGS = {
     "retry_delay": timedelta(minutes=5),
 }
 
-FEATURES_DIR    = os.environ.get("DDI_FEATURES_DIR", "/app/data/features")
-PREDICTIONS_DIR = os.environ.get("DDI_PREDICTIONS_DIR", "/app/data/predictions")
-SERVING_URL     = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
-BATCH_SIZE      = max(1, min(10_000, int(os.environ.get("DDI_BATCH_SIZE", "500"))))
-DDI_MATRIX_PATH = os.environ.get("DDI_MATRIX_PATH", "/app/data/processed/ddi_matrix_final.parquet")
-PROC_DIR        = os.environ.get("DDI_PROCESSED_DIR", "/app/data/processed")
+from config.settings import (
+    FEATURES_DIR,
+    PREDICTIONS_DIR,
+    SERVING_URL,
+    BATCH_SIZE,
+    DDI_MATRIX_PATH,
+    PROCESSED_DIR as PROC_DIR,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

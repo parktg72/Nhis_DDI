@@ -38,11 +38,15 @@ DEFAULT_ARGS = {
     "retry_delay": timedelta(minutes=5),
 }
 
-PROC_DIR       = os.environ.get("DDI_PROCESSED_DIR", "/app/data/processed")
-FEATURES_DIR   = os.environ.get("DDI_FEATURES_DIR", "/app/data/features")
-CYP_PATH       = os.environ.get("DDI_CYP_MATRIX_PATH", "/app/data/processed/cyp_matrix.parquet")
-NORMALIZER_PATH = os.environ.get("DDI_NORMALIZER_PATH", "/app/models/normalizer.pkl")
-SELECTOR_PATH  = os.environ.get("DDI_SELECTOR_PATH", "/app/models/selector.pkl")
+import os as _os
+from config.settings import (
+    PROCESSED_DIR as PROC_DIR,
+    FEATURES_DIR,
+    CYP_MATRIX_PATH as CYP_PATH,
+    MODEL_DIR,
+)
+NORMALIZER_PATH = _os.environ.get("DDI_NORMALIZER_PATH", str(MODEL_DIR / "normalizer.pkl"))
+SELECTOR_PATH   = _os.environ.get("DDI_SELECTOR_PATH",   str(MODEL_DIR / "selector.pkl"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
