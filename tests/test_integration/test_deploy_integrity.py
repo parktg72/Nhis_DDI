@@ -343,3 +343,55 @@ def test_hotswap_timeout_raises(tmp_path):
         from dags.ddi_train_dag import _deploy_model
         with pytest.raises(RuntimeError, match="핫스왑 실패"):
             _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+
+def test_prune_keeps_backup_keep_n_versioned_dirs(tmp_path):
+    """배포 후 .v_* 디렉터리가 BACKUP_KEEP_N 개만 남고 오래된 것은 삭제됨."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    prod_dir = tmp_path / "models"
+    prod_dir.mkdir()
+
+    # 기존 .v_* 디렉터리 6개 생성 (ts=1~6)
+    for i in range(1, 7):
+        d = prod_dir / f".v_{i}"
+        d.mkdir()
+        (d / "model_prod.pkl").write_bytes(b"old")
+        (d / "model_prod.pkl.sha256").write_text("hash\n")
+        (d / "model_prod.xgb.pkl").write_bytes(b"old_xgb")
+        (d / "model_prod.xgb.pkl.sha256").write_text("hash\n")
+        (d / "model_prod.lgb.pkl").write_bytes(b"old_lgb")
+        (d / "model_prod.lgb.pkl.sha256").write_text("hash\n")
+    # current는 가장 최신(.v_6) 가리킴
+    (prod_dir / "current").symlink_to(".v_6")
+
+    main_pkl = _make_full_artifacts(staging)
+
+    import config.settings as s
+    s.MODEL_DIR = prod_dir
+    s.MODEL_PROD_PATH = prod_dir / "current" / "model_prod.pkl"
+    s.SERVING_URL = "http://localhost:9999"
+    s.SERVING_URLS = ["http://localhost:9999"]
+    s.ADMIN_API_KEY = "key"
+    s.BACKUP_KEEP_N = 3  # 최신 3개만 유지
+
+    def fake_post(url, **kw):
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = {"status": "ok"}
+        return r
+
+    with patch("requests.post", side_effect=fake_post):
+        from dags.ddi_train_dag import _deploy_model
+        _deploy_model(ti=_FakeTI(str(main_pkl)))
+
+    versioned = sorted(prod_dir.glob(".v_*"), key=lambda p: p.name)
+    # 신규 .v_<ts> 포함해서 총 3개만 남아야 함
+    assert len(versioned) == 3, (
+        f"BACKUP_KEEP_N=3 인데 {len(versioned)}개 남음: {[d.name for d in versioned]}"
+    )
+    # 가장 오래된 .v_1~.v_4 는 삭제, .v_5 .v_6 + 신규 유지
+    assert not (prod_dir / ".v_1").exists()
+    assert not (prod_dir / ".v_2").exists()
+    assert not (prod_dir / ".v_3").exists()
+    assert not (prod_dir / ".v_4").exists()

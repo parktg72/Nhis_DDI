@@ -133,6 +133,24 @@ def _validate_model(**context) -> str:
         return "validation_failed"
 
 
+def _prune_old_versioned_dirs(prod_dir, keep_n: int) -> None:
+    """오래된 .v_* 버전 디렉터리를 삭제해 keep_n 개만 유지.
+
+    타임스탬프 숫자 기준 오름차순 정렬 — 오래된 순으로 삭제.
+    """
+    import shutil
+    from pathlib import Path
+    prod_dir = Path(prod_dir)
+
+    def _ts(p):
+        suffix = p.name[3:]  # ".v_" 제거
+        return int(suffix) if suffix.isdigit() else 0
+
+    versioned = sorted(prod_dir.glob(".v_*"), key=_ts)
+    for old_dir in versioned[:-keep_n]:
+        shutil.rmtree(old_dir, ignore_errors=True)
+
+
 def _atomic_symlink_update(link_path, target_name: str) -> None:
     """POSIX 원자적 심링크 교체: tmp 심링크 생성 후 os.replace로 swap."""
     import os
@@ -213,6 +231,7 @@ def _deploy_model(**context) -> None:
     versioned_dir = prod_dir / versioned_name
     os.rename(tmp_dir, versioned_dir)
     _atomic_symlink_update(current_link, versioned_name)
+    _prune_old_versioned_dirs(prod_dir, keep_n=getattr(_s, "BACKUP_KEEP_N", 5))
 
     # ── Serving 핫스왑 (SERVING_URLS 다중 인스턴스 브로드캐스트) ─────────────
     serving_urls = getattr(_s, "SERVING_URLS", None) or [_s.SERVING_URL]
