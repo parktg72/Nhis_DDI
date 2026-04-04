@@ -156,11 +156,12 @@ def _atomic_symlink_update(link_path, target_name: str) -> None:
     import os
     from pathlib import Path
     link_path = Path(link_path)
-    tmp_link = link_path.parent / (link_path.name + ".tmp")
+    import os as _os
+    tmp_link = link_path.parent / f"{link_path.name}.tmp.{_os.getpid()}"
     if tmp_link.exists() or tmp_link.is_symlink():
         tmp_link.unlink()
     tmp_link.symlink_to(target_name)
-    os.replace(tmp_link, link_path)
+    _os.replace(tmp_link, link_path)
 
 
 def _deploy_model(**context) -> None:
@@ -227,15 +228,15 @@ def _deploy_model(**context) -> None:
                 shutil.copy2(f, backup_dir / f.name)
 
     # ── Phase 4: versioned_dir rename + current 심링크 원자적 교체 ───────────
-    versioned_name = f".v_{int(time.time())}"
+    versioned_name = f".v_{time.time_ns()}"
     versioned_dir = prod_dir / versioned_name
     os.rename(tmp_dir, versioned_dir)
     _atomic_symlink_update(current_link, versioned_name)
-    _prune_old_versioned_dirs(prod_dir, keep_n=getattr(_s, "BACKUP_KEEP_N", 5))
 
     # ── Serving 핫스왑 (SERVING_URLS 다중 인스턴스 브로드캐스트) ─────────────
     serving_urls = getattr(_s, "SERVING_URLS", None) or [_s.SERVING_URL]
     failures: list = []
+    succeeded_urls: list = []
     for url in serving_urls:
         try:
             resp = requests.post(
@@ -246,6 +247,7 @@ def _deploy_model(**context) -> None:
             )
             resp.raise_for_status()
             logging.info("Serving 핫스왑 완료 [%s]: %s", url, resp.json())
+            succeeded_urls.append(url)
         except Exception as exc:
             logging.warning("핫스왑 실패 [%s]: %s", url, exc)
             failures.append((url, exc))
@@ -255,8 +257,25 @@ def _deploy_model(**context) -> None:
         if prev_versioned_name:
             _atomic_symlink_update(current_link, prev_versioned_name)
             logging.warning("핫스왑 실패 — current를 %s 로 롤백", prev_versioned_name)
+        # 보상 롤백: 이미 성공한 서버들에 구버전 경로 재전송
+        if succeeded_urls and prev_versioned_name:
+            old_prod_path = prod_dir / prev_versioned_name / prod_path.name
+            for url in succeeded_urls:
+                try:
+                    requests.post(
+                        f"{url}/admin/reload",
+                        json={"model_path": str(old_prod_path)},
+                        headers={"X-Admin-Key": _s.ADMIN_API_KEY},
+                        timeout=30,
+                    ).raise_for_status()
+                    logging.info("보상 롤백 완료 [%s]", url)
+                except Exception as comp_exc:
+                    logging.error("보상 롤백 실패 [%s]: %s", url, comp_exc)
         detail = "; ".join(f"{u}: {e}" for u, e in failures)
         raise RuntimeError(f"핫스왑 실패 — {detail}")
+
+    # ── hotswap 성공 후 오래된 버전 디렉터리 정리 ─────────────────────────────
+    _prune_old_versioned_dirs(prod_dir, keep_n=getattr(_s, "BACKUP_KEEP_N", 5))
 
 
 def _validation_failed(**context) -> None:
