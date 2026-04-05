@@ -224,6 +224,25 @@ def _deploy_model(**context) -> None:
             artifacts.append((sub_src, "model_prod" + ext))
             artifacts.append((sub_sha, "model_prod" + ext + ".sha256"))
 
+    # GAT 아티팩트 (EnsembleTrainer3Way인 경우)
+    for gat_file, gat_sha_suffix in [
+        ("gat_model.pt",   "gat_model.pt.sha256"),
+        ("gat_graph.pt",   "gat_graph.pt.sha256"),
+    ]:
+        gat_src = base_src.parent / gat_file
+        if gat_src.exists():
+            gat_sha = base_src.parent / gat_sha_suffix
+            if not gat_sha.exists():
+                raise RuntimeError(
+                    f"배포 중단 — GAT 아티팩트 해시 없음: {gat_sha}"
+                )
+            artifacts.append((gat_src, gat_file))
+            artifacts.append((gat_sha, gat_sha_suffix))
+    # gat_graph_meta.json (sha256 없음 — 메타데이터)
+    gat_meta_src = base_src.parent / "gat_graph_meta.json"
+    if gat_meta_src.exists():
+        artifacts.append((gat_meta_src, "gat_graph_meta.json"))
+
     for src, _ in artifacts:
         if not src.exists():
             raise RuntimeError(f"배포 중단 — 필수 아티팩트 없음: {src}")
