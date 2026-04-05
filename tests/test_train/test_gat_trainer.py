@@ -153,3 +153,110 @@ class TestGraphBuilder:
         with caplog.at_level(logging.WARNING):
             builder.build(df, ddi)
         assert any("평균 노드 차수" in r.message for r in caplog.records)
+
+
+class TestGATModel:
+    torch = pytest.importorskip("torch", reason="PyTorch 미설치")
+    pyg = pytest.importorskip("torch_geometric", reason="PyG 미설치")
+
+    @pytest.fixture
+    def small_graph(self):
+        import torch
+        x = torch.randn(4, 3)
+        edge_index = torch.tensor([[0,1,2,3],[1,0,3,2]], dtype=torch.long)
+        return x, edge_index
+
+    def test_forward_output_shape(self, small_graph):
+        import torch
+        from scripts.train.gat_model import GATModel
+        x, edge_index = small_graph
+        model = GATModel(feature_dim=3, hidden_dim=8, heads=2, out_dim=4)
+        embeddings = model(x, edge_index)
+        assert embeddings.shape == (4, 4)
+
+    def test_score_pairs_range(self, small_graph):
+        import torch
+        from scripts.train.gat_model import GATModel
+        x, edge_index = small_graph
+        model = GATModel(feature_dim=3, hidden_dim=8, heads=2, out_dim=4)
+        pairs = torch.tensor([[0, 1], [2, 3]], dtype=torch.long)
+        scores = model.score_pairs(x, edge_index, pairs)
+        assert scores.shape == (2,)
+        assert float(scores.min()) >= 0.0
+        assert float(scores.max()) <= 1.0 + 1e-6
+
+    def test_pair_feature_concat_dim(self, small_graph):
+        from scripts.train.gat_model import GATModel
+        out_dim = 4
+        model = GATModel(feature_dim=3, hidden_dim=8, heads=2, out_dim=out_dim)
+        # pair_scorer Linear의 in_features = out_dim * 4
+        assert model.pair_scorer[0].in_features == out_dim * 4
+
+    def test_deterministic_with_seed(self, small_graph):
+        import torch
+        from scripts.train.gat_model import GATModel
+        x, edge_index = small_graph
+        torch.manual_seed(42)
+        model1 = GATModel(feature_dim=3, hidden_dim=8, heads=2, out_dim=4)
+        pairs = torch.tensor([[0, 1]], dtype=torch.long)
+        torch.manual_seed(42)
+        model2 = GATModel(feature_dim=3, hidden_dim=8, heads=2, out_dim=4)
+        s1 = model1.score_pairs(x, edge_index, pairs)
+        s2 = model2.score_pairs(x, edge_index, pairs)
+        assert torch.allclose(s1, s2)
+
+
+class TestBaseGraphTrainer:
+    """BaseGraphTrainer은 PyTorch 의존성 없음 — 항상 실행."""
+
+    def test_fit_rejects_wrong_type(self):
+        """fit(non-GATDataset) → TypeError."""
+        import numpy as np
+        from scripts.train.base_graph_trainer import BaseGraphTrainer
+        from scripts.train.gat_dataset import GATDataset
+
+        class ConcreteGraph(BaseGraphTrainer):
+            def fit_graph(self, dataset):
+                self._trained = True
+                return self
+            def predict_pair_proba(self, drug_a, drug_b):
+                return 0.5
+            def predict_proba(self, X):
+                return np.zeros(len(X))
+
+        trainer = ConcreteGraph(params={}, config=None)
+        with pytest.raises(TypeError, match="GATDataset"):
+            trainer.fit("not a gat dataset")
+
+    def test_fit_accepts_gat_dataset(self):
+        """fit(GATDataset) → fit_graph() 호출, _trained=True."""
+        import numpy as np
+        import pandas as pd
+        from scripts.train.base_graph_trainer import BaseGraphTrainer
+        from scripts.train.gat_dataset import GATDataset
+
+        class ConcreteGraph(BaseGraphTrainer):
+            def fit_graph(self, dataset):
+                self._trained = True
+                return self
+            def predict_pair_proba(self, drug_a, drug_b):
+                return 0.5
+            def predict_proba(self, X):
+                return np.zeros(len(X))
+
+        trainer = ConcreteGraph(params={}, config=None)
+        ds = GATDataset(
+            prescription_df=pd.DataFrame({
+                "patient_id": ["P1"], "drug_code": ["D1"],
+                "prescription_date": ["2024-01-01"],
+            }),
+            ddi_df=pd.DataFrame({"drug_a": [], "drug_b": [], "severity": []}),
+        )
+        trainer.fit(ds)
+        assert trainer._trained is True
+
+    def test_abstract_methods_required(self):
+        """fit_graph, predict_pair_proba, predict_proba 미구현 시 instantiation 불가."""
+        from scripts.train.base_graph_trainer import BaseGraphTrainer
+        with pytest.raises(TypeError):
+            BaseGraphTrainer(params={}, config=None)
