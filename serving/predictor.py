@@ -265,7 +265,7 @@ class MLModel:
                         logger.warning("%s 없음 — 미적용: %s", key, candidate)
 
             # Ensemble model: load from sub-model files
-            if self._model is None and state.get("trainer_class") == "EnsembleTrainer":
+            if self._model is None and state.get("trainer_class") in ("EnsembleTrainer", "EnsembleTrainer3Way"):
                 xgb_path = path.with_suffix(".xgb.pkl")
                 lgb_path = path.with_suffix(".lgb.pkl")
                 if xgb_path.exists() and lgb_path.exists():

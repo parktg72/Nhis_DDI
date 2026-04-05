@@ -1,7 +1,11 @@
 """GAT 구성요소 유닛 테스트."""
+import importlib
 import pytest
 import numpy as np
 import pandas as pd
+
+_torch_available = importlib.util.find_spec("torch") is not None
+_pyg_available = importlib.util.find_spec("torch_geometric") is not None
 
 
 class TestGATDataset:
@@ -48,9 +52,11 @@ class TestGATDataset:
 # pytest.importorskip guards at class or function level for PyTorch/torch_geometric deps.
 
 
+@pytest.mark.skipif(
+    not (_torch_available and _pyg_available),
+    reason="PyTorch/PyG 미설치",
+)
 class TestGraphBuilder:
-    torch = pytest.importorskip("torch", reason="PyTorch 미설치")
-    pyg = pytest.importorskip("torch_geometric", reason="PyG 미설치")
 
     @pytest.fixture
     def prescription_df(self):
@@ -155,9 +161,11 @@ class TestGraphBuilder:
         assert any("평균 노드 차수" in r.message for r in caplog.records)
 
 
+@pytest.mark.skipif(
+    not (_torch_available and _pyg_available),
+    reason="PyTorch/PyG 미설치",
+)
 class TestGATModel:
-    torch = pytest.importorskip("torch", reason="PyTorch 미설치")
-    pyg = pytest.importorskip("torch_geometric", reason="PyG 미설치")
 
     @pytest.fixture
     def small_graph(self):
@@ -262,8 +270,11 @@ class TestBaseGraphTrainer:
             BaseGraphTrainer(params={}, config=None)
 
 
+@pytest.mark.skipif(
+    not _torch_available,
+    reason="PyTorch 미설치",
+)
 class TestGATTrainer:
-    torch = pytest.importorskip("torch", reason="PyTorch 미설치")
 
     @pytest.fixture
     def small_dataset(self):
