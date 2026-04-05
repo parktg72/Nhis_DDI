@@ -338,5 +338,5 @@ class TestGATTrainer:
         )
         trainer.fit(small_dataset)
         result = trainer.predict_pair_proba("D01", "D02")
-        if result is not None:
-            assert 0.0 <= result <= 1.0
+        assert result is not None, "알려진 약물쌍 D01-D02는 None이 아닌 float을 반환해야 함"
+        assert 0.0 <= result <= 1.0

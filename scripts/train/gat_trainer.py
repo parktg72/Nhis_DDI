@@ -105,7 +105,8 @@ class GATTrainer(BaseGraphTrainer):
         rng.shuffle(all_pairs)
         all_pairs = np.array(all_pairs, dtype=np.int64)
 
-        # 4. 분할: 60%/10%/10%/나머지
+        # 4. DDI 쌍 분할: gat_val 10% / calibration 10% / train 나머지(~80%)
+        # 참고: 60/20/10/10은 환자 단위 분할 기준. 쌍 단위는 gat_val+calib=20%, train=~80%.
         n = len(all_pairs)
         n_calib = max(1, int(n * 0.10))
         n_gatval = max(1, int(n * 0.10))
