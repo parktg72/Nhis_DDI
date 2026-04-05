@@ -293,3 +293,47 @@ def test_cif_vad_event_other_dementia_classified_as_competing_risk():
     assert any(v > 0 for v in cif_competing), \
         (f"vad_event CIF T2DM_OHA 의 cif_competing 이 모두 0 — "
          f"other_dementia 경쟁위험 미분류 의심: {cif_competing}")
+
+
+def test_cif_ad_event_respects_min_subgroup_events_threshold():
+    """ad_event 경로에서 MIN_SUBGROUP_EVENTS threshold crossing 을 검증한다.
+
+    T2DM_OHA: 25행, 4 AD 이벤트
+    MIN_SUBGROUP_EVENTS=3 → CIF 포함 (4 >= 3)
+    MIN_SUBGROUP_EVENTS=5 → CIF skip  (4 < 5)
+    """
+    n = 40
+    # 행 0-14: T1DM (15행, 이벤트 없음)
+    # 행 15-39: T2DM_OHA (25행, AD 이벤트 4건)
+    df = pd.DataFrame({
+        'follow_up_years': [1.0] * n,
+        'ad_event': [0] * 15 + [1] * 4 + [0] * 21,  # T1DM=0건, T2DM_OHA=4건
+        'dementia_event': [0] * n,
+        'competing_death_event': [0] * n,
+        'is_t1dm': [1] * 15 + [0] * 25,
+        'is_t2dm_oha': [0] * 15 + [1] * 25,
+        'is_t2dm_insulin': [0] * n,
+        'is_t2dm_nomed': [0] * n,
+        'age_at_index': [60.0] * n,
+        'male': [1] * n,
+    })
+    analyzer = _make_analyzer_with_df(df)
+
+    # MIN_SUBGROUP_EVENTS=3 → T2DM_OHA (4건) 포함
+    with patch('statistical_analysis.STUDY_SETTINGS',
+               {'MIN_VALID_ROWS': 10, 'MIN_EVENTS': 3, 'MIN_SUBGROUP_EVENTS': 3, 'SAMPLING_SEED': 42}):
+        with patch('gpu_accelerator.is_gpu_enabled', return_value=False):
+            result_runs = analyzer.run_competing_risks(df_prepared=df)
+
+    # MIN_SUBGROUP_EVENTS=5 → T2DM_OHA (4건) skip
+    with patch('statistical_analysis.STUDY_SETTINGS',
+               {'MIN_VALID_ROWS': 10, 'MIN_EVENTS': 3, 'MIN_SUBGROUP_EVENTS': 5, 'SAMPLING_SEED': 42}):
+        with patch('gpu_accelerator.is_gpu_enabled', return_value=False):
+            result_skips = analyzer.run_competing_risks(df_prepared=df)
+
+    cif_runs = result_runs.get('ad_event', {}).get('cif_by_group', {})
+    cif_skips = result_skips.get('ad_event', {}).get('cif_by_group', {})
+    assert 'T2DM_OHA' in cif_runs, \
+        f"MIN_SUBGROUP_EVENTS=3 인데 AD 이벤트 4건 T2DM_OHA 가 ad_event CIF 에서 누락됨: {list(cif_runs.keys())}"
+    assert 'T2DM_OHA' not in cif_skips, \
+        f"MIN_SUBGROUP_EVENTS=5 인데 AD 이벤트 4건 T2DM_OHA 가 ad_event CIF 에 포함됨: {list(cif_skips.keys())}"
