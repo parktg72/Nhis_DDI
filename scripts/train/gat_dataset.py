@@ -1,7 +1,7 @@
 """GAT 훈련용 데이터 컨테이너."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -34,4 +34,5 @@ class GATDataset:
 
     @property
     def num_drugs(self) -> int:
+        """고유 약물 코드 수."""
         return len(self.unique_drugs)

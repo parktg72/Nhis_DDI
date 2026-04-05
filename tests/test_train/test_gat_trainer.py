@@ -1,15 +1,12 @@
-"""GAT 구성요소 유닛 테스트. torch/torch_geometric 미설치 시 skip."""
+"""GAT 구성요소 유닛 테스트."""
 import pytest
-
-torch = pytest.importorskip("torch", reason="PyTorch 미설치 — GAT 테스트 건너뜀")
-pytest.importorskip("torch_geometric", reason="PyG 미설치 — GAT 테스트 건너뜀")
-
 import numpy as np
 import pandas as pd
-from scripts.train.gat_dataset import GATDataset
 
 
 class TestGATDataset:
+    """GATDataset은 PyTorch 의존성 없음 — 항상 실행."""
+
     @pytest.fixture
     def prescription_df(self):
         return pd.DataFrame({
@@ -27,6 +24,7 @@ class TestGATDataset:
         })
 
     def test_gat_dataset_attributes(self, prescription_df, ddi_df):
+        from scripts.train.gat_dataset import GATDataset
         ds = GATDataset(prescription_df=prescription_df, ddi_df=ddi_df)
         assert ds.prescription_df is prescription_df
         assert ds.ddi_df is ddi_df
@@ -34,6 +32,17 @@ class TestGATDataset:
         assert ds.pairs_gat_val is None
         assert ds.pairs_calibration is None
 
-    def test_unique_drugs(self, prescription_df, ddi_df):
+    def test_unique_drugs_sorted(self, prescription_df, ddi_df):
+        from scripts.train.gat_dataset import GATDataset
         ds = GATDataset(prescription_df=prescription_df, ddi_df=ddi_df)
-        assert set(ds.unique_drugs) == {"D001", "D002", "D003"}
+        # sorted 순서 검증 (set 비교 아님)
+        assert ds.unique_drugs == ["D001", "D002", "D003"]
+
+    def test_num_drugs(self, prescription_df, ddi_df):
+        from scripts.train.gat_dataset import GATDataset
+        ds = GATDataset(prescription_df=prescription_df, ddi_df=ddi_df)
+        assert ds.num_drugs == 3
+
+
+# Note: Later test classes (TestGraphBuilder, TestGATModel, etc.) will add their own
+# pytest.importorskip guards at class or function level for PyTorch/torch_geometric deps.
