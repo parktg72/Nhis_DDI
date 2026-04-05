@@ -307,7 +307,7 @@ class EnsembleTrainer3Way(BaseTrainer):
         lgb_params: dict,
         gat_params: dict,
         config: Any,
-        weights: tuple = (1/3, 1/3, 1/3),
+        weights: tuple[float, float, float] = (1/3, 1/3, 1/3),
     ):
         super().__init__(xgb_params, config)
         self.weights = weights
@@ -324,7 +324,8 @@ class EnsembleTrainer3Way(BaseTrainer):
         logger.info("앙상블 3-way 훈련: XGBoost + LightGBM")
         self._xgb.fit(dataset)
         self._lgb.fit(dataset)
-        if self._xgb.feature_importances_ is not None:
+        if (self._xgb.feature_importances_ is not None
+                and self._lgb.feature_importances_ is not None):
             w1, w2, _ = self.weights
             norm = w1 + w2 or 1.0
             self.feature_importances_ = (
@@ -419,11 +420,17 @@ class EnsembleTrainer3Way(BaseTrainer):
         gat_path = path.parent / "gat_model.pt"
         if self._gat._trained:
             self._gat.save(gat_path)
+        else:
+            logger.warning(
+                "EnsembleTrainer3Way 저장: GAT 서브모델 미훈련 — gat_model.pt 생략 "
+                "(fit_gat()을 호출하지 않았거나 GAT 훈련이 실패했습니다)"
+            )
         payload = {
             "trainer_class": self.__class__.__name__,
             "weights": self.weights,
             "best_threshold": getattr(self, "best_threshold_", 0.5),
             "feature_importances": getattr(self, "feature_importances_", None),
+            **getattr(self, "_extra_meta", {}),
         }
         content = pickle.dumps(payload)
         path.write_bytes(content)
@@ -455,7 +462,6 @@ def build_trainer(config: Any) -> BaseTrainer:
         model_dir = getattr(config, "model_dir", "models")
         return GATTrainer(config.gat_params, config, model_dir=model_dir)
     elif model_type == "ensemble_gat":
-        model_dir = getattr(config, "model_dir", "models")
         return EnsembleTrainer3Way(
             config.xgb_params, config.lgb_params, config.gat_params, config
         )

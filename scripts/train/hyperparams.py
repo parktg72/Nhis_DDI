@@ -97,7 +97,7 @@ def lgb_search_space(trial: Any) -> dict[str, Any]:
 @dataclass
 class TrainConfig:
     """전체 훈련 설정."""
-    model_type: str = "xgboost"          # "xgboost" | "lightgbm" | "ensemble"
+    model_type: str = "xgboost"          # "xgboost" | "lightgbm" | "ensemble" | "gat" | "ensemble_gat"
     partition: str = ""                   # 데이터 파티션 (YYYYMM)
     feature_base: str = "data/features"
     model_dir: str = "models"
@@ -137,4 +137,6 @@ class TrainConfig:
             return self.lgb_params
         if self.model_type == "gat":
             return self.gat_params
+        if self.model_type in ("ensemble", "ensemble_gat"):
+            return {**self.xgb_params, **self.lgb_params}
         return self.xgb_params  # 기본값: xgboost

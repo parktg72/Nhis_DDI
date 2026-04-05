@@ -359,3 +359,12 @@ class TestBuildTrainer:
         config = TrainConfig()
         assert "hidden_dim" in config.gat_params
         assert "epochs" in config.gat_params
+
+    def test_build_ensemble_gat_trainer(self, tmp_path):
+        """build_trainer(config) model_type='ensemble_gat' → EnsembleTrainer3Way 반환."""
+        from scripts.train.hyperparams import TrainConfig
+        from scripts.train.trainer import build_trainer, EnsembleTrainer3Way
+
+        config = TrainConfig(model_type="ensemble_gat", model_dir=str(tmp_path))
+        trainer = build_trainer(config)
+        assert isinstance(trainer, EnsembleTrainer3Way)
