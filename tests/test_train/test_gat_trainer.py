@@ -137,3 +137,19 @@ class TestGraphBuilder:
         data = builder.build(prescription_df, ddi_df)
         num_nodes = len(builder.drug_to_idx)
         assert data.x.shape == (num_nodes, 3)
+
+    def test_mean_degree_warning(self, caplog):
+        """평균 노드 차수 < 5 → WARNING 로그."""
+        import logging
+        from scripts.features.graph_builder import GraphBuilder
+        # 2명이 각 2종 약물 처방 → mean_degree 낮음
+        df = pd.DataFrame({
+            "patient_id": ["P1","P1","P2","P2"],
+            "drug_code":  ["D1","D2","D3","D4"],
+            "prescription_date": ["2024-01-01"]*4,
+        })
+        ddi = pd.DataFrame({"drug_a": [], "drug_b": [], "severity": []})
+        builder = GraphBuilder()
+        with caplog.at_level(logging.WARNING):
+            builder.build(df, ddi)
+        assert any("평균 노드 차수" in r.message for r in caplog.records)

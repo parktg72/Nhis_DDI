@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
 from typing import Optional
@@ -108,7 +108,8 @@ class GraphBuilder:
             if drug in self.drug_to_idx:
                 log_freq[self.drug_to_idx[drug]] = float(np.log1p(cnt))
 
-        x = torch.stack([log_degree, ddi_count, log_freq], dim=1)  # [N, 3]
+        log_ddi = torch.log1p(ddi_count)
+        x = torch.stack([log_degree, log_ddi, log_freq], dim=1)  # [N, 3]
 
         # 4. 그래프 품질 경고
         isolated = int((degree == 0).sum())
@@ -131,7 +132,7 @@ class GraphBuilder:
         self.data.drug_to_idx = self.drug_to_idx
 
         self._meta = {
-            "built_at": datetime.utcnow().isoformat(),
+            "built_at": datetime.now(timezone.utc).isoformat(),
             "num_nodes": num_nodes,
             "num_edges": edge_index.shape[1] // 2,
             "feature_dim": 3,
@@ -193,6 +194,8 @@ class GraphBuilder:
                 f"(expected={expected[:16]}…, actual={actual[:16]}…)"
             )
 
+        # weights_only=False 필요: torch_geometric.data.Data는 pickle 직렬화 사용.
+        # sha256 검증(위)으로 파일 무결성이 확보된 후에만 로드.
         saved = torch.load(graph_path, weights_only=False)
         obj = cls()
         obj.data = saved["data"]
