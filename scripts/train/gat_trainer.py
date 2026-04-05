@@ -64,6 +64,12 @@ class GATTrainer(BaseGraphTrainer):
         t0 = time.perf_counter()
 
         # 1. 그래프 빌드 (train 데이터만)
+        split_attr = dataset.prescription_df.attrs.get("split") or dataset.prescription_split
+        if str(split_attr).strip().lower() != "train":
+            raise RuntimeError(
+                "GATTrainer.fit_graph()는 train split 처방 데이터만 허용합니다. "
+                "GATDataset.prescription_split='train' 또는 prescription_df.attrs['split']='train' 필요"
+            )
         self._graph_builder = GraphBuilder()
         graph_data = self._graph_builder.build(dataset.prescription_df, dataset.ddi_df)
         drug_to_idx = self._graph_builder.drug_to_idx
@@ -246,6 +252,12 @@ class GATTrainer(BaseGraphTrainer):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
+        if self._calibrator is None:
+            logger.warning(
+                "GATTrainer.save(): _calibrator 미설정 — Platt 스케일링 미적용. "
+                "calibrate() 호출 후 저장 권장."
+            )
+
         payload = {
             "model_state": self._gat_model.state_dict(),
             "model_init_params": {
@@ -273,6 +285,8 @@ class GATTrainer(BaseGraphTrainer):
     def load_gat(cls, path: str | Path) -> "GATTrainer":
         """gat_model.pt + gat_graph.pt sha256 검증 후 로드."""
         path = Path(path)
+        if not path.exists():
+            raise RuntimeError(f"gat_model.pt 없음: {path}")
         # model sha256 검증
         sha_path = path.with_suffix(path.suffix + ".sha256")
         if not sha_path.exists():

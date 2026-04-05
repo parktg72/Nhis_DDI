@@ -300,46 +300,51 @@ class MLModel:
             # EnsembleTrainer3Way: GAT 서브모델 추가 로드
             if state.get("trainer_class") == "EnsembleTrainer3Way":
                 gat_model_path = path.parent / "gat_model.pt"
-                if gat_model_path.exists():
-                    try:
-                        from scripts.train.gat_trainer import GATTrainer
-                        self._gat_trainer = GATTrainer.load_gat(gat_model_path)
-                        # 그래프 나이 경고
-                        import json
-                        from datetime import datetime, timezone
-                        meta_path = path.parent / "gat_graph_meta.json"
-                        if meta_path.exists():
-                            meta = json.loads(meta_path.read_text())
-                            built_at_str = meta.get("built_at", "")
-                            if built_at_str:
-                                try:
-                                    built_at = datetime.fromisoformat(built_at_str)
-                                    # Handle timezone-aware and naive datetimes
-                                    now = datetime.now(timezone.utc)
-                                    if built_at.tzinfo is None:
-                                        built_at = built_at.replace(tzinfo=timezone.utc)
-                                    age_days = (now - built_at).days
-                                    if age_days > 180 and not self._gat_graph_age_warned:
-                                        logger.warning(
-                                            "gat_graph.pt 나이 %d일 (>180일) — 그래프 재빌드 권장",
-                                            age_days,
-                                        )
-                                        self._gat_graph_age_warned = True
-                                except ValueError:
-                                    pass
-                        self._ensemble_weights = state.get("weights", (1/3, 1/3, 1/3))
-                        logger.info("GATTrainer 로드 완료: %s", gat_model_path)
-                    except Exception as e:
-                        logger.warning("GATTrainer 로드 실패 (GAT 제외 모드): %s", e)
-                        self._gat_trainer = None
-                else:
-                    logger.warning("gat_model.pt 없음 — GAT 없이 앙상블 로드")
+                if not gat_model_path.exists():
+                    raise RuntimeError(
+                        f"EnsembleTrainer3Way는 gat_model.pt가 필수입니다: {gat_model_path}"
+                    )
+                try:
+                    from scripts.train.gat_trainer import GATTrainer
+                    self._gat_trainer = GATTrainer.load_gat(gat_model_path)
+                    # 그래프 나이 경고
+                    import json
+                    from datetime import datetime, timezone
+                    meta_path = path.parent / "gat_graph_meta.json"
+                    if meta_path.exists():
+                        meta = json.loads(meta_path.read_text())
+                        built_at_str = meta.get("built_at", "")
+                        if built_at_str:
+                            try:
+                                built_at = datetime.fromisoformat(built_at_str)
+                                # Handle timezone-aware and naive datetimes
+                                now = datetime.now(timezone.utc)
+                                if built_at.tzinfo is None:
+                                    built_at = built_at.replace(tzinfo=timezone.utc)
+                                age_days = (now - built_at).days
+                                if age_days > 180 and not self._gat_graph_age_warned:
+                                    logger.warning(
+                                        "gat_graph.pt 나이 %d일 (>180일) — 그래프 재빌드 권장",
+                                        age_days,
+                                    )
+                                    self._gat_graph_age_warned = True
+                            except ValueError:
+                                pass
+                    self._ensemble_weights = state.get("weights", (1/3, 1/3, 1/3))
+                    logger.info("GATTrainer 로드 완료: %s", gat_model_path)
+                except RuntimeError:
+                    raise
+                except Exception as e:
+                    logger.warning("GATTrainer 로드 실패 (GAT 제외 모드): %s", e)
+                    self._gat_trainer = None
 
             if self._model is None:
                 logger.error("모델 로드 실패: _model이 None (앙상블 복원 실패 포함): %s", path)
                 return False
             logger.info("ML 모델 로드: %s (threshold=%.3f)", path, self._threshold)
             return True
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.warning("ML 모델 로드 실패: %s", e)
             return False
@@ -381,7 +386,16 @@ class MLModel:
         # tabular 예측 (기존 경로) — predict_proba()는 이미 float 반환
         base_prob = self.predict_proba(X)
 
-        if self._gat_trainer is None or len(drug_codes) < 2:
+        if self._gat_trainer is None or not getattr(self._gat_trainer, "_trained", False) or len(drug_codes) < 2:
+            return base_prob
+
+        known_drug_to_idx = self._gat_trainer._graph_builder.drug_to_idx
+        unknown_codes = sorted({code for code in drug_codes if code not in known_drug_to_idx})
+        if unknown_codes:
+            logger.warning(
+                "알 수 없는 약물 코드 포함 — 요청 전체에서 GAT 제외: %s",
+                ", ".join(unknown_codes),
+            )
             return base_prob
 
         # 모든 약물쌍 GAT 스코어 → max 집계

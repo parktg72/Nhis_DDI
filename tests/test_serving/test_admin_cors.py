@@ -118,9 +118,18 @@ def test_deploy_dag_sends_admin_key(monkeypatch, tmp_path):
     monkeypatch.setenv("DDI_SERVING_URL", "http://localhost:8000")
     monkeypatch.setenv("MODEL_DIR", str(tmp_path))  # _deploy_model이 실제 디렉터리 생성
 
+    import hashlib, pickle as _pickle
     model_file = tmp_path / "model.pkl"
-    model_file.write_bytes(b"fake")
-    (tmp_path / "model.pkl.sha256").write_text("abc  model.pkl\n")
+    _model_payload = _pickle.dumps({"trainer_class": "EnsembleTrainer", "weights": (0.5, 0.5)})
+    model_file.write_bytes(_model_payload)
+    _sha = hashlib.sha256(_model_payload).hexdigest()
+    (tmp_path / "model.pkl.sha256").write_text(f"{_sha}  model.pkl\n")
+    # sub-model stubs
+    for _ext in (".xgb.pkl", ".lgb.pkl"):
+        _sub = tmp_path / f"model{_ext}"
+        _sub.write_bytes(b"submodel_stub")
+        _sub_sha = hashlib.sha256(b"submodel_stub").hexdigest()
+        (tmp_path / f"model{_ext}.sha256").write_text(f"{_sub_sha}  model{_ext}\n")
 
     captured = {}
     from unittest.mock import MagicMock, patch

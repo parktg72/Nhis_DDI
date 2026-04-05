@@ -53,6 +53,40 @@ class GraphBuilder:
         except ImportError as e:
             raise ImportError("torch_geometric 미설치: pip install torch_geometric") from e
 
+        required_rx_cols = {"patient_id", "drug_code", "prescription_date"}
+        missing_rx_cols = required_rx_cols - set(prescription_df.columns)
+        if missing_rx_cols:
+            raise ValueError(f"prescription_df 필수 컬럼 누락: {sorted(missing_rx_cols)}")
+
+        required_ddi_cols = {"drug_a", "drug_b", "severity"}
+        missing_ddi_cols = required_ddi_cols - set(ddi_df.columns)
+        if missing_ddi_cols:
+            raise ValueError(f"ddi_df 필수 컬럼 누락: {sorted(missing_ddi_cols)}")
+
+        split_values: set[str] = set()
+        if "split" in prescription_df.columns:
+            split_values = {
+                str(v).strip().lower()
+                for v in prescription_df["split"].dropna().unique()
+            }
+            if split_values != {"train"}:
+                raise RuntimeError(
+                    "GraphBuilder.build()는 train split 데이터만 허용합니다. "
+                    f"감지된 split 값: {sorted(split_values) or ['<empty>']}"
+                )
+        else:
+            split_attr = prescription_df.attrs.get("split") or prescription_df.attrs.get("dataset_split")
+            if split_attr is not None and str(split_attr).strip().lower() != "train":
+                raise RuntimeError(
+                    "GraphBuilder.build()는 train split 데이터만 허용합니다. "
+                    f"prescription_df.attrs['split'] = {split_attr!r}"
+                )
+            elif split_attr is None:
+                logger.warning(
+                    "GraphBuilder.build(): split 출처 미확인 (prescription_df에 'split' 컬럼 또는 "
+                    "attrs['split']='train' 권장). val/test 데이터 누출 위험."
+                )
+
         # 1. 노드 목록
         all_drugs = sorted(prescription_df["drug_code"].unique())
         self.drug_to_idx = {d: i for i, d in enumerate(all_drugs)}

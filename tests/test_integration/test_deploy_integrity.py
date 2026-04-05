@@ -1,5 +1,7 @@
 """배포 원자성·핫스왑 실패 시나리오 통합 테스트."""
+import hashlib
 import os
+import pickle
 import sys
 import pytest
 from pathlib import Path
@@ -49,15 +51,27 @@ class _FakeTI:
         return self._model_path
 
 
+def _write_with_sha256(path: Path, content: bytes, sha_filename: str = None) -> None:
+    """파일 쓰기 + 실제 sha256 사이드카 생성."""
+    path.write_bytes(content)
+    sha = hashlib.sha256(content).hexdigest()
+    sha_path = path.parent / (sha_filename or (path.name + ".sha256"))
+    sha_path.write_text(f"{sha}  {path.name}\n")
+
+
 def _make_full_artifacts(staging: Path, base_name: str = "model_v1") -> Path:
-    """완전한 앙상블 아티팩트 세트 생성."""
+    """완전한 앙상블 아티팩트 세트 생성 (실제 sha256 + 유효한 pickle)."""
+    staging.mkdir(parents=True, exist_ok=True)
+
+    # 메인 pkl — pickle.loads()로 trainer_class 읽을 수 있도록 유효한 dict
+    main_payload = pickle.dumps({"trainer_class": "EnsembleTrainer", "weights": (0.5, 0.5)})
     main_pkl = staging / f"{base_name}.pkl"
-    main_pkl.write_bytes(b"model")
-    (staging / f"{base_name}.pkl.sha256").write_text("aabbcc  model_v1.pkl\n")
-    (staging / f"{base_name}.xgb.pkl").write_bytes(b"xgb")
-    (staging / f"{base_name}.xgb.pkl.sha256").write_text("aabbcc  model_v1.xgb.pkl\n")
-    (staging / f"{base_name}.lgb.pkl").write_bytes(b"lgb")
-    (staging / f"{base_name}.lgb.pkl.sha256").write_text("aabbcc  model_v1.lgb.pkl\n")
+    _write_with_sha256(main_pkl, main_payload)
+
+    # 서브모델
+    for ext in (".xgb.pkl", ".lgb.pkl"):
+        _write_with_sha256(staging / f"{base_name}{ext}", b"submodel_stub")
+
     return main_pkl
 
 
@@ -87,13 +101,13 @@ def test_deploy_atomic_no_files_on_missing_submodel_sha256(tmp_path):
     prod_dir.mkdir()
 
     # 서브모델 sha256 하나 누락
+    main_payload = pickle.dumps({"trainer_class": "EnsembleTrainer", "weights": (0.5, 0.5)})
     main_pkl = staging / "model_v1.pkl"
-    main_pkl.write_bytes(b"model")
-    (staging / "model_v1.pkl.sha256").write_text("hash\n")
-    (staging / "model_v1.xgb.pkl").write_bytes(b"xgb")
-    # model_v1.xgb.pkl.sha256 고의로 누락
-    (staging / "model_v1.lgb.pkl").write_bytes(b"lgb")
-    (staging / "model_v1.lgb.pkl.sha256").write_text("hash\n")
+    _write_with_sha256(main_pkl, main_payload)
+    _write_with_sha256(staging / "model_v1.xgb.pkl", b"xgb_stub")
+    # model_v1.xgb.pkl.sha256 고의로 누락 — .sha256 삭제
+    (staging / "model_v1.xgb.pkl.sha256").unlink()
+    _write_with_sha256(staging / "model_v1.lgb.pkl", b"lgb_stub")
 
     import config.settings as s
     s.MODEL_DIR = prod_dir
@@ -182,10 +196,8 @@ def test_deploy_backup_covers_all_files(tmp_path):
     # 기존 버전 디렉터리 + current 심링크 준비
     old_dir = prod_dir / ".v_old"
     old_dir.mkdir()
-    (old_dir / "model_prod.pkl").write_bytes(b"old_model")
-    (old_dir / "model_prod.pkl.sha256").write_text("oldhash\n")
-    (old_dir / "model_prod.xgb.pkl").write_bytes(b"old_xgb")
-    (old_dir / "model_prod.xgb.pkl.sha256").write_text("oldhash\n")
+    _write_with_sha256(old_dir / "model_prod.pkl", b"old_model")
+    _write_with_sha256(old_dir / "model_prod.xgb.pkl", b"old_xgb")
     (prod_dir / "current").symlink_to(".v_old")
 
     main_pkl = _make_full_artifacts(staging)
@@ -223,12 +235,9 @@ def test_hotswap_failure_rolls_back_current_symlink(tmp_path):
     # 기존 버전 디렉터리 + current 심링크 준비
     old_dir = prod_dir / ".v_old"
     old_dir.mkdir()
-    (old_dir / "model_prod.pkl").write_bytes(b"old_model")
-    (old_dir / "model_prod.pkl.sha256").write_text("oldhash\n")
-    (old_dir / "model_prod.xgb.pkl").write_bytes(b"old_xgb")
-    (old_dir / "model_prod.xgb.pkl.sha256").write_text("oldhash\n")
-    (old_dir / "model_prod.lgb.pkl").write_bytes(b"old_lgb")
-    (old_dir / "model_prod.lgb.pkl.sha256").write_text("oldhash\n")
+    _write_with_sha256(old_dir / "model_prod.pkl", b"old_model")
+    _write_with_sha256(old_dir / "model_prod.xgb.pkl", b"old_xgb")
+    _write_with_sha256(old_dir / "model_prod.lgb.pkl", b"old_lgb")
     (prod_dir / "current").symlink_to(".v_old")
 
     main_pkl = _make_full_artifacts(staging)
@@ -357,12 +366,9 @@ def test_prune_keeps_backup_keep_n_versioned_dirs(tmp_path):
     for i in range(1, 7):
         d = prod_dir / f".v_{i}"
         d.mkdir()
-        (d / "model_prod.pkl").write_bytes(b"old")
-        (d / "model_prod.pkl.sha256").write_text("hash\n")
-        (d / "model_prod.xgb.pkl").write_bytes(b"old_xgb")
-        (d / "model_prod.xgb.pkl.sha256").write_text("hash\n")
-        (d / "model_prod.lgb.pkl").write_bytes(b"old_lgb")
-        (d / "model_prod.lgb.pkl.sha256").write_text("hash\n")
+        _write_with_sha256(d / "model_prod.pkl", b"old")
+        _write_with_sha256(d / "model_prod.xgb.pkl", b"old_xgb")
+        _write_with_sha256(d / "model_prod.lgb.pkl", b"old_lgb")
     # current는 가장 최신(.v_6) 가리킴
     (prod_dir / "current").symlink_to(".v_6")
 

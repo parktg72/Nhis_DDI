@@ -336,7 +336,11 @@ class EnsembleTrainer3Way(BaseTrainer):
         return self
 
     def fit_gat(self, gat_dataset) -> "EnsembleTrainer3Way":
-        """GAT 서브모델 학습 (별도 호출)."""
+        """GAT 서브모델 학습 (fit() 호출 후 사용)."""
+        if not self._trained:
+            raise RuntimeError(
+                "EnsembleTrainer3Way.fit_gat(): XGBoost/LightGBM 훈련(fit()) 후 호출하세요"
+            )
         self._gat.fit_graph(gat_dataset)
         return self
 
@@ -353,23 +357,49 @@ class EnsembleTrainer3Way(BaseTrainer):
 
         p_xgb = self._xgb.predict_proba(X_calib)
         p_lgb = self._lgb.predict_proba(X_calib)
+        decision_threshold = float(
+            getattr(self, "best_threshold_", getattr(self.config, "probability_threshold", 0.5))
+        )
+        gat_available = []
         p_gat_list = []
         for drug_a, drug_b in drug_pairs_calib:
             val = self._gat.predict_pair_proba(drug_a, drug_b)
-            p_gat_list.append(val if val is not None else 0.5)
-        p_gat = np.array(p_gat_list)
+            gat_available.append(val is not None)
+            p_gat_list.append(float(val) if val is not None else np.nan)
+        gat_available = np.array(gat_available, dtype=bool)
+        p_gat = np.array(p_gat_list, dtype=float)
+
+        def blend_probs(w):
+            probs = np.empty_like(p_xgb, dtype=float)
+            known_mask = gat_available
+            if known_mask.any():
+                probs[known_mask] = (
+                    w[0] * p_xgb[known_mask]
+                    + w[1] * p_lgb[known_mask]
+                    + w[2] * p_gat[known_mask]
+                )
+            unknown_mask = ~known_mask
+            if unknown_mask.any():
+                tab_weight = w[0] + w[1]
+                if tab_weight <= 0.0:
+                    raise ValueError("unknown drug pair가 있으면 tabular 가중치 합은 0보다 커야 합니다.")
+                probs[unknown_mask] = (
+                    (w[0] / tab_weight) * p_xgb[unknown_mask]
+                    + (w[1] / tab_weight) * p_lgb[unknown_mask]
+                )
+            return probs
 
         def neg_auc(w):
-            p = w[0] * p_xgb + w[1] * p_lgb + w[2] * p_gat
             try:
+                p = blend_probs(w)
                 return -roc_auc_score(y_calib, p)
             except Exception:
-                return 0.0
+                return 1.0
 
         def recall_constraint(w):
-            p = w[0] * p_xgb + w[1] * p_lgb + w[2] * p_gat
-            pred = (p >= 0.5).astype(int)
             try:
+                p = blend_probs(w)
+                pred = (p >= decision_threshold).astype(int)
                 return recall_score(y_calib, pred, zero_division=0) - recall_threshold
             except Exception:
                 return -1.0
@@ -378,14 +408,19 @@ class EnsembleTrainer3Way(BaseTrainer):
             {"type": "eq",   "fun": lambda w: w.sum() - 1.0},
             {"type": "ineq", "fun": recall_constraint},
         ]
+        if (~gat_available).any():
+            constraints.append({"type": "ineq", "fun": lambda w: w[0] + w[1] - 1e-8})
         bounds = [(0.0, 1.0)] * 3
         x0 = np.array([1/3, 1/3, 1/3])
 
         result = minimize(neg_auc, x0, method="SLSQP", bounds=bounds, constraints=constraints)
-        if result.success:
+        if result.success and recall_constraint(result.x) >= 0.0:
             self.weights = tuple(float(v) for v in result.x)
         else:
-            logger.warning("가중치 최적화 실패 — 균등 가중치 유지: %s", result.message)
+            raise RuntimeError(
+                "EnsembleTrainer3Way 가중치 최적화 실패 또는 Recall 제약 미충족: "
+                f"{result.message}"
+            )
         logger.info("앙상블 최적 가중치: xgb=%.3f lgb=%.3f gat=%.3f", *self.weights)
         return self.weights
 
