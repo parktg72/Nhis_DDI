@@ -199,6 +199,9 @@ class MLModel:
         self._model_type: str = "none"
         self._scaler = None
         self._selector = None
+        self._ensemble_weights = (1/3, 1/3, 1/3)
+        self._gat_trainer = None   # GATTrainer instance (EnsembleTrainer3Way용)
+        self._gat_graph_age_warned = False
 
     @staticmethod
     def _verify_hash(path: Path, content: bytes) -> bool:
@@ -262,7 +265,7 @@ class MLModel:
                         logger.warning("%s 없음 — 미적용: %s", key, candidate)
 
             # Ensemble model: load from sub-model files
-            if self._model is None and state.get("trainer_class") == "EnsembleTrainer":
+            if self._model is None and state.get("trainer_class") in ("EnsembleTrainer", "EnsembleTrainer3Way"):
                 xgb_path = path.with_suffix(".xgb.pkl")
                 lgb_path = path.with_suffix(".lgb.pkl")
                 if xgb_path.exists() and lgb_path.exists():
@@ -294,6 +297,44 @@ class MLModel:
                     except Exception as e:
                         logger.warning("앙상블 로드 실패: %s", e)
 
+            # EnsembleTrainer3Way: GAT 서브모델 추가 로드
+            if state.get("trainer_class") == "EnsembleTrainer3Way":
+                gat_model_path = path.parent / "gat_model.pt"
+                if gat_model_path.exists():
+                    try:
+                        from scripts.train.gat_trainer import GATTrainer
+                        self._gat_trainer = GATTrainer.load_gat(gat_model_path)
+                        # 그래프 나이 경고
+                        import json
+                        from datetime import datetime, timezone
+                        meta_path = path.parent / "gat_graph_meta.json"
+                        if meta_path.exists():
+                            meta = json.loads(meta_path.read_text())
+                            built_at_str = meta.get("built_at", "")
+                            if built_at_str:
+                                try:
+                                    built_at = datetime.fromisoformat(built_at_str)
+                                    # Handle timezone-aware and naive datetimes
+                                    now = datetime.now(timezone.utc)
+                                    if built_at.tzinfo is None:
+                                        built_at = built_at.replace(tzinfo=timezone.utc)
+                                    age_days = (now - built_at).days
+                                    if age_days > 180 and not self._gat_graph_age_warned:
+                                        logger.warning(
+                                            "gat_graph.pt 나이 %d일 (>180일) — 그래프 재빌드 권장",
+                                            age_days,
+                                        )
+                                        self._gat_graph_age_warned = True
+                                except ValueError:
+                                    pass
+                        self._ensemble_weights = state.get("weights", (1/3, 1/3, 1/3))
+                        logger.info("GATTrainer 로드 완료: %s", gat_model_path)
+                    except Exception as e:
+                        logger.warning("GATTrainer 로드 실패 (GAT 제외 모드): %s", e)
+                        self._gat_trainer = None
+                else:
+                    logger.warning("gat_model.pt 없음 — GAT 없이 앙상블 로드")
+
             if self._model is None:
                 logger.error("모델 로드 실패: _model이 None (앙상블 복원 실패 포함): %s", path)
                 return False
@@ -317,6 +358,50 @@ class MLModel:
         except Exception as e:
             logger.warning("ML 예측 오류: %s", e)
             return 0.0
+
+    def predict_proba_gat(
+        self,
+        X: np.ndarray,
+        drug_codes: list[str],
+    ) -> float:
+        """
+        GAT 포함 앙상블 예측.
+
+        Parameters
+        ----------
+        X          : [1, feature_dim] tabular 피처 (스케일링 적용 후)
+        drug_codes : 요청 내 약물 코드 목록
+
+        Returns
+        -------
+        최종 DDI 위험 확률 (0~1)
+        """
+        from itertools import combinations
+
+        # tabular 예측 (기존 경로) — predict_proba()는 이미 float 반환
+        base_prob = self.predict_proba(X)
+
+        if self._gat_trainer is None or len(drug_codes) < 2:
+            return base_prob
+
+        # 모든 약물쌍 GAT 스코어 → max 집계
+        valid_scores = []
+        for drug_a, drug_b in combinations(drug_codes, 2):
+            score = self._gat_trainer.predict_pair_proba(drug_a, drug_b)
+            if score is not None:
+                valid_scores.append(score)
+
+        if not valid_scores:
+            # 모든 쌍 미지 약물 → GAT 제외, tabular만 사용
+            return base_prob
+
+        p_gat = float(max(valid_scores))
+
+        weights = getattr(self, "_ensemble_weights", (1/3, 1/3, 1/3))
+        w1, w2, w3 = weights
+        tab_weight = w1 + w2
+        total = tab_weight + w3
+        return (tab_weight * base_prob + w3 * p_gat) / (total or 1.0)
 
     def classify(self, prob: float) -> RiskLevel:
         """확률 → 위험등급 변환."""

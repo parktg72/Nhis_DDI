@@ -291,6 +291,156 @@ class EnsembleTrainer(BaseTrainer):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 앙상블 3-way (XGBoost + LightGBM + GAT)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class EnsembleTrainer3Way(BaseTrainer):
+    """XGBoost + LightGBM + GAT 소프트 보팅 앙상블 (3-way).
+
+    가중치 최적화: calibration 스플릿에서 Recall >= 0.90 제약 하 AUC 최대화 (SLSQP).
+    미지 약물 포함 요청: w_gat=0, 나머지 가중치 정규화.
+    """
+
+    def __init__(
+        self,
+        xgb_params: dict,
+        lgb_params: dict,
+        gat_params: dict,
+        config: Any,
+        weights: tuple[float, float, float] = (1/3, 1/3, 1/3),
+    ):
+        super().__init__(xgb_params, config)
+        self.weights = weights
+        self._xgb = XGBoostTrainer(xgb_params, config)
+        self._lgb = LGBMTrainer(lgb_params, config)
+        from .gat_trainer import GATTrainer
+        model_dir = getattr(config, "model_dir", "models")
+        self._gat = GATTrainer(gat_params, config, model_dir=model_dir)
+
+    def fit(self, dataset) -> "EnsembleTrainer3Way":
+        """tabular 데이터용 fit — GAT는 별도 fit_gat() 호출 필요."""
+        if not isinstance(dataset, TrainDataset):
+            raise TypeError("EnsembleTrainer3Way.fit()은 TrainDataset 필요")
+        logger.info("앙상블 3-way 훈련: XGBoost + LightGBM")
+        self._xgb.fit(dataset)
+        self._lgb.fit(dataset)
+        if (self._xgb.feature_importances_ is not None
+                and self._lgb.feature_importances_ is not None):
+            w1, w2, _ = self.weights
+            norm = w1 + w2 or 1.0
+            self.feature_importances_ = (
+                (w1 / norm) * self._xgb.feature_importances_
+                + (w2 / norm) * self._lgb.feature_importances_
+            )
+        self._trained = True
+        return self
+
+    def fit_gat(self, gat_dataset) -> "EnsembleTrainer3Way":
+        """GAT 서브모델 학습 (별도 호출)."""
+        self._gat.fit_graph(gat_dataset)
+        return self
+
+    def optimize_weights(
+        self,
+        X_calib,
+        y_calib,
+        drug_pairs_calib,
+        recall_threshold: float = 0.90,
+    ) -> tuple:
+        """Recall >= recall_threshold 제약 하에서 AUC 최대화 (SLSQP)."""
+        from scipy.optimize import minimize
+        from sklearn.metrics import roc_auc_score, recall_score
+
+        p_xgb = self._xgb.predict_proba(X_calib)
+        p_lgb = self._lgb.predict_proba(X_calib)
+        p_gat_list = []
+        for drug_a, drug_b in drug_pairs_calib:
+            val = self._gat.predict_pair_proba(drug_a, drug_b)
+            p_gat_list.append(val if val is not None else 0.5)
+        p_gat = np.array(p_gat_list)
+
+        def neg_auc(w):
+            p = w[0] * p_xgb + w[1] * p_lgb + w[2] * p_gat
+            try:
+                return -roc_auc_score(y_calib, p)
+            except Exception:
+                return 0.0
+
+        def recall_constraint(w):
+            p = w[0] * p_xgb + w[1] * p_lgb + w[2] * p_gat
+            pred = (p >= 0.5).astype(int)
+            try:
+                return recall_score(y_calib, pred, zero_division=0) - recall_threshold
+            except Exception:
+                return -1.0
+
+        constraints = [
+            {"type": "eq",   "fun": lambda w: w.sum() - 1.0},
+            {"type": "ineq", "fun": recall_constraint},
+        ]
+        bounds = [(0.0, 1.0)] * 3
+        x0 = np.array([1/3, 1/3, 1/3])
+
+        result = minimize(neg_auc, x0, method="SLSQP", bounds=bounds, constraints=constraints)
+        if result.success:
+            self.weights = tuple(float(v) for v in result.x)
+        else:
+            logger.warning("가중치 최적화 실패 — 균등 가중치 유지: %s", result.message)
+        logger.info("앙상블 최적 가중치: xgb=%.3f lgb=%.3f gat=%.3f", *self.weights)
+        return self.weights
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """tabular-only 예측 (GAT 제외). serving에서는 predict_proba_with_gat 사용."""
+        w1, w2, _ = self.weights
+        norm = w1 + w2 or 1.0
+        return (w1 / norm) * self._xgb.predict_proba(X) + (w2 / norm) * self._lgb.predict_proba(X)
+
+    def predict_proba_with_gat(self, X: np.ndarray, drug_pairs) -> np.ndarray:
+        """GAT 포함 예측."""
+        w1, w2, w3 = self.weights
+        p_xgb = self._xgb.predict_proba(X)
+        p_lgb = self._lgb.predict_proba(X)
+
+        results = np.zeros(len(X))
+        for i, (drug_a, drug_b) in enumerate(drug_pairs):
+            p_gat = self._gat.predict_pair_proba(drug_a, drug_b)
+            if p_gat is None:
+                norm = w1 + w2 or 1.0
+                results[i] = (w1 / norm) * p_xgb[i] + (w2 / norm) * p_lgb[i]
+            else:
+                results[i] = w1 * p_xgb[i] + w2 * p_lgb[i] + w3 * p_gat
+        return results
+
+    def save(self, path) -> Path:
+        import hashlib
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._xgb.save(path.with_suffix(".xgb.pkl"))
+        self._lgb.save(path.with_suffix(".lgb.pkl"))
+        gat_path = path.parent / "gat_model.pt"
+        if self._gat._trained:
+            self._gat.save(gat_path)
+        else:
+            logger.warning(
+                "EnsembleTrainer3Way 저장: GAT 서브모델 미훈련 — gat_model.pt 생략 "
+                "(fit_gat()을 호출하지 않았거나 GAT 훈련이 실패했습니다)"
+            )
+        payload = {
+            "trainer_class": self.__class__.__name__,
+            "weights": self.weights,
+            "best_threshold": getattr(self, "best_threshold_", 0.5),
+            "feature_importances": getattr(self, "feature_importances_", None),
+            **getattr(self, "_extra_meta", {}),
+        }
+        content = pickle.dumps(payload)
+        path.write_bytes(content)
+        sha256 = hashlib.sha256(content).hexdigest()
+        path.with_suffix(path.suffix + ".sha256").write_text(f"{sha256}  {path.name}\n")
+        logger.info("EnsembleTrainer3Way 저장: %s", path)
+        return path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 팩토리
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -307,5 +457,13 @@ def build_trainer(config: Any) -> BaseTrainer:
         return LGBMTrainer(config.lgb_params, config)
     elif model_type == "ensemble":
         return EnsembleTrainer(config.xgb_params, config.lgb_params, config)
+    elif model_type == "gat":
+        from .gat_trainer import GATTrainer
+        model_dir = getattr(config, "model_dir", "models")
+        return GATTrainer(config.gat_params, config, model_dir=model_dir)
+    elif model_type == "ensemble_gat":
+        return EnsembleTrainer3Way(
+            config.xgb_params, config.lgb_params, config.gat_params, config
+        )
     else:
         raise ValueError(f"지원하지 않는 model_type: {model_type}")
