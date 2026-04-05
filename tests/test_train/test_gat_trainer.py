@@ -260,3 +260,83 @@ class TestBaseGraphTrainer:
         from scripts.train.base_graph_trainer import BaseGraphTrainer
         with pytest.raises(TypeError):
             BaseGraphTrainer(params={}, config=None)
+
+
+class TestGATTrainer:
+    torch = pytest.importorskip("torch", reason="PyTorch 미설치")
+
+    @pytest.fixture
+    def small_dataset(self):
+        """소규모 GATDataset 생성."""
+        import random
+        random.seed(42)
+        drugs = [f"D{i:02d}" for i in range(1, 8)]
+        rows = []
+        for i in range(30):
+            pid = f"P{i:03d}"
+            n_drugs = random.randint(2, 4)
+            chosen = random.sample(drugs, n_drugs)
+            for d in chosen:
+                rows.append({"patient_id": pid, "drug_code": d,
+                              "prescription_date": "2024-01-01"})
+        prescription_df = pd.DataFrame(rows)
+        ddi_df = pd.DataFrame({
+            "drug_a":   ["D01","D02","D03"],
+            "drug_b":   ["D02","D03","D04"],
+            "severity": ["contraindicated","major","major"],
+        })
+        from scripts.train.gat_dataset import GATDataset
+        return GATDataset(prescription_df=prescription_df, ddi_df=ddi_df)
+
+    def test_fit_sets_trained(self, small_dataset, tmp_path):
+        from scripts.train.gat_trainer import GATTrainer
+        trainer = GATTrainer(
+            params={"hidden_dim":8,"heads":1,"out_dim":4,"epochs":3,"lr":0.01,"random_state":42},
+            config=None, model_dir=tmp_path,
+        )
+        trainer.fit(small_dataset)
+        assert trainer._trained
+
+    def test_save_creates_artifacts(self, small_dataset, tmp_path):
+        from scripts.train.gat_trainer import GATTrainer
+        trainer = GATTrainer(
+            params={"hidden_dim":8,"heads":1,"out_dim":4,"epochs":2,"lr":0.01,"random_state":42},
+            config=None, model_dir=tmp_path,
+        )
+        trainer.fit(small_dataset)
+        trainer.save(tmp_path / "gat_model.pt")
+        for f in ["gat_model.pt","gat_model.pt.sha256","gat_graph.pt","gat_graph.pt.sha256","gat_graph_meta.json"]:
+            assert (tmp_path / f).exists(), f"누락: {f}"
+
+    def test_load_graph_sha256_mismatch_raises(self, small_dataset, tmp_path):
+        from scripts.train.gat_trainer import GATTrainer
+        trainer = GATTrainer(
+            params={"hidden_dim":8,"heads":1,"out_dim":4,"epochs":2,"lr":0.01,"random_state":42},
+            config=None, model_dir=tmp_path,
+        )
+        trainer.fit(small_dataset)
+        trainer.save(tmp_path / "gat_model.pt")
+        (tmp_path / "gat_graph.pt.sha256").write_text("deadbeef  gat_graph.pt\n")
+        with pytest.raises(RuntimeError, match="sha256"):
+            GATTrainer.load_gat(tmp_path / "gat_model.pt")
+
+    def test_predict_pair_proba_unknown_returns_none(self, small_dataset, tmp_path):
+        from scripts.train.gat_trainer import GATTrainer
+        trainer = GATTrainer(
+            params={"hidden_dim":8,"heads":1,"out_dim":4,"epochs":2,"lr":0.01,"random_state":42},
+            config=None, model_dir=tmp_path,
+        )
+        trainer.fit(small_dataset)
+        result = trainer.predict_pair_proba("UNKNOWN_DRUG_XYZ", "D01")
+        assert result is None
+
+    def test_predict_pair_proba_known_returns_float(self, small_dataset, tmp_path):
+        from scripts.train.gat_trainer import GATTrainer
+        trainer = GATTrainer(
+            params={"hidden_dim":8,"heads":1,"out_dim":4,"epochs":2,"lr":0.01,"random_state":42},
+            config=None, model_dir=tmp_path,
+        )
+        trainer.fit(small_dataset)
+        result = trainer.predict_pair_proba("D01", "D02")
+        if result is not None:
+            assert 0.0 <= result <= 1.0
