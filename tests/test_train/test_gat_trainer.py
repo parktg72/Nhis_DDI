@@ -340,3 +340,22 @@ class TestGATTrainer:
         result = trainer.predict_pair_proba("D01", "D02")
         assert result is not None, "알려진 약물쌍 D01-D02는 None이 아닌 float을 반환해야 함"
         assert 0.0 <= result <= 1.0
+
+
+class TestBuildTrainer:
+    def test_build_gat_trainer(self, tmp_path):
+        """build_trainer(config) model_type='gat' → GATTrainer 반환."""
+        from scripts.train.hyperparams import TrainConfig
+        from scripts.train.trainer import build_trainer
+        from scripts.train.gat_trainer import GATTrainer
+
+        config = TrainConfig(model_type="gat", model_dir=str(tmp_path))
+        trainer = build_trainer(config)
+        assert isinstance(trainer, GATTrainer)
+
+    def test_train_config_gat_params_default(self):
+        """TrainConfig 기본 gat_params 존재 확인."""
+        from scripts.train.hyperparams import TrainConfig
+        config = TrainConfig()
+        assert "hidden_dim" in config.gat_params
+        assert "epochs" in config.gat_params
