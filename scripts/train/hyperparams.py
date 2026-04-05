@@ -117,6 +117,10 @@ class TrainConfig:
     # 재현성
     random_state: int = 42
 
+    # GAT 훈련용 원본 데이터 경로 (ensemble_gat 전용)
+    prescription_data_path: str = ""   # 처방 Parquet 경로 (train split)
+    ddi_data_path: str = ""            # DDI 지식베이스 Parquet/CSV 경로
+
     # 하이퍼파라미터 (모델 타입에 따라 자동 선택)
     xgb_params: dict = field(default_factory=lambda: dict(XGB_DEFAULT))
     lgb_params: dict = field(default_factory=lambda: dict(LGB_DEFAULT))

@@ -180,6 +180,14 @@ class GATTrainer(BaseGraphTrainer):
         self._gat_model = model
         logger.info("GATTrainer 학습 완료 (%.1fs): gat_val_auc=%.4f, pairs=%d",
                     time.perf_counter() - t0, best_auc, len(tr_pairs))
+
+        # 보정 (Platt scaling) — calibration 쌍이 있으면 자동 수행
+        if dataset.pairs_calibration is not None and len(dataset.pairs_calibration) > 0:
+            logger.info("Platt scaling 보정 수행 (calibration 쌍 %d개)", len(dataset.pairs_calibration))
+            self.calibrate(dataset.pairs_calibration)
+        else:
+            logger.warning("calibration 쌍 없음 — Platt scaling 미적용")
+
         return self
 
     def predict_pair_proba(self, drug_a: str, drug_b: str) -> float | None:

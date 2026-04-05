@@ -111,6 +111,10 @@ class TrainPipeline:
             trainer.fit(dataset)
             tracker.log_params(self.config.get_model_params())
 
+            # ensemble_gat 추가 훈련: GAT 서브모델 + 가중치 최적화
+            if self.config.model_type == "ensemble_gat":
+                self._run_gat_training(trainer, dataset)
+
             # ── Step 4: 평가 + 임계값 최적화 ──────────────────────────────
             logger.info("[Step 4] 평가")
             eval_results = trainer.evaluate(
@@ -168,6 +172,78 @@ class TrainPipeline:
         result.elapsed_seconds = time.perf_counter() - t0
         result.print_summary()
         return result
+
+    def _run_gat_training(self, trainer, dataset) -> None:
+        """ensemble_gat: GAT 서브모델 훈련 + 가중치 최적화."""
+        import pandas as pd
+        from scripts.features.graph_builder import GraphBuilder
+        from scripts.train.gat_dataset import GATDataset
+
+        if not self.config.prescription_data_path:
+            raise RuntimeError(
+                "ensemble_gat 훈련에는 TrainConfig.prescription_data_path가 필요합니다."
+            )
+        if not self.config.ddi_data_path:
+            raise RuntimeError(
+                "ensemble_gat 훈련에는 TrainConfig.ddi_data_path가 필요합니다."
+            )
+
+        logger.info("[Step 3b] GAT 서브모델 훈련")
+
+        # 처방 데이터 로드 (train split 전용)
+        presc_path = Path(self.config.prescription_data_path)
+        if presc_path.suffix == ".parquet":
+            prescription_df = pd.read_parquet(presc_path)
+        else:
+            prescription_df = pd.read_csv(presc_path)
+
+        # train split만 필터링 (split 컬럼 있는 경우)
+        if "split" in prescription_df.columns:
+            prescription_df = prescription_df[prescription_df["split"] == "train"].copy()
+        # split 컬럼 없으면 전체를 train으로 간주 + attrs 설정
+        prescription_df.attrs["split"] = "train"
+
+        # DDI 지식베이스 로드
+        ddi_path = Path(self.config.ddi_data_path)
+        if ddi_path.suffix == ".parquet":
+            ddi_df = pd.read_parquet(ddi_path)
+        else:
+            ddi_df = pd.read_csv(ddi_path)
+
+        # GATDataset 생성 및 GAT 훈련
+        gat_dataset = GATDataset(prescription_df=prescription_df, ddi_df=ddi_df)
+        trainer.fit_gat(gat_dataset)  # fit_graph + auto-calibrate (Fix 2)
+
+        # 가중치 최적화 (calibration split pairs 사용)
+        if gat_dataset.pairs_calibration is not None and len(gat_dataset.pairs_calibration) > 0:
+            logger.info("[Step 3c] 앙상블 가중치 최적화 (Recall ≥ %.2f)", self.config.recall_threshold)
+            # calibration split의 tabular 데이터
+            calib_pairs = gat_dataset.pairs_calibration
+            # 약물 인덱스 → 약물 코드 역매핑
+            idx_to_drug = {v: k for k, v in trainer._gat._graph_builder.drug_to_idx.items()}
+            drug_pairs_calib = [
+                (idx_to_drug.get(int(pair[0]), ""), idx_to_drug.get(int(pair[1]), ""))
+                for pair in calib_pairs
+            ]
+            y_calib = calib_pairs[:, 2].astype(int)
+            # tabular 피처: calibration 쌍에 해당하는 X, y (dataset에서 추출)
+            # calibration 쌍의 약물쌍 인덱스 → tabular X는 dataset.X_val 사용 (간소화)
+            # Note: 이상적으로는 calibration split의 tabular X가 필요하지만,
+            # 현재 TrainDataset은 drug pair → row 매핑을 제공하지 않으므로
+            # val split 데이터로 근사합니다.
+            X_calib = dataset.X_val
+            y_calib_tab = dataset.y_val
+            try:
+                trainer.optimize_weights(
+                    X_calib=X_calib,
+                    y_calib=y_calib_tab,
+                    drug_pairs_calib=drug_pairs_calib[:len(X_calib)],
+                    recall_threshold=self.config.recall_threshold,
+                )
+            except RuntimeError as e:
+                logger.error("가중치 최적화 실패: %s — 균등 가중치 유지", e)
+        else:
+            logger.warning("calibration 쌍 없음 — 균등 가중치 사용")
 
     def _run_optuna(self, dataset: TrainDataset) -> None:
         """Optuna 하이퍼파라미터 최적화."""

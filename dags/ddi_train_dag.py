@@ -10,12 +10,14 @@ DDI Model Training DAG
   DDI_FEATURES_DIR   : ML 피처 디렉토리 (기본: /app/data/features)
   MODEL_DIR          : 모델 저장 디렉토리 (기본: /app/models)
   DDI_TRAIN_WEEKS    : 훈련에 사용할 주 수 (기본: 4)
-  DDI_MODEL_TYPE     : xgboost | lightgbm | ensemble (기본: ensemble)
+  DDI_MODEL_TYPE     : xgboost | lightgbm | ensemble | ensemble_gat (기본: ensemble)
   DDI_OPTUNA_TRIALS  : Optuna 시도 횟수 (기본: 50)
   DDI_RECALL_THRESHOLD: 최소 Recall 기준 (기본: 0.90)
   DDI_AUC_THRESHOLD  : 최소 AUC 기준 (기본: 0.85)
   DDI_SERVING_URL    : 서빙 API URL (기본: http://localhost:8000)
   ADMIN_API_KEY      : /admin/reload 인증 키 (serving ADMIN_API_KEY와 동일)
+  PRESCRIPTION_DATA_PATH : 처방 Parquet 경로 (ensemble_gat 전용, train split)
+  DDI_DATA_PATH      : DDI 지식베이스 Parquet/CSV 경로 (ensemble_gat 전용)
 """
 from __future__ import annotations
 
@@ -90,9 +92,15 @@ def _load_features(**context) -> None:
 
 
 def _run_training(**context) -> None:
-    """Optuna 하이퍼파라미터 튜닝 + 모델 훈련."""
+    """Optuna 하이퍼파라미터 튜닝 + 모델 훈련.
+
+    ensemble_gat 모델 타입을 사용할 경우 다음 환경변수가 필요합니다:
+      PRESCRIPTION_DATA_PATH : 처방 Parquet 경로 (train split)
+      DDI_DATA_PATH          : DDI 지식베이스 Parquet/CSV 경로
+    """
     import sys
     sys.path.insert(0, "/app")
+    import os
     from scripts.train.pipeline import run_training
 
     result = run_training(
@@ -104,6 +112,8 @@ def _run_training(**context) -> None:
         recall_threshold=RECALL_THRESHOLD,
         auc_threshold=AUC_THRESHOLD,
         optuna_trials=OPTUNA_TRIALS,
+        prescription_data_path=os.environ.get("PRESCRIPTION_DATA_PATH", ""),
+        ddi_data_path=os.environ.get("DDI_DATA_PATH", ""),
     )
 
     context["ti"].xcom_push(key="val_recall", value=result.val_recall)
@@ -189,6 +199,8 @@ def _deploy_model(**context) -> None:
     import tempfile
     import logging
     import shutil
+    import hashlib
+    import pickle
     import requests
     from pathlib import Path
     from config import settings as _s
@@ -213,6 +225,14 @@ def _deploy_model(**context) -> None:
         (model_path,                              "model_prod.pkl"),
         (Path(str(model_path) + ".sha256"),        "model_prod.pkl.sha256"),
     ]
+    model_content = model_path.read_bytes()
+    model_sha_path = Path(str(model_path) + ".sha256")
+    expected_model_sha = model_sha_path.read_text().strip().split()[0]
+    actual_model_sha = hashlib.sha256(model_content).hexdigest()
+    if actual_model_sha != expected_model_sha:
+        raise RuntimeError(f"배포 중단 — 메인 모델 해시 불일치: {model_path}")
+    model_state = pickle.loads(model_content)
+    trainer_class = model_state.get("trainer_class")
     for ext in (".xgb.pkl", ".lgb.pkl"):
         sub_src = Path(str(base_src) + ext)
         if sub_src.exists():
@@ -224,12 +244,30 @@ def _deploy_model(**context) -> None:
             artifacts.append((sub_src, "model_prod" + ext))
             artifacts.append((sub_sha, "model_prod" + ext + ".sha256"))
 
-    # GAT 아티팩트 (EnsembleTrainer3Way인 경우)
+    # GAT 아티팩트 (EnsembleTrainer3Way인 경우 필수)
+    if trainer_class == "EnsembleTrainer3Way":
+        required_gat = [
+            ("gat_model.pt", "gat_model.pt.sha256"),
+            ("gat_graph.pt", "gat_graph.pt.sha256"),
+        ]
+        for gat_file, gat_sha_suffix in required_gat:
+            gat_src = base_src.parent / gat_file
+            gat_sha = base_src.parent / gat_sha_suffix
+            if not gat_src.exists():
+                raise RuntimeError(f"배포 중단 — EnsembleTrainer3Way 필수 GAT 아티팩트 없음: {gat_src}")
+            if not gat_sha.exists():
+                raise RuntimeError(f"배포 중단 — GAT 아티팩트 해시 없음: {gat_sha}")
+            artifacts.append((gat_src, gat_file))
+            artifacts.append((gat_sha, gat_sha_suffix))
+
+    # 선택적 GAT 아티팩트 (비-3way 저장물에 우연히 공존하는 경우만 복사)
     for gat_file, gat_sha_suffix in [
         ("gat_model.pt",   "gat_model.pt.sha256"),
         ("gat_graph.pt",   "gat_graph.pt.sha256"),
     ]:
         gat_src = base_src.parent / gat_file
+        if trainer_class == "EnsembleTrainer3Way":
+            continue
         if gat_src.exists():
             gat_sha = base_src.parent / gat_sha_suffix
             if not gat_sha.exists():
