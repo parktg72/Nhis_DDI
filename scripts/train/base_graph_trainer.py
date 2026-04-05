@@ -27,11 +27,18 @@ class BaseGraphTrainer(BaseTrainer):
                 f"BaseGraphTrainer.fit()은 GATDataset 필요, "
                 f"받은 타입: {type(dataset).__name__}"
             )
-        return self.fit_graph(dataset)
+        result = self.fit_graph(dataset)
+        self._trained = True  # fit_graph 성공 후 항상 _trained=True 보장
+        return result
 
     @abstractmethod
     def fit_graph(self, dataset: GATDataset) -> "BaseGraphTrainer":
-        """그래프 기반 학습 구현."""
+        """
+        그래프 기반 학습 구현.
+
+        Note: BaseGraphTrainer.fit()이 성공 반환 후 자동으로 _trained=True 설정함.
+        서브클래스에서 직접 설정 불필요.
+        """
         ...
 
     @abstractmethod

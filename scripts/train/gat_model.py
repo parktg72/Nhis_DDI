@@ -74,7 +74,8 @@ class GATModel(nn.Module):
         -------
         [N] 쌍별 DDI 위험 확률 (sigmoid 출력)
         """
-        h = self.forward(x, edge_index)   # [num_nodes, out_dim]
+        # self() 호출로 PyTorch forward hook 활성화 (self.forward() 직접 호출 금지)
+        h = self(x, edge_index)   # [num_nodes, out_dim]
         h_a = h[pairs[:, 0]]              # [N, out_dim]
         h_b = h[pairs[:, 1]]              # [N, out_dim]
         feat = torch.cat(
