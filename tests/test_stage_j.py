@@ -22,7 +22,7 @@ def test_cif_skips_group_with_zero_events():
 
     T1DM: 15행, 0 이벤트 → MIN_SUBGROUP_EVENTS=3 → CIF skip 되어야 함
     T2DM_OHA: 25행, 5 이벤트 → CIF 포함되어야 함
-    현재 코드는 행 수만 확인하므로 T1DM 도 포함됨 — 이 테스트는 수정 전 FAIL.
+    Stage J 이전에는 행 수만 확인해 T1DM 이 포함됐으나, 이벤트 수 가드 추가(Stage J)로 수정됨.
     """
     n = 40
     df = pd.DataFrame({
