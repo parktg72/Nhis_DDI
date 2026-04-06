@@ -263,7 +263,9 @@ class DriftDetector:
     def save(self, path: str) -> None:
         """참조 분포 저장 (pickle)."""
         import pickle
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         with open(path, "wb") as f:
             pickle.dump({
                 "reference": self._reference,
@@ -276,8 +278,11 @@ class DriftDetector:
     def load(cls, path: str) -> "DriftDetector":
         """저장된 참조 분포 로드."""
         import pickle
-        with open(path, "rb") as f:
-            data = pickle.load(f)
+        try:
+            with open(path, "rb") as f:
+                data = pickle.load(f)
+        except Exception as exc:
+            raise RuntimeError(f"drift_reference.pkl 로드 실패: {path}") from exc
         detector = cls(
             n_bins=data["n_bins"],
             categorical_threshold=data["categorical_threshold"],

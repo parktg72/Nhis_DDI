@@ -315,7 +315,7 @@ def _generate_alerts(partition: str) -> None:
     monitoring_dir = _s.MONITORING_DIR
     metrics_jsonl_path = _s.METRICS_JSONL_PATH
 
-    mgr = AlertManager()
+    mgr = AlertManager(log_dir=str(monitoring_dir))
     alerts: list[Alert] = []
 
     # ── 드리프트 알림 ───────────────────────────────────────────────────────
@@ -355,10 +355,11 @@ def _generate_alerts(partition: str) -> None:
 
     # ── 알림 저장 ───────────────────────────────────────────────────────────
     monitoring_dir.mkdir(parents=True, exist_ok=True)
-    alert_path = monitoring_dir / f"alerts_{partition}.json"
-    with open(alert_path, "w", encoding="utf-8") as f:
-        json.dump([a.to_dict() for a in alerts], f, ensure_ascii=False, indent=2)
-    logger.info("알림 생성 완료 (partition=%s): %d건", partition, len(alerts))
+    saved_path = mgr.save_alerts(alerts, partition)
+    if saved_path:
+        logger.info("알림 생성 완료 (partition=%s): %d건 → %s", partition, len(alerts), saved_path)
+    else:
+        logger.info("알림 없음 (partition=%s)", partition)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

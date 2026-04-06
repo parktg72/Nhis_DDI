@@ -325,3 +325,10 @@ class TestDAGDriftAndAlerts:
         _generate_alerts(partition=partition)
 
         assert alert_json.exists()
+        import json as _json
+        data = _json.loads(alert_json.read_text())
+        # Should be either a list or an envelope dict
+        if isinstance(data, list):
+            assert isinstance(data, list)
+        else:
+            assert "partition" in data or "alerts" in data or "total" in data

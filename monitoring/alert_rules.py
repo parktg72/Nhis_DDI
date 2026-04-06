@@ -184,7 +184,7 @@ class AlertManager:
 
         Args:
             disagree_rate: 불일치 비율 (0.0 ~ 1.0)
-            partition: 파티션 문자열 (YYYY-MM-DD)
+            partition: 파티션 문자열 (YYYYMMDD 또는 YYYY-MM-DD)
             warning_threshold: WARNING 임계값 (기본 15%)
             critical_threshold: CRITICAL 임계값 (기본 30%)
 
