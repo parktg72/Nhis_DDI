@@ -229,3 +229,28 @@ def test_psm_warns_when_pooled_sd_is_nan(caplog):
 
     assert any('pooled_sd' in msg for msg in caplog.messages), \
         f"pooled_sd NaN/0 경고가 로그에 없음. 로그: {caplog.messages}"
+
+
+def test_hana_connect_importerror_mentions_requirements_hana(monkeypatch):
+    """hdbcli 미설치 시 ImportError 메시지에 requirements-hana.txt 가 포함된다."""
+    import builtins
+    import db_connector
+
+    storage = db_connector.HANAConnector(
+        host='localhost', port=39015, user='test', password='test'
+    )
+
+    original_import = builtins.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if name == 'hdbcli':
+            raise ImportError("No module named 'hdbcli'")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+
+    with pytest.raises(ImportError) as exc_info:
+        storage.connect()
+
+    assert 'requirements-hana.txt' in str(exc_info.value), \
+        f"ImportError 메시지에 requirements-hana.txt 가 없음: {exc_info.value}"
