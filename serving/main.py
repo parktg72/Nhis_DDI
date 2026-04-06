@@ -12,6 +12,8 @@ FastAPI 애플리케이션 진입점
   LOG_LEVEL       : 로그 레벨 (기본: INFO)
   ADMIN_API_KEY   : /admin/reload 인증 키 (미설정 시 엔드포인트 비활성화)
   MODEL_DIR       : 모델 핫스왑 허용 디렉토리 (기본: /app/models)
+  DDI_METRICS_JSONL_PATH : 메트릭 jsonl 파일 경로 (기본: /app/data/monitoring/metrics_live.jsonl)
+  DDI_METRICS_JSONL_LOCK_TIMEOUT : 락 타임아웃(초) (기본: 5.0)
 """
 from __future__ import annotations
 
@@ -24,7 +26,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from serving.middleware import RequestLoggingMiddleware
 from serving.predictor import init_predictor
-from serving.routers import health, predict
+from serving.routers import health, predict, metrics as metrics_router
+from monitoring.metrics_writer import init_metrics_writer
 from config import settings as _settings
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,6 +60,11 @@ async def lifespan(app: FastAPI):
         cyp_matrix_path=str(_settings.CYP_MATRIX_PATH),
     )
     logger.info("예측기 초기화 완료")
+    init_metrics_writer(
+        path=_settings.METRICS_JSONL_PATH,
+        lock_timeout=_settings.METRICS_JSONL_LOCK_TIMEOUT,
+    )
+    logger.info("MetricsWriter 초기화 완료: %s", _settings.METRICS_JSONL_PATH)
     yield
     logger.info("서버 종료")
 
@@ -104,6 +112,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(predict.router)
+app.include_router(metrics_router.router)
 
 
 @app.get("/", include_in_schema=False)
