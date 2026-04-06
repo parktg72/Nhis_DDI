@@ -131,3 +131,30 @@ class TestMetricsEndpoint:
         data = resp.json()
         assert "records" in data
         assert "count" in data
+
+
+class TestPipelineDriftReference:
+    def test_save_drift_reference_creates_pkl(self, tmp_path):
+        """_save_drift_reference() → drift_reference.pkl 생성 및 로드 가능."""
+        import numpy as np
+        import pandas as pd
+        train_df = pd.DataFrame({
+            "drug_count": np.random.randint(1, 20, 100),
+            "ddi_count": np.random.randint(0, 5, 100),
+            "label": np.random.randint(0, 2, 100),
+        })
+        drift_ref_path = tmp_path / "drift_reference.pkl"
+
+        from scripts.train.pipeline import TrainPipeline
+        pipeline = TrainPipeline.__new__(TrainPipeline)
+        # optional 파라미터로 경로 직접 전달 (settings 패치 불필요)
+        pipeline._save_drift_reference(train_df, drift_reference_path=drift_ref_path)
+
+        assert drift_ref_path.exists()
+        from monitoring.drift_detector import DriftDetector
+        loaded = DriftDetector.load(str(drift_ref_path))
+        assert loaded._fitted
+        assert "drug_count" in loaded._reference
+        assert "ddi_count" in loaded._reference
+        # label 컬럼은 제외됨
+        assert "label" not in loaded._reference

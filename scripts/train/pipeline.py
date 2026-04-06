@@ -157,6 +157,14 @@ class TrainPipeline:
             result.model_path = str(model_path)
             tracker.log_artifact(model_path, "model")
 
+            # ── DriftDetector 기준 분포 저장 ──────────────────────────────
+            try:
+                import pandas as pd
+                train_df_for_drift = pd.DataFrame(dataset.X_train, columns=dataset.feature_names)
+                self._save_drift_reference(train_df_for_drift)
+            except Exception:
+                logger.warning("DriftDetector 기준 분포 저장 실패 — 학습은 계속", exc_info=True)
+
             # ── Step 7: 피처 중요도 ───────────────────────────────────────
             imp_df = trainer.feature_importance_df(dataset.feature_names)
             if imp_df is not None:
@@ -172,6 +180,32 @@ class TrainPipeline:
         result.elapsed_seconds = time.perf_counter() - t0
         result.print_summary()
         return result
+
+    def _save_drift_reference(self, train_df, drift_reference_path=None) -> None:
+        """DriftDetector 기준 분포를 학습 데이터(train split)로 fit 후 저장.
+
+        label, patient_id, split 컬럼은 피처에서 제외한다.
+        배포 이전에 호출되어야 한다.
+
+        Args:
+            train_df: 학습 분할 DataFrame
+            drift_reference_path: 저장 경로 오버라이드 (테스트용; None이면 settings.DRIFT_REFERENCE_PATH 사용)
+        """
+        from monitoring.drift_detector import DriftDetector
+        from config import settings as _s
+
+        path = Path(drift_reference_path) if drift_reference_path is not None else _s.DRIFT_REFERENCE_PATH
+        exclude_cols = {"label", "patient_id", "split"}
+        feature_cols = [c for c in train_df.columns if c not in exclude_cols]
+        if not feature_cols:
+            logger.warning("DriftDetector fit 대상 피처가 없음 — 기준 분포 저장 건너뜀")
+            return
+
+        detector = DriftDetector()
+        detector.fit(train_df[feature_cols])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        detector.save(str(path))
+        logger.info("DriftDetector 기준 분포 저장 완료: %s (%d 피처)", path, len(feature_cols))
 
     def _run_gat_training(self, trainer, dataset) -> None:
         """ensemble_gat: GAT 서브모델 훈련 + 가중치 최적화."""
