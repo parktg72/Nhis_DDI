@@ -471,6 +471,15 @@ class StatisticalAnalyzer:
         d = d.dropna()
         d = d[d['follow_up_years'] > 0]
 
+        _min_rows = int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30))
+        _min_events = int(STUDY_SETTINGS.get('MIN_EVENTS', 10))
+        if len(d) < _min_rows or int(d['dementia_event'].sum()) < _min_events:
+            logger.warning(
+                "run_interaction: 데이터 부족 — 행 수 %d (최소 %d), 이벤트 수 %d (최소 %d) — 분석 스킵",
+                len(d), _min_rows, int(d['dementia_event'].sum()), _min_events,
+            )
+            return None
+
         try:
             cph = CoxPHFitter()
             cph.fit(d, duration_col='follow_up_years', event_col='dementia_event')
