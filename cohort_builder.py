@@ -476,7 +476,8 @@ class CohortBuilder:
         """6단계 코호트 파이프라인 실행.
 
         각 단계는 duckdb.Error 발생 시 1회 재시도 후 CohortStepError를 발생시킨다.
-        단계 결과가 0건이어도 CohortStepError를 발생시켜 후속 단계 실행을 막는다.
+        단계 결과가 0건이면 CohortStepError를 발생시켜 후속 단계 실행을 막는다.
+        예외: Step 3(dm_medications)는 T2DM_NOMED 코호트에서 0건이 정상이므로 허용.
         """
         results = {}
 

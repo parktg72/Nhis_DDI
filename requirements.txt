@@ -20,6 +20,10 @@ scikit-learn>=1.4.0
 # --- Visualization ---
 matplotlib>=3.8.4
 
+# --- Optional: SAP HANA DB 연결 ---
+# SAP HANA 서버에 접속하려면 별도 설치 필요:
+#   pip install -r requirements-hana.txt
+
 # --- System ---
 psutil>=5.9.8
 
