@@ -505,7 +505,7 @@ class TestAlertRulesDisagree:
         alerts = manager.evaluate_rule_ml_disagree(0.10, "2026-04-06")
         assert len(alerts) == 0
 
-    def test_warning_at_warning_threshold(self, manager):
+    def test_warning_above_warning_threshold(self, manager):
         from monitoring.alert_rules import AlertSeverity, AlertType
         alerts = manager.evaluate_rule_ml_disagree(0.20, "2026-04-06")
         assert len(alerts) == 1
@@ -513,7 +513,7 @@ class TestAlertRulesDisagree:
         assert alerts[0].alert_type == AlertType.RULE_ML_DISAGREE
         assert alerts[0].partition == "2026-04-06"
 
-    def test_critical_at_critical_threshold(self, manager):
+    def test_critical_above_critical_threshold(self, manager):
         from monitoring.alert_rules import AlertSeverity, AlertType
         alerts = manager.evaluate_rule_ml_disagree(0.35, "2026-04-06")
         assert len(alerts) == 1
@@ -539,3 +539,21 @@ class TestAlertRulesDisagree:
         )
         types = [a.alert_type for a in alerts]
         assert AlertType.RULE_ML_DISAGREE in types
+
+    def test_warning_at_exact_warning_threshold(self, manager):
+        from monitoring.alert_rules import AlertSeverity
+        alerts = manager.evaluate_rule_ml_disagree(0.15, "2026-04-06")
+        assert len(alerts) == 1
+        assert alerts[0].severity == AlertSeverity.WARNING
+
+    def test_critical_at_exact_critical_threshold(self, manager):
+        from monitoring.alert_rules import AlertSeverity
+        alerts = manager.evaluate_rule_ml_disagree(0.30, "2026-04-06")
+        assert len(alerts) == 1
+        assert alerts[0].severity == AlertSeverity.CRITICAL
+
+    def test_evaluate_all_zero_disagree_rate_no_disagree_alert(self, manager):
+        from monitoring.alert_rules import AlertType
+        alerts = manager.evaluate_all(partition="2026-04-06", disagree_rate=0.0)
+        types = [a.alert_type for a in alerts]
+        assert AlertType.RULE_ML_DISAGREE not in types

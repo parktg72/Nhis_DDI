@@ -244,8 +244,7 @@ class AlertManager:
             alerts += self.evaluate_performance(snapshots, history)
         if n_new_ddi_rules > 0:
             alerts += self.evaluate_ddi_db_update(partition, n_new_ddi_rules)
-        if disagree_rate > 0.0:
-            alerts += self.evaluate_rule_ml_disagree(disagree_rate, partition)
+        alerts += self.evaluate_rule_ml_disagree(disagree_rate, partition)
         return alerts
 
     def save_alerts(self, alerts: list[Alert], partition: str) -> Optional[str]:
