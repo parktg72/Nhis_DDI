@@ -156,5 +156,24 @@ class TestPipelineDriftReference:
         assert loaded._fitted
         assert "drug_count" in loaded._reference
         assert "ddi_count" in loaded._reference
+        assert set(loaded._reference.keys()) == {"drug_count", "ddi_count"}
         # label 컬럼은 제외됨
         assert "label" not in loaded._reference
+
+    def test_save_drift_reference_skips_when_no_features(self, tmp_path):
+        """label/patient_id/split 외 피처가 없으면 파일 미생성."""
+        import pandas as pd
+        # DataFrame with ONLY excluded columns
+        train_df = pd.DataFrame({
+            "label": [0, 1, 0],
+            "patient_id": ["P001", "P002", "P003"],
+            "split": ["train", "train", "train"],
+        })
+        drift_ref_path = tmp_path / "drift_reference.pkl"
+
+        from scripts.train.pipeline import TrainPipeline
+        pipeline = TrainPipeline.__new__(TrainPipeline)
+        pipeline._save_drift_reference(train_df, drift_reference_path=drift_ref_path)
+
+        # No file should be created when no feature columns remain
+        assert not drift_ref_path.exists()
