@@ -66,3 +66,9 @@ CYP_MATRIX_PATH = Path(os.environ.get(
 DRUG_INDEX_PARQUET = Path(os.environ.get(
     "DDI_DRUG_INDEX_PATH", "/app/data/processed/drug_name_index.parquet"
 ))
+
+# ── 모니터링 ────────────────────────────────────────────────────────────────────
+MONITORING_DIR             = Path(os.environ.get("DDI_MONITORING_DIR",        "/app/data/monitoring"))
+METRICS_JSONL_PATH         = Path(os.environ.get("DDI_METRICS_JSONL_PATH",    "/app/data/monitoring/metrics_live.jsonl"))
+DRIFT_REFERENCE_PATH       = Path(os.environ.get("DDI_DRIFT_REFERENCE_PATH",  "/app/models/current/drift_reference.pkl"))
+METRICS_JSONL_LOCK_TIMEOUT = float(os.environ.get("DDI_METRICS_JSONL_LOCK_TIMEOUT", "5.0"))
