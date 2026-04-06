@@ -15,6 +15,11 @@ import duckdb
 import pandas as pd
 from pathlib import Path
 
+import sys
+from pathlib import Path as _Path
+
+_BASE_DIR = _Path(sys.executable).parent if getattr(sys, 'frozen', False) else _Path(__file__).parent
+
 from config import DUCKDB_SETTINGS, EXAM_STRUCTURE
 from memory_manager import mem_manager, chunk_controller
 
@@ -189,12 +194,14 @@ def _widen_decimal_columns(storage, table_name):
 class DuckDBStorage:
     """DuckDB 기반 디스크 저장소"""
 
-    def __init__(self, db_path='./nhis_analysis.duckdb'):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            db_path = str(_BASE_DIR / 'nhis_analysis.duckdb')
         self.db_path = db_path
         self.conn = None
 
     def connect(self):
-        temp_dir = DUCKDB_SETTINGS.get('TEMP_DIRECTORY', './temp_duckdb')
+        temp_dir = DUCKDB_SETTINGS.get('TEMP_DIRECTORY', str(_BASE_DIR / 'temp_duckdb'))
         os.makedirs(temp_dir, exist_ok=True)
         self.conn = duckdb.connect(self.db_path)
         mem_limit = DUCKDB_SETTINGS['MEMORY_LIMIT']

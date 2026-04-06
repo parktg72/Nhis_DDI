@@ -256,9 +256,11 @@ APP_SETTINGS = {
 # ============================================================
 
 import json
+import sys
 from pathlib import Path
 
-_SETTINGS_FILE = Path('./yod_settings.json')
+_BASE_DIR = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
+_SETTINGS_FILE = _BASE_DIR / 'yod_settings.json'
 
 _SAVEABLE_SETTINGS = {
     'STUDY_SETTINGS': STUDY_SETTINGS,
