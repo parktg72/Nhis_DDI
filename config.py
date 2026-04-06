@@ -212,7 +212,7 @@ STUDY_SETTINGS = {
 DUCKDB_SETTINGS = {
     'MEMORY_LIMIT': '4GB',
     'THREADS': 4,
-    'TEMP_DIRECTORY': './temp_duckdb',
+    'TEMP_DIRECTORY': None,  # None → db_connector.py 가 _BASE_DIR 기준으로 해결
 }
 
 # ============================================================

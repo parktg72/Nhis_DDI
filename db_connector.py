@@ -199,7 +199,8 @@ class DuckDBStorage:
         self.conn = None
 
     def connect(self):
-        temp_dir = DUCKDB_SETTINGS.get('TEMP_DIRECTORY', str(_BASE_DIR / 'temp_duckdb'))
+        _raw_temp = DUCKDB_SETTINGS.get('TEMP_DIRECTORY')
+        temp_dir = str(_BASE_DIR / 'temp_duckdb') if not _raw_temp else _raw_temp
         os.makedirs(temp_dir, exist_ok=True)
         self.conn = duckdb.connect(self.db_path)
         mem_limit = DUCKDB_SETTINGS['MEMORY_LIMIT']
