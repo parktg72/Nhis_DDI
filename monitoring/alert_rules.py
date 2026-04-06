@@ -33,6 +33,7 @@ class AlertType(str, Enum):
     CONSECUTIVE_DROP   = "consecutive_drop"
     DDI_DB_UPDATE      = "ddi_db_update"
     SCHEDULED_RETRAIN  = "scheduled_retrain"
+    RULE_ML_DISAGREE   = "rule_ml_disagree"
 
 
 @dataclass
@@ -172,6 +173,48 @@ class AlertManager:
 
         return alerts
 
+    def evaluate_rule_ml_disagree(
+        self,
+        disagree_rate: float,
+        partition: str,
+        warning_threshold: float = 0.15,
+        critical_threshold: float = 0.30,
+    ) -> list[Alert]:
+        """Rule/ML 불일치율 평가.
+
+        Args:
+            disagree_rate: 불일치 비율 (0.0 ~ 1.0)
+            partition: 파티션 문자열 (YYYY-MM-DD)
+            warning_threshold: WARNING 임계값 (기본 15%)
+            critical_threshold: CRITICAL 임계값 (기본 30%)
+
+        Returns:
+            알림 리스트 (0 ~ 1건)
+        """
+        if disagree_rate >= critical_threshold:
+            return [Alert(
+                alert_type=AlertType.RULE_ML_DISAGREE,
+                severity=AlertSeverity.CRITICAL,
+                message=(
+                    f"Rule/ML 불일치율 {disagree_rate:.1%} "
+                    f"(CRITICAL 임계값 {critical_threshold:.0%} 초과)"
+                ),
+                partition=partition,
+                detail={"disagree_rate": disagree_rate, "threshold": critical_threshold},
+            )]
+        if disagree_rate >= warning_threshold:
+            return [Alert(
+                alert_type=AlertType.RULE_ML_DISAGREE,
+                severity=AlertSeverity.WARNING,
+                message=(
+                    f"Rule/ML 불일치율 {disagree_rate:.1%} "
+                    f"(WARNING 임계값 {warning_threshold:.0%} 초과)"
+                ),
+                partition=partition,
+                detail={"disagree_rate": disagree_rate, "threshold": warning_threshold},
+            )]
+        return []
+
     def evaluate_ddi_db_update(self, partition: str, n_new_rules: int) -> list[Alert]:
         """DDI DB 업데이트 감지 알림."""
         if n_new_rules == 0:
@@ -191,6 +234,7 @@ class AlertManager:
         history=None,
         partition: str = "",
         n_new_ddi_rules: int = 0,
+        disagree_rate: float = 0.0,
     ) -> list[Alert]:
         """전체 알림 규칙 일괄 평가."""
         alerts: list[Alert] = []
@@ -200,6 +244,8 @@ class AlertManager:
             alerts += self.evaluate_performance(snapshots, history)
         if n_new_ddi_rules > 0:
             alerts += self.evaluate_ddi_db_update(partition, n_new_ddi_rules)
+        if disagree_rate > 0.0:
+            alerts += self.evaluate_rule_ml_disagree(disagree_rate, partition)
         return alerts
 
     def save_alerts(self, alerts: list[Alert], partition: str) -> Optional[str]:
