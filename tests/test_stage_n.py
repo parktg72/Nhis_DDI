@@ -98,3 +98,17 @@ def test_run_cox_raises_when_all_models_fail():
             mock_cox_cls.return_value.fit.side_effect = ValueError("강제 실패")
             with _pytest.raises(RuntimeError, match="모든 Cox 모델"):
                 analyzer.run_cox(df_prepared=df)
+
+
+def test_psm_caliper_respects_study_settings():
+    """PSM caliper 는 STUDY_SETTINGS['PSM_CALIPER'] 를 사용해야 한다."""
+    from config import STUDY_SETTINGS
+    assert 'PSM_CALIPER' in STUDY_SETTINGS, \
+        "STUDY_SETTINGS 에 PSM_CALIPER 키가 없음"
+    assert 'PSM_SMD_THRESHOLD' in STUDY_SETTINGS, \
+        "STUDY_SETTINGS 에 PSM_SMD_THRESHOLD 키가 없음"
+    assert 'PH_ALPHA' in STUDY_SETTINGS, \
+        "STUDY_SETTINGS 에 PH_ALPHA 키가 없음"
+    assert STUDY_SETTINGS['PH_ALPHA'] == 0.05
+    assert STUDY_SETTINGS['PSM_CALIPER'] == 0.2
+    assert STUDY_SETTINGS['PSM_SMD_THRESHOLD'] == 0.1

@@ -273,7 +273,8 @@ class StatisticalAnalyzer:
                 try:
                     ph_test = proportional_hazard_test(cph, df_model, time_transform='rank')
                     result_entry['ph_test'] = ph_test.summary
-                    violated = ph_test.summary[ph_test.summary['p'] < 0.05]
+                    _ph_alpha = float(STUDY_SETTINGS.get('PH_ALPHA', 0.05))
+                    violated = ph_test.summary[ph_test.summary['p'] < _ph_alpha]
                     if not violated.empty:
                         logger.warning(f"Cox {mname}: PH 가정 위반 변수 — "
                                      f"{', '.join(violated.index.tolist())}")
@@ -368,7 +369,7 @@ class StatisticalAnalyzer:
         lps_c = np.log(control['ps'] / (1 - control['ps']))
         # caliper: 0.2 × pooled SD of logit(PS) — treated/control 합산 분산 기준
         pooled_sd = np.sqrt((lps_t.var() + lps_c.var()) / 2)
-        caliper = 0.2 * pooled_sd
+        caliper = float(STUDY_SETTINGS.get('PSM_CALIPER', 0.2)) * pooled_sd
 
         if len(control) < 1:
             msg = f"PSM 스킵: control 수({len(control)})가 0이라 매칭 불가"
@@ -421,7 +422,7 @@ class StatisticalAnalyzer:
             ps2 = np.sqrt((ts**2 + cs**2) / 2)
             smd = abs(tm - cm) / (ps2 if ps2 > 0 else 1)
             balance[col] = {'treated_mean': round(tm, 4), 'control_mean': round(cm, 4),
-                           'smd': round(smd, 4), 'balanced': smd < 0.1}
+                           'smd': round(smd, 4), 'balanced': smd < float(STUDY_SETTINGS.get('PSM_SMD_THRESHOLD', 0.1))}
 
         # PSM 후 Cox
         psm_cox = {}

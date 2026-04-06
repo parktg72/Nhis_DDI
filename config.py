@@ -204,6 +204,9 @@ STUDY_SETTINGS = {
     'MIN_VALID_ROWS': 30,         # Cox 분석 최소 유효 행 수 (EPV ≥ 10 기준)
     'MIN_EVENTS': 10,             # Cox 분석 최소 이벤트 수 (EPV heuristic)
     'MIN_SUBGROUP_EVENTS': 5,     # 서브그룹/Fine-Gray 분석 최소 이벤트 수
+    'PH_ALPHA': 0.05,             # Cox PH 가정 검정 유의수준
+    'PSM_CALIPER': 0.2,           # PSM caliper = PSM_CALIPER × pooled logit(PS) SD
+    'PSM_SMD_THRESHOLD': 0.1,     # PSM 균형 판정 SMD 임계값
 }
 
 DUCKDB_SETTINGS = {
