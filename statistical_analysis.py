@@ -372,9 +372,9 @@ class StatisticalAnalyzer:
         lps_c = np.log(control['ps'] / (1 - control['ps']))
         # caliper: 0.2 × pooled SD of logit(PS) — treated/control 합산 분산 기준
         pooled_sd = np.sqrt((lps_t.var() + lps_c.var()) / 2)
-        if pooled_sd == 0:
-            logger.warning("PSM: pooled_sd = 0 — caliper = 0 이 되어 모든 매칭 거부됩니다 "
-                           "(treated/control logit(PS) 분산이 0, 데이터 다양성 부족)")
+        if pooled_sd == 0 or np.isnan(pooled_sd):
+            logger.warning("PSM: pooled_sd = 0 또는 NaN — caliper 가 무효화되어 모든 매칭 거부됩니다 "
+                           "(treated/control logit(PS) 분산 부족, 데이터 다양성 확인 필요)")
         caliper = float(STUDY_SETTINGS.get('PSM_CALIPER', 0.2)) * pooled_sd
 
         if len(control) < 1:

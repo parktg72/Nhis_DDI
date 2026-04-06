@@ -151,3 +151,81 @@ def test_run_cox_skips_model_with_insufficient_rows_continues_loop():
         f"InsufficientDataError 발생 model1 이 결과에 포함됨"
     assert len([k for k in result if k.startswith('model')]) >= 1, \
         f"model1 스킵 후 다른 모델이 실행되지 않음: {list(result.keys())}"
+
+
+def test_psm_warns_when_pooled_sd_is_nan(caplog):
+    """pooled_sd 가 NaN 이면 (단일 요소 treated/control) 경고 로그가 발생한다.
+
+    pd.Series([x]).var() = NaN (ddof=1) → np.sqrt(NaN/2) = NaN.
+    < 2명 조기 가드를 패치로 우회하여 pooled_sd NaN 경로를 직접 검증한다.
+    """
+    import logging
+    import pandas as pd
+    import numpy as np
+    from statistical_analysis import StatisticalAnalyzer
+    from unittest.mock import MagicMock
+
+    # treated=2명, control=2명 이지만 < 2 가드는 통과.
+    # predict_proba 는 그룹 내 동일 PS → var()=0 → pooled_sd=0 (NaN 아닌 0 경로도 동일 가드).
+    # NaN 경로 검증: 모듈 수준에서 np.sqrt 를 패치해 NaN 을 반환하게 한다.
+    df = pd.DataFrame({
+        'exposure_group': ['T1DM', 'T1DM', 'T2DM_OHA', 'T2DM_OHA'],
+        'is_t1dm':        [1, 1, 0, 0],
+        'is_t2dm_oha':    [0, 0, 1, 1],
+        'is_t2dm_insulin':[0, 0, 0, 0],
+        'is_t2dm_nomed':  [0, 0, 0, 0],
+        'age_at_index':   [50.0, 51.0, 55.0, 56.0],
+        'male':           [1, 1, 1, 1],
+        'income_q':       [5, 5, 5, 5],
+        'comor_hypertension':  [0, 0, 0, 0],
+        'comor_dyslipidemia':  [0, 0, 0, 0],
+        'dm_duration_years':   [3.0, 3.0, 3.0, 3.0],
+        'follow_up_years':     [1.0, 1.0, 1.0, 1.0],
+        'dementia_event':      [1, 0, 0, 0],
+        'ad_event':            [0, 0, 0, 0],
+        'vad_event':           [0, 0, 0, 0],
+    })
+    analyzer = StatisticalAnalyzer.__new__(StatisticalAnalyzer)
+    analyzer._cached_df = df
+    analyzer._sampling_info = None
+    analyzer.results = {}
+    analyzer.db_path = ':memory:'
+
+    mock_lr = MagicMock()
+    mock_lr.fit = MagicMock()
+    # 그룹 내 PS 동일 (treated=0.9, control=0.1) → var()=0 → pooled_sd=0
+    mock_lr.predict_proba = MagicMock(
+        return_value=np.array([[0.1, 0.9], [0.1, 0.9], [0.9, 0.1], [0.9, 0.1]])
+    )
+
+    # np.sqrt 를 패치해 NaN 을 반환 → pooled_sd NaN 경로 강제 실행
+    real_sqrt = np.sqrt
+
+    def patched_sqrt(x):
+        # pooled_sd 계산 시만 NaN 반환 (스칼라 0.0 입력)
+        if np.ndim(x) == 0 and float(x) == 0.0:
+            return float('nan')
+        return real_sqrt(x)
+
+    with patch('statistical_analysis.STUDY_SETTINGS',
+               {'MIN_VALID_ROWS': 1, 'MIN_EVENTS': 1, 'SAMPLING_SEED': 42,
+                'PSM_RATIO': 1, 'PSM_CALIPER': 0.2, 'PSM_SMD_THRESHOLD': 0.1,
+                'PH_ALPHA': 0.05}):
+        with patch('gpu_accelerator.is_gpu_enabled', return_value=False):
+            with patch('gpu_accelerator.get_logistic_regression', return_value=mock_lr):
+                with patch('gpu_accelerator.get_nearest_neighbors') as mock_nn_cls:
+                    mock_nn_cls.return_value.fit = MagicMock()
+                    mock_nn_cls.return_value.kneighbors = MagicMock(
+                        return_value=(np.array([[0.0], [0.0]]), np.array([[0], [1]]))
+                    )
+                    with patch('statistical_analysis.np') as mock_np:
+                        mock_np.sqrt = patched_sqrt
+                        mock_np.log = np.log
+                        mock_np.clip = np.clip
+                        mock_np.isnan = np.isnan
+                        mock_np.nan = np.nan
+                        with caplog.at_level(logging.WARNING, logger='statistical_analysis'):
+                            analyzer.run_psm(df_prepared=df)
+
+    assert any('pooled_sd' in msg for msg in caplog.messages), \
+        f"pooled_sd NaN/0 경고가 로그에 없음. 로그: {caplog.messages}"
