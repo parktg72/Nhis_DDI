@@ -148,6 +148,17 @@ class TestMetricsWriterAppend:
         lines = path.read_text().strip().splitlines()
         assert len(lines) == n_threads * n_records
 
+    def test_append_lock_timeout_raises(self, tmp_path):
+        """append() lock 타임아웃 시 filelock.Timeout 예외 전파."""
+        from monitoring.metrics_writer import MetricsWriter
+        from filelock import FileLock, Timeout
+        path = tmp_path / "metrics.jsonl"
+        w = MetricsWriter(path=path, lock_timeout=0.001)
+        lock = FileLock(str(path) + ".lock")
+        with lock:
+            with pytest.raises(Timeout):
+                w.append({"x": 1})
+
 
 class TestMetricsWriterReadRecent:
     def _make_record(self, hours_ago: float, **kwargs) -> dict:
@@ -703,6 +714,7 @@ class TestPredictMetricsWiring:
         monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key")
 
         # predictor mock
+        from datetime import date
         from unittest.mock import MagicMock, patch
         from serving.schemas import PredictResponse, RiskLevel
         mock_pred = MagicMock()
@@ -711,10 +723,11 @@ class TestPredictMetricsWiring:
             risk_level=RiskLevel.RED,
             rule_level=RiskLevel.RED,
             ml_level=RiskLevel.YELLOW,
-            drugs=["A", "B"],
-            interactions=[],
-            rule_triggered=True,
-            explanation="테스트",
+            drug_count=2,
+            ddi_alerts=[],
+            risk_reasons=[],
+            intervention="즉각 개입 (당일 약사 면담 필요)",
+            reference_date=date.today(),
         )
 
         import importlib
@@ -733,7 +746,10 @@ class TestPredictMetricsWiring:
         client, jsonl_path = client_with_writer
         resp = client.post("/predict", json={
             "patient_id": "P001",
-            "drug_codes": ["A001", "B002"],
+            "drugs": [
+                {"edi_code": "A001", "total_days": 30},
+                {"edi_code": "B002", "total_days": 30},
+            ],
         })
         # 예측 성공 여부와 무관하게 jsonl 기록 확인
         if jsonl_path.exists():
@@ -749,16 +765,18 @@ class TestPredictMetricsWiring:
         from unittest.mock import MagicMock, patch
         from serving.schemas import PredictResponse, RiskLevel
 
+        from datetime import date
         mock_pred = MagicMock()
         mock_pred.predict.return_value = PredictResponse(
             patient_id="P001",
             risk_level=RiskLevel.GREEN,
             rule_level=RiskLevel.GREEN,
             ml_level=None,
-            drugs=["A"],
-            interactions=[],
-            rule_triggered=False,
-            explanation="",
+            drug_count=1,
+            ddi_alerts=[],
+            risk_reasons=[],
+            intervention="분기 1회 복약 상담",
+            reference_date=date.today(),
         )
 
         mock_writer = MagicMock()
@@ -772,7 +790,7 @@ class TestPredictMetricsWiring:
             client = TestClient(app)
             resp = client.post("/predict", json={
                 "patient_id": "P001",
-                "drug_codes": ["A001"],
+                "drugs": [{"edi_code": "A001", "total_days": 30}],
             })
         # MetricsWriter 실패해도 예측 응답 정상
         assert resp.status_code == 200
@@ -780,16 +798,19 @@ class TestPredictMetricsWiring:
 
 class TestMetricsEndpoint:
     def test_get_metrics_without_admin_key_returns_error(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("ADMIN_API_KEY", "secret-key")
+        import serving.routers.health as health_router
+        # _ADMIN_KEY는 모듈 로드 시 캐시 → monkeypatch.setenv 무효; 직접 패치
+        monkeypatch.setattr(health_router, "_ADMIN_KEY", "secret-key")
         from monitoring.metrics_writer import init_metrics_writer
         init_metrics_writer(path=tmp_path / "metrics.jsonl")
         from serving.main import app
         client = TestClient(app)
-        resp = client.get("/metrics")
-        assert resp.status_code in (401, 403, 422, 503)
+        resp = client.get("/metrics")  # X-Admin-Key 헤더 없음
+        assert resp.status_code in (401, 422, 503)
 
     def test_get_metrics_with_correct_admin_key(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("ADMIN_API_KEY", "secret-key")
+        import serving.routers.health as health_router
+        monkeypatch.setattr(health_router, "_ADMIN_KEY", "secret-key")
         jsonl_path = tmp_path / "metrics.jsonl"
         from monitoring.metrics_writer import init_metrics_writer
         init_metrics_writer(path=jsonl_path)
@@ -860,9 +881,10 @@ async def predict(req: PredictRequest):
         raise HTTPException(status_code=500, detail="내부 서버 오류: 예측 처리 실패")
 
     try:
+        _now = datetime.now(timezone.utc)  # 한 번만 호출 — 자정 경계 불일치 방지
         get_metrics_writer().append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "partition": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "timestamp": _now.isoformat(),
+            "partition": _now.strftime("%Y-%m-%d"),
             "patient_id": req.patient_id,
             "risk_level": result.risk_level.value,
             "rule_level": result.rule_level.value if result.rule_level else None,
@@ -903,9 +925,10 @@ async def predict(req: PredictRequest):
             single_latency_ms = (time.perf_counter() - t_single) * 1000
             results.append(single_result)
             try:
+                _now = datetime.now(timezone.utc)  # 자정 경계 불일치 방지
                 get_metrics_writer().append({
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "partition": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    "timestamp": _now.isoformat(),
+                    "partition": _now.strftime("%Y-%m-%d"),
                     "patient_id": single_req.patient_id,
                     "risk_level": single_result.risk_level.value,
                     "rule_level": single_result.rule_level.value if single_result.rule_level else None,
@@ -915,7 +938,7 @@ async def predict(req: PredictRequest):
                         if single_result.rule_level and single_result.ml_level else False
                     ),
                     "latency_ms": round(single_latency_ms, 1),
-                    "source": "api",
+                    "source": "batch",  # predict_batch 경유는 "batch" 태그
                 })
             except Exception:
                 logger.warning("배치 메트릭 기록 실패 (patient_id=%s)", single_req.patient_id)
@@ -972,8 +995,8 @@ class TestPipelineDriftReference:
         })
         drift_ref_path = tmp_path / "drift_reference.pkl"
 
-        from scripts.train.pipeline import TrainingPipeline
-        pipeline = TrainingPipeline.__new__(TrainingPipeline)
+        from scripts.train.pipeline import TrainPipeline
+        pipeline = TrainPipeline.__new__(TrainPipeline)
         # optional 파라미터로 경로 직접 전달 (settings 패치 불필요)
         pipeline._save_drift_reference(train_df, drift_reference_path=drift_ref_path)
 
@@ -997,7 +1020,7 @@ Expected: `AttributeError: type object 'TrainingPipeline' has no attribute '_sav
 
 - [ ] **Step 3: _save_drift_reference() 메서드 추가**
 
-`scripts/train/pipeline.py`의 `TrainingPipeline` 클래스에서 `_run_gat_training()` 메서드 직전에 삽입한다:
+`scripts/train/pipeline.py`의 `TrainPipeline` 클래스에서 `_run_gat_training()` 메서드 직전에 삽입한다:
 
 ```python
     def _save_drift_reference(self, train_df, drift_reference_path=None) -> None:
@@ -1029,7 +1052,7 @@ Expected: `AttributeError: type object 'TrainingPipeline' has no attribute '_sav
 
 - [ ] **Step 4: run() 메서드에서 _save_drift_reference() 호출**
 
-`run()` 메서드에서 **Step 6 (모델 저장) 직후**, `result.model_path = str(model_path)` 줄 바로 다음에 추가:
+실제 `TrainDataset`은 `X_train` (ndarray)와 `feature_names` (list)를 가진다. `run()` 메서드에서 **Step 6 (모델 저장) 직후**, `result.model_path = str(model_path)` 줄 바로 다음에 추가:
 
 ```python
             result.model_path = str(model_path)
@@ -1037,27 +1060,11 @@ Expected: `AttributeError: type object 'TrainingPipeline' has no attribute '_sav
 
             # ── Step 6b: DriftDetector 기준 분포 저장 ────────────────────
             try:
-                self._save_drift_reference(dataset.train)
+                import pandas as pd
+                train_df_for_drift = pd.DataFrame(dataset.X_train, columns=dataset.feature_names)
+                self._save_drift_reference(train_df_for_drift)
             except Exception:
                 logger.warning("DriftDetector 기준 분포 저장 실패 — 학습은 계속", exc_info=True)
-```
-
-`dataset.train`이 학습 분할 DataFrame이다. 프로젝트에서 `dataset.train`의 실제 속성명을 확인해야 한다.
-
-- [ ] **Step 4b: dataset 속성명 확인**
-
-```bash
-grep -n "class.*Dataset\|self\.train\|\.train\b\|train_df\|X_train" scripts/train/trainer.py scripts/train/pipeline.py | head -20
-```
-
-`dataset.X_train`, `dataset.train_df`, 또는 다른 이름일 수 있다. 확인 후 올바른 속성명으로 교체.
-
-만약 `dataset.X_train`이고 feature names가 `dataset.feature_names`이면:
-
-```python
-import pandas as pd
-train_df_for_drift = pd.DataFrame(dataset.X_train, columns=dataset.feature_names)
-self._save_drift_reference(train_df_for_drift)
 ```
 
 - [ ] **Step 5: 테스트 실행**
@@ -1084,7 +1091,55 @@ git commit -m "feat: pipeline.py _save_drift_reference() — 학습 후 DriftDet
 
 - [ ] **Step 1: 실패하는 테스트 추가**
 
-`tests/test_integration/test_monitoring_pipeline.py`에 클래스 추가:
+`tests/test_integration/test_monitoring_pipeline.py` 파일 **상단** (import 블록 직후, 첫 번째 클래스 이전)에 Airflow mock 설정 추가:
+
+```python
+# ─────────────────────────────────────────────────────────────────────────────
+# Airflow Mock (미설치 환경 대응)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import sys, types
+
+def _ensure_airflow_mock():
+    if "airflow" in sys.modules:
+        return
+    airflow_mod = types.ModuleType("airflow")
+    class MockDAG:
+        def __init__(self, dag_id, **kwargs): self.dag_id = dag_id
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    airflow_mod.DAG = MockDAG
+    ops = types.ModuleType("airflow.operators")
+    python_mod = types.ModuleType("airflow.operators.python")
+    empty_mod = types.ModuleType("airflow.operators.empty")
+    class MockOperator:
+        def __init__(self, task_id, python_callable=None, **kwargs):
+            self.task_id = task_id
+            self.python_callable = python_callable
+        def __rshift__(self, other): return other
+        def __lshift__(self, other): return other
+    python_mod.PythonOperator = MockOperator
+    empty_mod.EmptyOperator = MockOperator
+    sensors = types.ModuleType("airflow.sensors")
+    ext_mod = types.ModuleType("airflow.sensors.external_task")
+    ext_mod.ExternalTaskSensor = MockOperator
+    utils = types.ModuleType("airflow.utils")
+    dates = types.ModuleType("airflow.utils.dates")
+    from datetime import datetime as _dt
+    dates.days_ago = lambda n: _dt(2026, 1, 1)
+    utils.dates = dates
+    for name, mod in [
+        ("airflow", airflow_mod), ("airflow.operators", ops),
+        ("airflow.operators.python", python_mod), ("airflow.operators.empty", empty_mod),
+        ("airflow.sensors", sensors), ("airflow.sensors.external_task", ext_mod),
+        ("airflow.utils", utils), ("airflow.utils.dates", dates),
+    ]:
+        sys.modules[name] = mod
+
+_ensure_airflow_mock()
+```
+
+그리고 클래스 추가:
 
 ```python
 class TestDAGDriftAndAlerts:
@@ -1108,11 +1163,12 @@ class TestDAGDriftAndAlerts:
         detector.save(str(drift_ref_path))
 
         # predictions_{partition}.parquet 생성 (drug_count, ddi_count 포함)
-        partition = "2026-04-06"
+        # 기존 DAG는 YYYYMMDD 포맷 사용
+        partition = "20260406"
         pred_path = tmp_path / f"predictions_{partition}.parquet"
         pred_df = pd.DataFrame({
             "patient_id": [f"P{i:03d}" for i in range(50)],
-            "risk_level": ["RED"] * 10 + ["YELLOW"] * 20 + ["GREEN"] * 20,
+            "risk_level": ["Red"] * 10 + ["Yellow"] * 20 + ["Green"] * 20,  # RiskLevel.value는 타이틀케이스
             "drug_count": np.random.randint(1, 20, 50),
             "ddi_count": np.random.randint(0, 5, 50),
             "rule_triggered": [True] * 10 + [False] * 40,
@@ -1127,12 +1183,12 @@ class TestDAGDriftAndAlerts:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "partition": partition,
                 "patient_id": f"P{i:03d}",
-                "risk_level": "RED",
-                "rule_level": "RED",
-                "ml_level": "YELLOW" if i < 2 else "RED",
+                "risk_level": "Red",
+                "rule_level": "Red",
+                "ml_level": "Yellow" if i < 2 else "Red",
                 "disagree": i < 2,
                 "latency_ms": 10.0,
-                "source": "api",
+                "source": "batch",
             })
 
         return {
@@ -1150,11 +1206,11 @@ class TestDAGDriftAndAlerts:
         # _detect_drift 내부에서 `from config import settings as _s` 패턴으로 접근하므로
         # setattr으로 모듈 속성 패치 가능
         monkeypatch.setattr(_s, "DRIFT_REFERENCE_PATH", env["drift_ref_path"])
-        monkeypatch.setattr(_s, "PREDICTIONS_DIR", env["tmp_path"])
+        monkeypatch.setattr(_s, "PREDICTIONS_DIR", env["tmp_path"])  # predictions_20260406.parquet 위치
         monkeypatch.setattr(_s, "MONITORING_DIR", env["monitoring_dir"])
 
         from dags.ddi_batch_predict_dag import _detect_drift
-        _detect_drift(partition=env["partition"])
+        _detect_drift(partition=env["partition"])  # "20260406"
 
         drift_json = env["tmp_path"] / f"drift_{env['partition']}.json"
         assert drift_json.exists()
@@ -1170,7 +1226,7 @@ class TestDAGDriftAndAlerts:
         monkeypatch.setattr(_s, "MONITORING_DIR", env["monitoring_dir"])
         monkeypatch.setattr(_s, "METRICS_JSONL_PATH", env["metrics_path"])
 
-        # 먼저 drift JSON을 수동 생성
+        # 먼저 drift JSON을 수동 생성 (partition은 YYYYMMDD 포맷)
         import json
         from pathlib import Path
         drift_json = env["tmp_path"] / f"drift_{partition}.json"
@@ -1185,11 +1241,11 @@ class TestDAGDriftAndAlerts:
                 {"feature": "ddi_count", "psi": 0.03, "status": "stable"},
             ],
         }))
+        alert_json = env["tmp_path"] / f"alerts_{partition}.json"
 
         from dags.ddi_batch_predict_dag import _generate_alerts
         _generate_alerts(partition=partition)
 
-        alert_json = env["tmp_path"] / f"alerts_{partition}.json"
         assert alert_json.exists()
 ```
 
@@ -1326,13 +1382,14 @@ def _generate_alerts(partition: str) -> None:
     t_detect_drift = PythonOperator(
         task_id="detect_drift",
         python_callable=_detect_drift,
-        op_kwargs={"partition": "{{ ds }}"},
+        # 기존 DAG가 YYYYMMDD 포맷으로 파티션을 생성하므로 XCom에서 가져옴
+        op_kwargs={"partition": "{{ ti.xcom_pull(key='partition', task_ids='get_partition') }}"},
     )
 
     t_generate_alerts = PythonOperator(
         task_id="generate_alerts",
         python_callable=_generate_alerts,
-        op_kwargs={"partition": "{{ ds }}"},
+        op_kwargs={"partition": "{{ ti.xcom_pull(key='partition', task_ids='get_partition') }}"},
     )
 ```
 
@@ -1641,9 +1698,6 @@ Expected: 모두 PASS
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
@@ -1655,15 +1709,14 @@ from hana_app.pages._monitoring_helpers import (
     load_recent_metrics,
     psi_status_label,
 )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 경로 설정
-# ─────────────────────────────────────────────────────────────────────────────
-
-METRICS_JSONL_PATH = Path(os.environ.get("DDI_METRICS_JSONL_PATH", "/app/data/monitoring/metrics_live.jsonl"))
-MONITORING_DIR     = Path(os.environ.get("DDI_MONITORING_DIR",     "/app/data/monitoring"))
-DRIFT_REFERENCE_PATH = Path(os.environ.get("DDI_DRIFT_REFERENCE_PATH", "/app/models/current/drift_reference.pkl"))
-SERVING_URL        = os.environ.get("DDI_SERVING_URL", "http://localhost:8000")
+# config.settings에서 가져옴 — os.environ.get 직접 사용 금지 (기본값 동기화)
+# SERVING_URL은 settings.SERVING_URL (DDI_SERVING_URL 환경변수)
+from config.settings import (
+    METRICS_JSONL_PATH,
+    MONITORING_DIR,
+    DRIFT_REFERENCE_PATH,
+    SERVING_URL,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 
