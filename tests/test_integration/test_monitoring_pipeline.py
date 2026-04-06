@@ -8,6 +8,49 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Airflow Mock (미설치 환경 대응)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import sys, types
+
+def _ensure_airflow_mock():
+    if "airflow" in sys.modules:
+        return
+    airflow_mod = types.ModuleType("airflow")
+    class MockDAG:
+        def __init__(self, dag_id, **kwargs): self.dag_id = dag_id
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    airflow_mod.DAG = MockDAG
+    ops = types.ModuleType("airflow.operators")
+    python_mod = types.ModuleType("airflow.operators.python")
+    empty_mod = types.ModuleType("airflow.operators.empty")
+    class MockOperator:
+        def __init__(self, task_id, python_callable=None, **kwargs):
+            self.task_id = task_id
+            self.python_callable = python_callable
+        def __rshift__(self, other): return other
+        def __lshift__(self, other): return other
+    python_mod.PythonOperator = MockOperator
+    empty_mod.EmptyOperator = MockOperator
+    sensors = types.ModuleType("airflow.sensors")
+    ext_mod = types.ModuleType("airflow.sensors.external_task")
+    ext_mod.ExternalTaskSensor = MockOperator
+    utils = types.ModuleType("airflow.utils")
+    dates = types.ModuleType("airflow.utils.dates")
+    from datetime import datetime as _dt
+    dates.days_ago = lambda n: _dt(2026, 1, 1)
+    utils.dates = dates
+    for name, mod in [
+        ("airflow", airflow_mod), ("airflow.operators", ops),
+        ("airflow.operators.python", python_mod), ("airflow.operators.empty", empty_mod),
+        ("airflow.sensors", sensors), ("airflow.sensors.external_task", ext_mod),
+        ("airflow.utils", utils), ("airflow.utils.dates", dates),
+    ]:
+        sys.modules[name] = mod
+
+_ensure_airflow_mock()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # predict → MetricsWriter 기록 검증
@@ -177,3 +220,108 @@ class TestPipelineDriftReference:
 
         # No file should be created when no feature columns remain
         assert not drift_ref_path.exists()
+
+
+class TestDAGDriftAndAlerts:
+    @pytest.fixture
+    def setup_drift_env(self, tmp_path):
+        """_detect_drift, _generate_alerts 테스트를 위한 환경 셋업."""
+        import numpy as np
+        import pandas as pd
+        from monitoring.drift_detector import DriftDetector
+        from monitoring.metrics_writer import MetricsWriter
+        from datetime import datetime, timezone
+
+        # drift_reference.pkl 생성
+        ref_df = pd.DataFrame({
+            "drug_count": np.random.randint(1, 20, 200),
+            "ddi_count": np.random.randint(0, 5, 200),
+        })
+        detector = DriftDetector()
+        detector.fit(ref_df)
+        drift_ref_path = tmp_path / "drift_reference.pkl"
+        detector.save(str(drift_ref_path))
+
+        # predictions_{partition}.parquet 생성 (drug_count, ddi_count 포함)
+        # 기존 DAG는 YYYYMMDD 포맷 사용
+        partition = "20260406"
+        pred_path = tmp_path / f"predictions_{partition}.parquet"
+        pred_df = pd.DataFrame({
+            "patient_id": [f"P{i:03d}" for i in range(50)],
+            "risk_level": ["Red"] * 10 + ["Yellow"] * 20 + ["Green"] * 20,
+            "drug_count": np.random.randint(1, 20, 50),
+            "ddi_count": np.random.randint(0, 5, 50),
+            "rule_triggered": [True] * 10 + [False] * 40,
+        })
+        pred_df.to_parquet(pred_path, index=False)
+
+        # metrics_live.jsonl 생성 (Rule/ML 불일치 20%)
+        metrics_path = tmp_path / "metrics_live.jsonl"
+        writer = MetricsWriter(path=metrics_path)
+        for i in range(10):
+            writer.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "partition": partition,
+                "patient_id": f"P{i:03d}",
+                "risk_level": "Red",
+                "rule_level": "Red",
+                "ml_level": "Yellow" if i < 2 else "Red",
+                "disagree": i < 2,
+                "latency_ms": 10.0,
+                "source": "batch",
+            })
+
+        return {
+            "tmp_path": tmp_path,
+            "partition": partition,
+            "drift_ref_path": drift_ref_path,
+            "pred_path": pred_path,
+            "metrics_path": metrics_path,
+            "monitoring_dir": tmp_path,
+        }
+
+    def test_detect_drift_creates_drift_json(self, setup_drift_env, monkeypatch):
+        env = setup_drift_env
+        import config.settings as _s
+        monkeypatch.setattr(_s, "DRIFT_REFERENCE_PATH", env["drift_ref_path"])
+        monkeypatch.setattr(_s, "PREDICTIONS_DIR", env["tmp_path"])
+        monkeypatch.setattr(_s, "MONITORING_DIR", env["monitoring_dir"])
+
+        from dags.ddi_batch_predict_dag import _detect_drift
+        _detect_drift(partition=env["partition"])
+
+        drift_json = env["tmp_path"] / f"drift_{env['partition']}.json"
+        assert drift_json.exists()
+        import json
+        data = json.loads(drift_json.read_text())
+        assert "partition" in data
+        assert data["partition"] == env["partition"]
+
+    def test_generate_alerts_creates_alert_json(self, setup_drift_env, monkeypatch):
+        env = setup_drift_env
+        partition = env["partition"]
+        import config.settings as _s
+        monkeypatch.setattr(_s, "MONITORING_DIR", env["monitoring_dir"])
+        monkeypatch.setattr(_s, "METRICS_JSONL_PATH", env["metrics_path"])
+
+        # 먼저 drift JSON을 수동 생성 (partition은 YYYYMMDD 포맷)
+        import json
+        from pathlib import Path
+        drift_json = env["tmp_path"] / f"drift_{partition}.json"
+        drift_json.write_text(json.dumps({
+            "partition": partition,
+            "generated_at": "2026-04-06T00:00:00",
+            "n_drifted": 0,
+            "trigger_retrain": False,
+            "summary": {"total_features": 2, "stable": 2, "warning": 0, "drift": 0},
+            "features": [
+                {"feature": "drug_count", "psi": 0.05, "status": "stable"},
+                {"feature": "ddi_count", "psi": 0.03, "status": "stable"},
+            ],
+        }))
+        alert_json = env["tmp_path"] / f"alerts_{partition}.json"
+
+        from dags.ddi_batch_predict_dag import _generate_alerts
+        _generate_alerts(partition=partition)
+
+        assert alert_json.exists()
