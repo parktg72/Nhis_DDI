@@ -24,8 +24,8 @@ class MetricsWriter:
 
     def __init__(
         self,
-        path: Path = None,
-        lock_timeout: float = None,
+        path: Optional[Path] = None,
+        lock_timeout: Optional[float] = None,
     ) -> None:
         self._path = Path(path) if path is not None else settings.METRICS_JSONL_PATH
         self._lock_timeout = lock_timeout if lock_timeout is not None else settings.METRICS_JSONL_LOCK_TIMEOUT
@@ -52,6 +52,7 @@ class MetricsWriter:
             return []
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         try:
+            # NOTE: full file read under exclusive lock; only use for dashboard polling, not hot path
             with self._lock.acquire(timeout=self._lock_timeout):
                 lines = self._path.read_text(encoding="utf-8").splitlines()
         except Timeout:
@@ -93,10 +94,7 @@ def get_metrics_writer() -> MetricsWriter:
     return _writer
 
 
-def init_metrics_writer(
-    path: Path = None,
-    lock_timeout: float = None,
-) -> MetricsWriter:
+def init_metrics_writer(path: Optional[Path] = None, lock_timeout: Optional[float] = None) -> MetricsWriter:
     """MetricsWriter 싱글턴을 초기화하고 반환."""
     global _writer
     _writer = MetricsWriter(path=path, lock_timeout=lock_timeout)

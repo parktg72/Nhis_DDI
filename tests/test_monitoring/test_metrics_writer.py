@@ -143,11 +143,13 @@ class TestMetricsWriterReadRecent:
 
 class TestMetricsWriterSingleton:
     def test_init_metrics_writer_creates_singleton(self, tmp_path):
-        from monitoring.metrics_writer import init_metrics_writer, get_metrics_writer
-        path = tmp_path / "metrics.jsonl"
-        init_metrics_writer(path=path)
-        w = get_metrics_writer()
-        assert w is not None
+        import monitoring.metrics_writer as mw_mod
+        from monitoring.metrics_writer import MetricsWriter
+        path = tmp_path / "singleton_test.jsonl"
+        mw_mod._writer = None  # reset
+        w = mw_mod.init_metrics_writer(path=path, lock_timeout=1.0)
+        assert isinstance(w, MetricsWriter)
+        assert mw_mod.get_metrics_writer() is w
 
     def test_get_metrics_writer_raises_if_not_initialized(self, monkeypatch):
         import monitoring.metrics_writer as mw
