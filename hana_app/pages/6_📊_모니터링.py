@@ -9,6 +9,14 @@
 """
 from __future__ import annotations
 
+import datetime
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import pandas as pd
 import streamlit as st
 
@@ -174,7 +182,6 @@ with tab4:
         if METRICS_JSONL_PATH.exists():
             stat = METRICS_JSONL_PATH.stat()
             st.write(f"📄 metrics_live.jsonl: {stat.st_size / 1024:.1f} KB")
-            import datetime
             mtime = datetime.datetime.fromtimestamp(stat.st_mtime)
             st.write(f"   마지막 수정: {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
         else:
@@ -182,7 +189,6 @@ with tab4:
 
         if DRIFT_REFERENCE_PATH.exists():
             stat = DRIFT_REFERENCE_PATH.stat()
-            import datetime
             mtime = datetime.datetime.fromtimestamp(stat.st_mtime)
             age_days = (datetime.datetime.now() - mtime).days
             label = f"✅ drift_reference.pkl ({age_days}일 전)"

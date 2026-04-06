@@ -87,6 +87,9 @@ class TestDashboardHelpers:
         assert psi_status_label(0.05) == "🟢 Stable"
         assert psi_status_label(0.15) == "🟡 Warning"
         assert psi_status_label(0.30) == "🔴 Drift"
+        assert psi_status_label(0.10) == "🟡 Warning"   # boundary: not Stable
+        assert psi_status_label(0.25) == "🔴 Drift"     # boundary: not Warning
+        assert psi_status_label(0.0999) == "🟢 Stable"  # just below Stable boundary
 
     def test_get_recent_partitions(self, tmp_path):
         from hana_app.pages._monitoring_helpers import get_recent_partitions
@@ -95,3 +98,19 @@ class TestDashboardHelpers:
         result = get_recent_partitions(tmp_path, prefix="drift_", n=7)
         assert "2026-04-06" in result
         assert len(result) <= 7
+        assert result[0] == "2026-04-06"  # sorted newest-first
+
+    def test_load_alerts_envelope_format(self, tmp_path):
+        from hana_app.pages._monitoring_helpers import load_alerts
+        partition = "2026-04-06"
+        payload = {
+            "partition": partition,
+            "total": 1,
+            "alerts": [
+                {"alert_type": "psi_drift", "severity": "WARNING", "message": "드리프트", "generated_at": "2026-04-06T00:00:00"},
+            ],
+        }
+        (tmp_path / f"alerts_{partition}.json").write_text(__import__("json").dumps(payload))
+        result = load_alerts(tmp_path, [partition])
+        assert len(result) == 1
+        assert result[0]["severity"] == "WARNING"
