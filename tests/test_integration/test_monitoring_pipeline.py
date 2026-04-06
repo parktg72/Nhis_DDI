@@ -60,13 +60,13 @@ class TestPredictMetricsWiring:
             ],
         })
         # 예측 성공 여부와 무관하게 jsonl 기록 확인
-        if jsonl_path.exists():
-            lines = jsonl_path.read_text().strip().splitlines()
-            assert len(lines) >= 1
-            record = json.loads(lines[0])
-            assert "patient_id" in record
-            assert "risk_level" in record
-            assert "latency_ms" in record
+        assert jsonl_path.exists(), "predict() should write metrics to jsonl"
+        lines = jsonl_path.read_text().strip().splitlines()
+        assert len(lines) >= 1
+        record = json.loads(lines[0])
+        assert "patient_id" in record
+        assert "risk_level" in record
+        assert "latency_ms" in record
 
     def test_predict_metrics_writer_failure_does_not_break_response(self, tmp_path, monkeypatch):
         """MetricsWriter.append() 예외 → 정상 응답 반환 검증."""
@@ -102,6 +102,8 @@ class TestPredictMetricsWiring:
             })
         # MetricsWriter 실패해도 예측 응답 정상
         assert resp.status_code == 200
+        data = resp.json()
+        assert "risk_level" in data
 
 
 class TestMetricsEndpoint:

@@ -51,7 +51,7 @@ async def predict(req: PredictRequest):
             "ml_level": result.ml_level.value if result.ml_level else None,
             "disagree": (
                 result.rule_level != result.ml_level
-                if result.rule_level and result.ml_level else False
+                if result.ml_level else False
             ),
             "latency_ms": round(latency_ms, 1),
             "source": "api",
@@ -94,7 +94,7 @@ async def predict_batch(req: BatchPredictRequest):
                     "ml_level": single_result.ml_level.value if single_result.ml_level else None,
                     "disagree": (
                         single_result.rule_level != single_result.ml_level
-                        if single_result.rule_level and single_result.ml_level else False
+                        if single_result.ml_level else False
                     ),
                     "latency_ms": round(single_latency_ms, 1),
                     "source": "batch",
