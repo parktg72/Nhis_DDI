@@ -23,9 +23,15 @@ class GATDataset:
     """
     prescription_df: pd.DataFrame
     ddi_df: pd.DataFrame
+    prescription_split: Optional[str] = None
     pairs_train: Optional[np.ndarray] = None        # [N, 3] int64
     pairs_gat_val: Optional[np.ndarray] = None      # [M, 3] int64
     pairs_calibration: Optional[np.ndarray] = None  # [K, 3] int64
+
+    def __post_init__(self) -> None:
+        """GraphBuilder가 train provenance를 강제 검증할 수 있도록 split 메타데이터를 보존."""
+        if self.prescription_split is not None:
+            self.prescription_df.attrs["split"] = str(self.prescription_split)
 
     @property
     def unique_drugs(self) -> list[str]:
