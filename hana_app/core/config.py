@@ -153,6 +153,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
 
+    # ── 테이블 검증 상태 ──────────────────────────────────────────────────
+    # Page 1 wizard 완료 시 True. 검증 DB 호스트가 변경되면 False로 초기화.
+    "validated":      False,
+    "validated_at":   "",    # ISO 8601 (예: "2026-04-07T09:00:00")
+    "validated_host": "",    # 검증 시 사용된 HANA 호스트
+
     # ── 학습 설정 ─────────────────────────────────────────────────
     "training": {
         "year_from":      "2023",
