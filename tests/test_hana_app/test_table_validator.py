@@ -62,10 +62,11 @@ class TestValidateAllIdentifiers:
         with pytest.raises(ValueError, match="안전하지 않은"):
             validate_all_identifiers({"patient_id": "col'; DROP TABLE--"})
 
-    def test_unsafe_key_raises(self):
+    def test_unsafe_key_does_not_raise(self):
+        """논리명(키)은 SQL 식별자 검증 대상이 아니다 — 내부 레이블이므로."""
         from hana_app.core.table_validator import validate_all_identifiers
-        with pytest.raises(ValueError):
-            validate_all_identifiers({"bad key!": "INDI_DSCM_NO"})
+        # 논리명에 공백/특수문자 있어도 예외 없어야 함
+        validate_all_identifiers({"bad key!": "INDI_DSCM_NO"})  # 예외 없어야 함
 
     def test_empty_map_passes(self):
         from hana_app.core.table_validator import validate_all_identifiers

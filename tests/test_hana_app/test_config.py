@@ -38,6 +38,24 @@ class TestValidatedFlag:
         assert "validated_at" in loaded
         assert "validated_host" in loaded
 
+    def test_load_config_deep_merges_columns(self, tmp_path, monkeypatch):
+        """기존 config에 columns 키가 있어도 누락된 tbl_key는 병합된다."""
+        import hana_app.core.config as _cfg_mod
+        cfg_file = tmp_path / "hana_config.json"
+        # only t20 exists, t30 is missing
+        cfg_file.write_text(
+            json.dumps({"columns": {"t20": {"patient_id": "INDI_DSCM_NO"}}}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("hana_app.core.config.CONFIG_FILE", cfg_file)
+        importlib.reload(_cfg_mod)
+        loaded = _cfg_mod.load_config()
+        # t20 should be preserved, t30 should be merged from DEFAULT_CONFIG (if it exists)
+        assert "t20" in loaded.get("columns", {})
+        # If DEFAULT_CONFIG has t30, it should be present
+        if "t30" in _cfg_mod.DEFAULT_CONFIG.get("columns", {}):
+            assert "t30" in loaded["columns"]
+
     def test_save_and_load_validated_true(self, tmp_path, monkeypatch):
         """validated=True로 저장 후 다시 로드하면 True."""
         cfg_file = tmp_path / "hana_config.json"

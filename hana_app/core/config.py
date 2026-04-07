@@ -206,6 +206,14 @@ def load_config() -> dict[str, Any]:
             for k, v in DEFAULT_CONFIG["sas"].items():
                 if k not in data["sas"]:
                     data["sas"][k] = v
+        # columns 하위 키 병합 (DEFAULT_TABLE_COLS 기준)
+        default_cols = DEFAULT_CONFIG.get("columns", {})
+        if default_cols and isinstance(data.get("columns"), dict):
+            for tbl_key, col_map in default_cols.items():
+                if tbl_key not in data["columns"]:
+                    data["columns"][tbl_key] = col_map
+        elif default_cols and "columns" not in data:
+            data["columns"] = default_cols
         # 구버전 base64 비밀번호 마이그레이션 → Keychain으로 이전 후 JSON에서 제거
         legacy_enc = data.get("connection", {}).pop("password_enc", None)
         if legacy_enc:

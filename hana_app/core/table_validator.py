@@ -5,7 +5,7 @@ Page 1 wizard에서 호출되며, Streamlit 없이도 단위 테스트 가능하
 """
 from __future__ import annotations
 
-from hana_app.core.db import _assert_safe_identifier
+from hana_app.core.db import assert_safe_identifier
 
 
 def check_column_mapping(
@@ -33,17 +33,18 @@ def check_column_mapping(
 
 
 def validate_all_identifiers(column_map: dict[str, str]) -> None:
-    """column_map의 모든 키·값이 HANA 안전 식별자인지 검증한다.
+    """column_map의 DB 컬럼명(값)이 HANA 안전 식별자인지 검증한다.
 
-    _assert_safe_identifier()를 통과하지 못하는 항목이 있으면 ValueError 발생.
+    assert_safe_identifier()를 통과하지 못하는 항목이 있으면 ValueError 발생.
     저장 직전 일괄 호출해 SQL 인젝션 방어선으로 사용한다.
+
+    논리명(키)은 내부 레이블이므로 검증 대상이 아님. DB 컬럼명(값)만 검증한다.
 
     Args:
         column_map: {논리명: DB 컬럼명} 딕셔너리.
 
     Raises:
-        ValueError: 안전하지 않은 식별자가 포함된 경우.
+        ValueError: 안전하지 않은 DB 컬럼명 식별자가 포함된 경우.
     """
     for logical_name, db_col in column_map.items():
-        _assert_safe_identifier(logical_name, "논리명")
-        _assert_safe_identifier(db_col, "DB 컬럼명")
+        assert_safe_identifier(db_col, "DB 컬럼명")

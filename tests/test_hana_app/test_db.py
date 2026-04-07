@@ -107,3 +107,14 @@ class TestEnsureConnected:
             with patch.object(conn, "connect") as mock_connect:
                 conn.ensure_connected(creds_str_port)
         mock_connect.assert_called_once_with(host="h", port=30015, user="u", password="p")
+
+    def test_ttl_set_when_already_connected_with_session(self):
+        """이미 연결된 상태 + session_state 제공 시에도 TTL이 갱신된다."""
+        import time
+        conn = HANAConnection()
+        session: dict = {}
+        with patch.object(conn, "is_connected", return_value=True):
+            with patch.object(conn, "connect") as mock_connect:
+                conn.ensure_connected(self.CREDS, session_state=session, ttl_seconds=5)
+        mock_connect.assert_not_called()
+        assert session.get("_conn_ok_until", 0) > time.monotonic()

@@ -76,6 +76,14 @@ class HANAConnection:
         """
         import time
 
+        # creds 필수 키 검증
+        required = {"host", "port", "user", "password"}
+        missing_keys = required - creds.keys()
+        if missing_keys:
+            raise ValueError(
+                f"ensure_connected(): creds에 필수 키가 없습니다: {sorted(missing_keys)}"
+            )
+
         now = time.monotonic()
         cache_key = "_conn_ok_until"
 
@@ -268,6 +276,9 @@ class HANAConnection:
         finally:
             cur.close()
 
+
+# public alias — table_validator 등 외부 모듈에서 사용
+assert_safe_identifier = _assert_safe_identifier
 
 # ── 전역 폴백 (테스트 / CLI / 비Streamlit 환경용) ─────────────────────────────
 _fallback_conn = HANAConnection()
