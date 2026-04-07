@@ -110,3 +110,55 @@ def test_run_selected_passes_cb_to_load_data(monkeypatch):
         pass
     assert load_cb_received and load_cb_received[0] is cb, \
         "_load_data에 cb가 전달되지 않음"
+
+
+def test_run_cox_emits_per_model_progress():
+    """run_cox 가 각 모델(model1/2/3) 피팅 전 메시지를 emit 해야 한다."""
+    dm = MagicMock()
+    analyzer = StatisticalAnalyzer(dm)
+
+    df = pd.DataFrame({
+        'exposure_group': ['NON_DM'] * 40,
+        'is_t1dm': [0] * 40, 'is_t2dm_oha': [0] * 40,
+        'is_t2dm_insulin': [0] * 40, 'is_t2dm_nomed': [0] * 40,
+        'age_at_index': [55.0] * 40,
+        'male': [1] * 40,
+        'follow_up_years': [1.0] * 40,
+        'dementia_event': [0] * 30 + [1] * 10,
+    })
+    messages = []
+    try:
+        analyzer.run_cox('dementia_event', cb=messages.append, df_prepared=df)
+    except Exception:
+        pass
+
+    model_msgs = [m for m in messages if 'model' in m.lower() or '모델' in m.lower()]
+    assert len(model_msgs) >= 3, \
+        f"모델별 진행 메시지 3개 미만. 실제: {messages}"
+
+
+def test_run_competing_risks_emits_per_outcome_progress():
+    """run_competing_risks 가 각 outcome 시작 시 메시지를 emit 해야 한다."""
+    dm = MagicMock()
+    analyzer = StatisticalAnalyzer(dm)
+
+    df = pd.DataFrame({
+        'exposure_group': ['NON_DM'] * 40,
+        'is_t1dm': [0] * 40, 'is_t2dm_oha': [0] * 40,
+        'is_t2dm_insulin': [0] * 40, 'is_t2dm_nomed': [0] * 40,
+        'age_at_index': [55.0] * 40, 'male': [1] * 40,
+        'follow_up_years': [1.0] * 40,
+        'dementia_event': [0] * 35 + [1] * 5,
+        'ad_event': [0] * 38 + [1] * 2,
+        'vad_event': [0] * 39 + [1] * 1,
+        'competing_death_event': [0] * 36 + [1] * 4,
+    })
+    messages = []
+    try:
+        analyzer.run_competing_risks(cb=messages.append, df_prepared=df)
+    except Exception:
+        pass
+
+    assert any('dementia_event' in m for m in messages), f"dementia_event 메시지 없음: {messages}"
+    assert any('ad_event' in m for m in messages), f"ad_event 메시지 없음: {messages}"
+    assert any('vad_event' in m for m in messages), f"vad_event 메시지 없음: {messages}"

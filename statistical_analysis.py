@@ -266,6 +266,7 @@ class StatisticalAnalyzer:
         }
 
         for mname, mcols in models.items():
+            if cb: cb(f"Cox 회귀 ({outcome}) — {mname} 피팅 중...")
             cols = [c for c in mcols if c in df_prepared.columns] + [T, E]
             df_model = df_prepared[cols].dropna()
             try:
@@ -672,6 +673,7 @@ class StatisticalAnalyzer:
         for outcome in ['dementia_event', 'ad_event', 'vad_event']:
             if outcome not in df_prepared.columns:
                 continue
+            if cb: cb(f"경쟁위험 분석: {outcome} 처리 중...")
 
             need_cols = [T, outcome, 'competing_death_event', 'dementia_event',
                          'is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin',
