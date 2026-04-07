@@ -58,6 +58,44 @@ class HANAConnection:
                 pass
         self.conn = None
 
+    def ensure_connected(
+        self,
+        creds: dict,
+        session_state: dict | None = None,
+        ttl_seconds: int = 5,
+    ) -> None:
+        """연결이 끊겼으면 creds로 자동 재연결.
+
+        creds 구조: {"host": str, "port": int, "user": str, "password": str}
+
+        session_state가 제공되면 TTL 캐시를 사용해 is_connected() DB 왕복을
+        ttl_seconds 동안 생략한다 (Streamlit rerun 마다 호출되는 경우 성능 보호).
+
+        이미 연결된 상태면 아무것도 하지 않는다.
+        재연결 실패 시 hdbcli 예외를 그대로 전파한다.
+        """
+        import time
+
+        now = time.monotonic()
+        cache_key = "_conn_ok_until"
+
+        # TTL 캐시 유효 → is_connected() 생략
+        if session_state is not None:
+            if now < session_state.get(cache_key, 0):
+                return
+
+        if not self.is_connected():
+            self.connect(
+                host=creds["host"],
+                port=int(creds["port"]),
+                user=creds["user"],
+                password=creds["password"],
+            )
+
+        # 연결 확인 후 TTL 갱신
+        if session_state is not None:
+            session_state[cache_key] = now + ttl_seconds
+
     # ── 상태 ───────────────────────────────────────────────────────────────
 
     def is_connected(self) -> bool:
@@ -231,10 +269,19 @@ class HANAConnection:
             cur.close()
 
 
-# ── 전역 싱글톤 (Streamlit session_state 에서 참조) ─────────────────────────
+# ── 전역 폴백 (테스트 / CLI / 비Streamlit 환경용) ─────────────────────────────
+_fallback_conn = HANAConnection()
 
-_global_conn = HANAConnection()
 
+def get_connection(session_state: dict | None = None) -> HANAConnection:
+    """세션별 격리된 HANAConnection 반환.
 
-def get_connection() -> HANAConnection:
-    return _global_conn
+    session_state가 None이거나 생략되면 _fallback_conn 반환
+    (테스트 / CLI / 비Streamlit 환경 하위 호환).
+    Streamlit 환경에서는 반드시 st.session_state를 전달한다.
+    """
+    if session_state is None:
+        return _fallback_conn
+    if "hana_conn" not in session_state:
+        session_state["hana_conn"] = HANAConnection()
+    return session_state["hana_conn"]
