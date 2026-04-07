@@ -42,16 +42,12 @@ if not exist venv\Scripts\python.exe (
 )
 
 REM --- 이전 실행 잔류 손상 dist-info 사전 정리 ---
-for /d %%i in (venv\Lib\site-packages\~*) do rmdir /s /q "%%i" 2>nul
-for %%i in (venv\Lib\site-packages\~*) do del /q "%%i" 2>nul
+call :cleanup_dist
 
 REM --- pip 업그레이드 ---
 echo [INFO] pip 업그레이드 중...
 python -m pip install --no-cache-dir --upgrade pip
-
-REM --- pip 업그레이드 후 잔류 임시 배포 정리 (~ip 등 손상된 .dist-info 제거) ---
-for /d %%i in (venv\Lib\site-packages\~*) do rmdir /s /q "%%i" 2>nul
-for %%i in (venv\Lib\site-packages\~*) do del /q "%%i" 2>nul
+call :cleanup_dist
 
 REM --- 의존 패키지 설치 ---
 echo [INFO] 패키지 설치 중 (requirements.txt)...
@@ -60,8 +56,7 @@ if errorlevel 1 (
     echo [ERROR] requirements.txt 패키지 설치 실패
     pause & exit /b 1
 )
-for /d %%i in (venv\Lib\site-packages\~*) do rmdir /s /q "%%i" 2>nul
-for %%i in (venv\Lib\site-packages\~*) do del /q "%%i" 2>nul
+call :cleanup_dist
 
 REM --- PyInstaller 설치 ---
 echo [INFO] PyInstaller 설치 중...
@@ -70,8 +65,7 @@ if errorlevel 1 (
     echo [ERROR] PyInstaller 설치 실패
     pause & exit /b 1
 )
-for /d %%i in (venv\Lib\site-packages\~*) do rmdir /s /q "%%i" 2>nul
-for %%i in (venv\Lib\site-packages\~*) do del /q "%%i" 2>nul
+call :cleanup_dist
 
 REM --- 이전 빌드 정리 ---
 if exist build rmdir /s /q build
@@ -148,3 +142,15 @@ echo.
 echo [SUCCESS] 빌드 완료: dist\NHIS_YOD_DM_Analyzer\
 endlocal
 pause
+goto :eof
+
+REM ---------------------------------------------------------------
+REM :cleanup_dist — pip 업그레이드 후 잔류 ~ip 등 손상된 dist-info 제거
+REM   NOTE: glob 패턴을 따옴표로 감싸면 CMD for 루프에서 * 가 리터럴로
+REM         처리되어 와일드카드가 확장되지 않으므로 의도적으로 따옴표 없음.
+REM         매칭된 경로(%%i)는 rmdir/del 에서 "%%i" 로 따옴표 처리.
+REM ---------------------------------------------------------------
+:cleanup_dist
+for /d %%i in (venv\Lib\site-packages\~*) do rmdir /s /q "%%i" 2>nul
+for %%i in (venv\Lib\site-packages\~*) do del /q "%%i" 2>nul
+goto :eof
