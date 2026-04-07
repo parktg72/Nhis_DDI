@@ -22,6 +22,8 @@ from config import DUCKDB_SETTINGS, EXAM_STRUCTURE
 from memory_manager import mem_manager, chunk_controller
 
 _VALID_TABLE_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+_MONTHLY_TABLES = frozenset({'T20', 'T30', 'T40', 'T60'})
+_MONTHLY_FILTER_COL = 'MDCARE_STRT_YYYYMM'
 _READ_ONLY_FORBIDDEN = re.compile(
     r'\b(DROP|DELETE|INSERT|UPDATE|CREATE|ALTER|EXEC|EXECUTE|GRANT|REVOKE|TRUNCATE)\b',
     re.IGNORECASE
@@ -667,6 +669,48 @@ class HANAConnector:
 
         logger.info(f"DuckDB 적재: {duckdb_table} ({total:,}건)")
         return total
+
+
+def _get_hana_cache_dir():
+    """HANA 월별 캐시 디렉토리 경로 반환.
+
+    DUCKDB_SETTINGS['HANA_CACHE_DIR']가 None이면 _BASE_DIR / 'hana_cache' 사용.
+    TEMP_DIRECTORY 처리 방식과 동일.
+    """
+    raw = DUCKDB_SETTINGS.get('HANA_CACHE_DIR')
+    return Path(raw) if raw else _BASE_DIR / 'hana_cache'
+
+
+class MonthlyHanaExtractor:
+    """T20/T30/T40/T60 월별 분할 추출 → Parquet 저장 → DuckDB 병합.
+
+    Args:
+        hana_connector: HANAConnector 인스턴스 (fetch_table_chunked 사용)
+        duckdb_storage: DuckDBStorage 인스턴스
+        hana_schema: HANA 스키마 이름 (예: 'NHIS')
+        cache_root: Parquet 캐시 루트 디렉토리 (예: Path('/app/hana_cache'))
+    """
+
+    def __init__(self, hana_connector, duckdb_storage, hana_schema, cache_root):
+        self.hana = hana_connector
+        self.storage = duckdb_storage
+        self.schema = hana_schema
+        self.cache_root = Path(cache_root)
+
+    def _month_range(self):
+        """STUDY_START_YEAR ~ STUDY_END_YEAR 범위의 YYYYMM 문자열 목록 반환."""
+        from config import STUDY_SETTINGS
+        start_year = int(STUDY_SETTINGS.get('STUDY_START_YEAR', 2013))
+        end_year = int(STUDY_SETTINGS.get('STUDY_END_YEAR', 2024))
+        months = []
+        for year in range(start_year, end_year + 1):
+            for month in range(1, 13):
+                months.append(f'{year:04d}{month:02d}')
+        return months
+
+    def extract_all_months(self, table_name, duckdb_table, progress_callback=None):
+        """구현 예정 (Task 3에서 추가)."""
+        raise NotImplementedError
 
 
 class SASFileLoader:

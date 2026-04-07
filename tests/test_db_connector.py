@@ -126,3 +126,28 @@ def test_hana_loader_progress_callback_accepts_workerthread_style_string(monkeyp
     assert messages[-1] == "T20: 인덱스 생성 완료"
 
     storage.close()
+
+
+class TestMonthlyHanaExtractor:
+    def test_month_range_length(self):
+        """STUDY_START_YEAR~STUDY_END_YEAR 범위의 월 수 = (years) * 12."""
+        from db_connector import MonthlyHanaExtractor
+        extractor = MonthlyHanaExtractor(None, None, 'SCH', '/tmp')
+        months = extractor._month_range()
+        assert len(months) == 144  # (2024 - 2013 + 1) * 12
+
+    def test_month_range_first_last(self):
+        """첫 달 = STUDY_START_YEAR-01, 마지막 달 = STUDY_END_YEAR-12."""
+        from db_connector import MonthlyHanaExtractor
+        extractor = MonthlyHanaExtractor(None, None, 'SCH', '/tmp')
+        months = extractor._month_range()
+        assert months[0] == '201301'
+        assert months[-1] == '202412'
+
+    def test_month_range_year_boundary(self):
+        """연도 경계: 12월 다음이 이듬해 1월."""
+        from db_connector import MonthlyHanaExtractor
+        extractor = MonthlyHanaExtractor(None, None, 'SCH', '/tmp')
+        months = extractor._month_range()
+        assert months[11] == '201312'
+        assert months[12] == '201401'
