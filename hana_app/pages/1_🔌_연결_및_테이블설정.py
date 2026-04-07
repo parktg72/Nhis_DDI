@@ -511,15 +511,28 @@ with tab_validate:
         "3번 페이지(모델 학습)에서 데이터를 추출하기 전에 반드시 완료해야 합니다."
     )
 
+    # ── 호스트 변경 감지 → wizard 캐시 전체 무효화 ─────────────────────────
+    _current_host = cfg.get("connection", {}).get("host", "")
+    if st.session_state.get("_wizard_last_host") != _current_host:
+        for _k in [k for k in st.session_state if k.startswith("_wizard_")]:
+            del st.session_state[_k]
+        st.session_state["_wizard_last_host"] = _current_host
+
     if not (st.session_state.get("connected") and conn.is_connected()):
         st.warning("⚠️ HANA DB에 먼저 연결하세요. (🗄️ HANA DB 연결 탭)")
-        st.stop()
+        st.stop()  # 주의: 페이지 전체 렌더링 중단. tab_validate는 반드시 마지막 탭이어야 함.
 
     # ── 현재 검증 상태 표시 ───────────────────────────────────────────────
     if cfg.get("validated"):
+        _vat_raw = cfg.get("validated_at", "")
+        try:
+            import datetime as _dt
+            _vat_display = _dt.datetime.fromisoformat(_vat_raw).strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            _vat_display = _vat_raw
         st.success(
             f"✅ 검증 완료  |  "
-            f"{cfg.get('validated_at', '')}  |  "
+            f"{_vat_display}  |  "
             f"호스트: {cfg.get('validated_host', '')}"
         )
         if cfg.get("validated_host") and cfg["validated_host"] != cfg["connection"]["host"]:
@@ -674,6 +687,18 @@ with tab_validate:
     col_save, col_revalidate = st.columns(2)
     with col_save:
         if st.button("✅ 검증 완료 & 저장", type="primary", use_container_width=True):
+            # 테이블 미선택 확인 (조회 실패 등으로 비어있는 경우 저장 차단)
+            empty_tables = [
+                TABLE_LOGICAL[k] for k in TABLE_LOGICAL
+                if not table_selections.get(k)
+            ]
+            if empty_tables:
+                st.error(
+                    f"❌ 다음 테이블이 선택되지 않았습니다. 스키마/테이블 조회를 확인하세요: "
+                    f"{', '.join(empty_tables)}"
+                )
+                st.stop()
+
             # 저장 전 일괄 식별자 재검증
             try:
                 for tbl_key, col_map in updated_col_map.items():
