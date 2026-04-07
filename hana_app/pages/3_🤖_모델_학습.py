@@ -26,7 +26,35 @@ st.set_page_config(page_title="모델 학습", page_icon="🤖", layout="wide")
 st.title("🤖 모델 선택 및 학습")
 
 cfg  = load_config()
-conn = get_connection()
+conn = get_connection(st.session_state)
+
+# ── validated 가드 ────────────────────────────────────────────────────────
+_cfg_for_guard = load_config()
+if is_hana(_cfg_for_guard) and not _cfg_for_guard.get("validated"):
+    st.warning("⚠️ HANA 테이블 검증이 완료되지 않았습니다.")
+    st.page_link(
+        "pages/1_🔌_연결_및_테이블설정.py",
+        label="👉 1번 페이지 → 🔍 테이블 검증 탭에서 완료 후 돌아오세요",
+    )
+    st.stop()
+
+if is_hana(_cfg_for_guard):
+    if _cfg_for_guard.get("validated_host") and \
+       _cfg_for_guard["validated_host"] != _cfg_for_guard["connection"]["host"]:
+        st.warning("⚠️ 검증된 DB 호스트와 현재 연결 호스트가 다릅니다. 1번 페이지에서 재검증을 권장합니다.")
+
+# ── 자동 재연결 ───────────────────────────────────────────────────────────
+_hana_creds = st.session_state.get("hana_creds")
+if is_hana(_cfg_for_guard):
+    if _hana_creds:
+        try:
+            conn.ensure_connected(_hana_creds, session_state=st.session_state)
+        except Exception as _conn_err:
+            st.error(f"❌ DB 재연결 실패: {_conn_err}")
+            st.stop()
+    elif not conn.is_connected():
+        st.error("❌ DB 연결이 없습니다. 1번 페이지에서 먼저 연결하세요.")
+        st.stop()
 
 using_hana = is_hana(cfg)
 using_sas  = is_sas(cfg)
@@ -987,8 +1015,9 @@ if run_btn:
                 )
                 st.stop()
             except Exception as e:
-                st.error(f"데이터 추출 실패: {e}")
+                st.error("❌ 데이터 추출 실패")
                 st.exception(e)
+                st.info("💡 오류가 지속되면 1번 페이지 → 🔍 테이블 검증 탭에서 재검증하세요.")
                 st.stop()
 
             progress_bar.progress(0.35, text="추출 완료")
@@ -1051,8 +1080,9 @@ if run_btn:
                 )
                 st.stop()
             except Exception as e:
-                st.error(f"피처 계산 실패: {e}")
+                st.error("❌ 데이터 추출 실패")
                 st.exception(e)
+                st.info("💡 오류가 지속되면 1번 페이지 → 🔍 테이블 검증 탭에서 재검증하세요.")
                 st.stop()
 
         else:
@@ -1079,8 +1109,9 @@ if run_btn:
                 )
                 st.stop()
             except Exception as e:
-                st.error(f"데이터 추출 실패: {e}")
+                st.error("❌ 데이터 추출 실패")
                 st.exception(e)
+                st.info("💡 오류가 지속되면 1번 페이지 → 🔍 테이블 검증 탭에서 재검증하세요.")
                 st.stop()
 
             # records는 session_state에 저장하지 않음 (메모리 절약)
@@ -1138,8 +1169,9 @@ if run_btn:
                 )
                 st.stop()
             except Exception as e:
-                st.error(f"피처 계산 실패: {e}")
+                st.error("❌ 데이터 추출 실패")
                 st.exception(e)
+                st.info("💡 오류가 지속되면 1번 페이지 → 🔍 테이블 검증 탭에서 재검증하세요.")
                 st.stop()
 
         # ── 결과 처리: 청크 모드 → Parquet 경로, 일반 모드 → PatientFeatures 리스트
