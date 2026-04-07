@@ -275,7 +275,7 @@ class DuckDBStorage:
 
     def drop_table(self, table_name):
         _validate_table_name(table_name)
-        self.execute(f"DROP TABLE IF EXISTS {table_name}")
+        self.execute(f'DROP TABLE IF EXISTS "{table_name}"')
 
     def create_index(self, table_name, columns, index_name=None):
         _validate_table_name(table_name)
@@ -796,9 +796,9 @@ class MonthlyHanaExtractor:
 
         if schema_columns is None:
             logger.warning(
-                "월별 추출 경고: %s 전체 144개월 데이터가 0건입니다. "
+                "월별 추출 경고: %s 전체 %d개월 데이터가 0건입니다. "
                 "MDCARE_STRT_YYYYMM 컬럼 타입(VARCHAR 가정)을 확인하세요.",
-                table_upper,
+                table_upper, total,
             )
 
         # Parquet → DuckDB 병합 (단일 CREATE TABLE, union_by_name으로 컬럼 드리프트 대응)

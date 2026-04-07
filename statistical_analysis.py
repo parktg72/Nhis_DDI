@@ -729,10 +729,12 @@ class StatisticalAnalyzer:
                 }
 
             # NON_DM CIF
-            non_dm_mask = ((df_cr.get('is_t1dm', 0) == 0) &
-                           (df_cr.get('is_t2dm_oha', 0) == 0) &
-                           (df_cr.get('is_t2dm_insulin', 0) == 0) &
-                           (df_cr.get('is_t2dm_nomed', 0) == 0))
+            non_dm_mask = (
+                (df_cr['is_t1dm'] == 0 if 'is_t1dm' in df_cr.columns else pd.Series(True, index=df_cr.index)) &
+                (df_cr['is_t2dm_oha'] == 0 if 'is_t2dm_oha' in df_cr.columns else pd.Series(True, index=df_cr.index)) &
+                (df_cr['is_t2dm_insulin'] == 0 if 'is_t2dm_insulin' in df_cr.columns else pd.Series(True, index=df_cr.index)) &
+                (df_cr['is_t2dm_nomed'] == 0 if 'is_t2dm_nomed' in df_cr.columns else pd.Series(True, index=df_cr.index))
+            )
             if (non_dm_mask.sum() >= _min_cr and
                     (event_type[non_dm_mask.values] == 1).sum() >= _min_cr_events):
                 times_g = df_cr.loc[non_dm_mask, T].values.astype(float)
@@ -770,9 +772,9 @@ class StatisticalAnalyzer:
                     weights = np.maximum(g_at_max, 1e-10) / np.maximum(g_at_event, 1e-10)
                     weights = np.clip(weights, 0.01, 1.0)
 
-                    df_fg.loc[is_competing, T] = max_time
-                    df_fg.loc[is_competing, outcome] = 0
-                    df_fg.loc[is_competing, '_weight'] = weights
+                    df_fg.loc[df_fg.index[is_competing], T] = max_time
+                    df_fg.loc[df_fg.index[is_competing], outcome] = 0
+                    df_fg.loc[df_fg.index[is_competing], '_weight'] = weights
 
                 covars = [c for c in ['is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin',
                                       'is_t2dm_nomed', 'age_at_index', 'male'] if c in df_fg.columns]
