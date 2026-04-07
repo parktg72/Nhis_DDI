@@ -515,6 +515,45 @@ class TestStep4ClassifyGroups:
         assert any('T2DM_INSULIN' in m for m in warning_messages), \
             "T2DM_INSULIN=0 일 때 logger.warning 호출 필요"
 
+    def test_lookback_years_respected(self, dm):
+        """LOOKBACK_YEARS 설정이 처방 집계 윈도우에 반영된다 (C-1).
+
+        P0002의 index_date=20140101 기준:
+        - LOOKBACK_YEARS=1 (365일): 20150102 처방은 윈도우 밖 → T2DM_NOMED
+        - LOOKBACK_YEARS=2 (730일): 20150102 처방은 윈도우 안 → T2DM_OHA
+        """
+        # index_date(20140101) + 366일 = 20150102: 1년 윈도우 바깥, 2년 윈도우 안
+        dm.conn.execute("""
+            INSERT INTO T30 VALUES
+            ('P0002', '20150102', 'C004', '148801ABC', '', '', '30')
+        """)
+
+        # LOOKBACK_YEARS=1 → 처방 미포함 → T2DM_NOMED
+        with patch('cohort_builder.mem_manager'), \
+             patch.dict('cohort_builder.STUDY_SETTINGS', {'LOOKBACK_YEARS': 1}):
+            cb1 = CohortBuilder(dm)
+            cb1.step1_base_population()
+            cb1.step2_dm_claims()
+            cb1.step3_dm_medications()
+            cb1.step4_classify_groups()
+        group1 = dm.query(
+            "SELECT exposure_group FROM exposure_groups WHERE INDI_DSCM_NO='P0002'"
+        ).iloc[0]['exposure_group']
+        assert group1 == 'T2DM_NOMED', f"LOOKBACK_YEARS=1 이면 366일 후 처방 미포함 기대, 실제: {group1}"
+
+        # LOOKBACK_YEARS=2 → 처방 포함 → T2DM_OHA
+        with patch('cohort_builder.mem_manager'), \
+             patch.dict('cohort_builder.STUDY_SETTINGS', {'LOOKBACK_YEARS': 2}):
+            cb2 = CohortBuilder(dm)
+            cb2.step1_base_population()
+            cb2.step2_dm_claims()
+            cb2.step3_dm_medications()
+            cb2.step4_classify_groups()
+        group2 = dm.query(
+            "SELECT exposure_group FROM exposure_groups WHERE INDI_DSCM_NO='P0002'"
+        ).iloc[0]['exposure_group']
+        assert group2 == 'T2DM_OHA', f"LOOKBACK_YEARS=2 이면 366일 후 처방 포함 기대, 실제: {group2}"
+
 
 # ===========================================================================
 # Step 5: 기존 치매 진단 + 항치매약 사용자 제외

@@ -230,9 +230,10 @@ class CohortBuilder:
             SELECT INDI_DSCM_NO FROM dm_patients GROUP BY INDI_DSCM_NO HAVING COUNT(DISTINCT dm_type) > 1
         """)
 
-        # med_pattern: index_date 전후 1년 이내 처방만 집계
+        # med_pattern: index_date 이후 LOOKBACK_YEARS 이내 처방만 집계
         # (전체 이력 집계 시 OHA→인슐린 전환 환자가 index_date부터 T2DM_INSULIN으로 오분류됨)
-        self.dm.execute("""
+        _lookback_days = int(self.settings.get('LOOKBACK_YEARS', 1)) * 365
+        self.dm.execute(f"""
             CREATE OR REPLACE TABLE med_pattern AS
             SELECT m.INDI_DSCM_NO,
                    MAX(CASE WHEN m.med_type='INSULIN' THEN 1 ELSE 0 END) AS has_insulin,
@@ -243,7 +244,7 @@ class CohortBuilder:
               AND m.rx_date <= CAST(
                   STRFTIME(
                       CAST(SUBSTR(dp.first_dm_date,1,4)||'-'||SUBSTR(dp.first_dm_date,5,2)||'-'||SUBSTR(dp.first_dm_date,7,2) AS DATE)
-                      + INTERVAL 365 DAYS,
+                      + INTERVAL {_lookback_days} DAYS,
                   '%Y%m%d') AS VARCHAR)
             GROUP BY m.INDI_DSCM_NO
         """)

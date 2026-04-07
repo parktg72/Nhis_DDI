@@ -1475,7 +1475,11 @@ class DataManager:
 
     def connect_hana(self, host, port, user, password):
         self.hana = HANAConnector(host, port, user, password)
-        return self.hana.test_connection()
+        try:
+            return self.hana.test_connection()
+        except Exception:
+            self.hana = None
+            raise
 
     def get_hana_schemas(self):
         if not self.hana:

@@ -3,7 +3,7 @@
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
@@ -14,6 +14,7 @@ from db_connector import (
     _prepare_chunk_for_duckdb,
     DuckDBStorage,
     HANAConnector,
+    DataManager,
     SASFileLoader,
     MonthlyHanaExtractor,
 )
@@ -744,3 +745,33 @@ class TestRegisterUnregisterFinally:
         unregister_calls = mock_conn.unregister.call_args_list
         assert len(unregister_calls) >= 2, \
             f"unregister 2회 이상 호출 기대, 실제: {len(unregister_calls)}"
+
+
+class TestDataManagerConnectHana:
+    """Fix H-1: connect_hana가 실패하면 self.hana를 None으로 리셋한다."""
+
+    def test_connect_hana_resets_on_failure(self, tmp_path):
+        """test_connection()이 예외를 던지면 self.hana가 None으로 초기화된다."""
+        dm = DataManager(work_dir=str(tmp_path))
+
+        connector = MagicMock(spec=HANAConnector)
+        connector.test_connection.side_effect = RuntimeError("연결 실패")
+
+        with pytest.raises(RuntimeError, match="연결 실패"), \
+             patch('db_connector.HANAConnector', return_value=connector):
+            dm.connect_hana('host', 30015, 'user', 'pw')
+
+        assert dm.hana is None, "연결 실패 후 dm.hana는 None이어야 한다"
+
+    def test_connect_hana_sets_hana_on_success(self, tmp_path):
+        """test_connection() 성공 시 self.hana에 connector가 저장된다."""
+        dm = DataManager(work_dir=str(tmp_path))
+
+        connector = MagicMock(spec=HANAConnector)
+        connector.test_connection.return_value = True
+
+        with patch('db_connector.HANAConnector', return_value=connector):
+            result = dm.connect_hana('host', 30015, 'user', 'pw')
+
+        assert result is True
+        assert dm.hana is connector

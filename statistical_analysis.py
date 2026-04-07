@@ -294,13 +294,14 @@ class StatisticalAnalyzer:
                 except Exception as ph_e:
                     logger.info(f"PH 검정 생략 ({mname}): {ph_e}")
 
-                # I11: 노출변수 PH 위반은 분석 결과 신뢰성을 훼손 → RuntimeError
+                # I11: 노출변수 PH 위반 → 해당 모델만 스킵 (다른 모델은 유지)
                 if exposure_ph_violation:
-                    raise RuntimeError(
+                    logger.warning(
                         f"Cox {mname}({outcome}): 노출변수 PH 가정 위반 — "
                         f"{', '.join(exposure_ph_violation)}. "
-                        f"층화 Cox 또는 시간-변환 공변량을 검토하세요."
+                        f"해당 모델 결과 제외. 층화 Cox 또는 시간-변환 공변량을 검토하세요."
                     )
+                    continue
                 results[mname] = result_entry
             except RuntimeError:
                 raise  # 노출변수 PH 위반 등 복구 불가 오류
@@ -396,8 +397,12 @@ class StatisticalAnalyzer:
         # caliper: 0.2 × pooled SD of logit(PS) — treated/control 합산 분산 기준
         pooled_sd = np.sqrt((lps_t.var() + lps_c.var()) / 2)
         if pooled_sd == 0 or np.isnan(pooled_sd):
-            logger.warning("PSM: pooled_sd = 0 또는 NaN — caliper 가 무효화되어 모든 매칭 거부됩니다 "
-                           "(treated/control logit(PS) 분산 부족, 데이터 다양성 확인 필요)")
+            msg = ("PSM 스킵: pooled_sd = 0 또는 NaN — caliper 가 무효화되어 모든 매칭 거부됩니다 "
+                   "(treated/control logit(PS) 분산 부족, 데이터 다양성 확인 필요)")
+            logger.warning(msg)
+            if cb: cb(msg)
+            self.results['psm'] = {'skipped': True, 'reason': msg}
+            return self.results['psm']
         caliper = float(STUDY_SETTINGS.get('PSM_CALIPER', 0.2)) * pooled_sd
 
         if len(control) < 1:
@@ -492,6 +497,7 @@ class StatisticalAnalyzer:
         df_dm = df_prepared[df_prepared['exposure_group'] != 'NON_DM']
         if 'dm_duration_cat' not in df_dm.columns:
             if cb: cb("상호작용 분석 스킵: dm_duration_cat 컬럼 없음")
+            self.results['interaction'] = {'skipped': True, 'reason': 'dm_duration_cat 컬럼 없음'}
             return None
 
         # ★ 필요 컬럼만 복사
@@ -515,11 +521,10 @@ class StatisticalAnalyzer:
                 "run_interaction: 데이터 부족 — 행 수 %d (최소 %d), 이벤트 수 %d (최소 %d) — 분석 스킵",
                 len(d), _min_rows, int(d['dementia_event'].sum()), _min_events,
             )
-            if cb: cb(
-                f"상호작용 분석 스킵: 데이터 부족 "
-                f"({len(d)}행/{int(d['dementia_event'].sum())}이벤트, "
-                f"최소 {_min_rows}행/{_min_events}이벤트 필요)"
-            )
+            reason = (f"데이터 부족 ({len(d)}행/{int(d['dementia_event'].sum())}이벤트, "
+                      f"최소 {_min_rows}행/{_min_events}이벤트 필요)")
+            if cb: cb(f"상호작용 분석 스킵: {reason}")
+            self.results['interaction'] = {'skipped': True, 'reason': reason}
             return None
 
         try:

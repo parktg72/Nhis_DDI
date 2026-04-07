@@ -337,4 +337,10 @@ def load_settings(path=None):
                                 settings_dict[k] = v
                         else:
                             settings_dict[k] = v
+    # SAMPLING_SEED 범위 검증 (0-99 정수)
+    seed = STUDY_SETTINGS.get('SAMPLING_SEED', 42)
+    if not isinstance(seed, int) or not (0 <= seed <= 99):
+        raise ValueError(
+            f"SAMPLING_SEED는 0-99 범위의 정수여야 합니다. 현재 값: {seed}"
+        )
     return True
