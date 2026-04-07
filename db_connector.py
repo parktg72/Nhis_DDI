@@ -152,6 +152,12 @@ def _prepare_chunk_for_duckdb(chunk_df):
                 type_overrides[col] = 'VARCHAR'
             continue
 
+        # Mixed Decimal + string → VARCHAR 강제 (INSERT 타입 불일치 방지)
+        has_string = non_null.map(lambda v: isinstance(v, str)).any()
+        if has_string:
+            type_overrides[col] = 'VARCHAR'
+            continue
+
         # Decimal 값만으로 scale을 계산 (int/None 혼재 시 Decimal 부분만 사용)
         decimal_values = non_null[decimal_mask]
 
@@ -323,7 +329,10 @@ class HANAConnector:
             return True
         except ImportError:
             raise ImportError(
-                "hdbcli 패키지 필요: pip install -r requirements-hana.txt"
+                "SAP HANA 드라이버가 설치되지 않았습니다.\n"
+                "명령 프롬프트에서 다음을 실행하세요:\n"
+                "  venv\\Scripts\\activate\n"
+                "  pip install -r requirements-hana.txt"
             )
         except Exception as e:
             logger.error(f"HANA DB 연결 실패: {e}")
@@ -339,7 +348,7 @@ class HANAConnector:
             return result[0] == 'OK'
         except Exception as e:
             logger.error(f"연결 테스트 실패: {e}")
-            return False
+            raise
         finally:
             self.close()
 
@@ -353,6 +362,23 @@ class HANAConnector:
         """완전 종료: 연결 닫고 메모리에서 패스워드 바이트 소거"""
         self.close()
         self._clear_password()
+
+    def _detect_column_type(self, schema_name, table_name, column_name):
+        """HANA 컬럼 타입 조회. 실패 시 None 반환."""
+        if not self.conn:
+            return None
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT DATA_TYPE_NAME FROM SYS.TABLE_COLUMNS
+                WHERE SCHEMA_NAME = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
+            """, (schema_name, table_name, column_name))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+        finally:
+            cursor.close()
 
     # -------------------------------------------------------
     # 스키마/테이블/컬럼 검색 기능
@@ -608,7 +634,7 @@ class HANAConnector:
 
     def load_table_to_duckdb(self, hana_table, hana_schema, duckdb_storage,
                               duckdb_table, columns=None, where_clause=None,
-                              chunk_size=None, progress_callback=None):
+                              chunk_size=None, progress_callback=None, force=True):
         # hana_table 기준으로 라우팅: T20/T30/T40/T60 HANA 소스 테이블은 월별 추출
         if hana_table.upper() in _MONTHLY_TABLES and where_clause is None:
             if columns is not None:
@@ -625,7 +651,8 @@ class HANAConnector:
             extractor = MonthlyHanaExtractor(
                 self, duckdb_storage, hana_schema, _get_hana_cache_dir()
             )
-            return extractor.extract_all_months(hana_table, duckdb_table, progress_callback)
+            return extractor.extract_all_months(hana_table, duckdb_table, progress_callback,
+                                                force=force)
 
         if chunk_size is None:
             chunk_size = chunk_controller.get_chunk('hana')
@@ -645,15 +672,19 @@ class HANAConnector:
             if first_chunk:
                 duckdb_storage.drop_table(duckdb_table)
                 duckdb_storage.conn.register('_temp_chunk', chunk_df)
-                duckdb_storage.execute(f"CREATE TABLE {duckdb_table} AS {chunk_sql}")
-                duckdb_storage.conn.unregister('_temp_chunk')
+                try:
+                    duckdb_storage.execute(f"CREATE TABLE {duckdb_table} AS {chunk_sql}")
+                finally:
+                    duckdb_storage.conn.unregister('_temp_chunk')
                 # 첫 청크 값이 작아 좁은 DECIMAL로 추론된 경우 DECIMAL(38,s)로 확장
                 _widen_decimal_columns(duckdb_storage, duckdb_table)
                 first_chunk = False
             else:
                 duckdb_storage.conn.register('_temp_chunk', chunk_df)
-                duckdb_storage.execute(f"INSERT INTO {duckdb_table} {chunk_sql}")
-                duckdb_storage.conn.unregister('_temp_chunk')
+                try:
+                    duckdb_storage.execute(f"INSERT INTO {duckdb_table} {chunk_sql}")
+                finally:
+                    duckdb_storage.conn.unregister('_temp_chunk')
 
             total += len(chunk_df)
             # chunk_df 즉시 삭제 → Pandas 메모리 적층 방지
@@ -666,19 +697,26 @@ class HANAConnector:
             if progress_callback:
                 _emit_chunk_progress(progress_callback, hana_table, total)
 
-        if duckdb_table.upper() in _MONTHLY_TABLES:
-            _create_indexes_with_progress(
-                duckdb_storage, duckdb_table,
-                [['INDI_DSCM_NO'], ['CMN_KEY']],
-                progress_callback=progress_callback
-            )
-        elif duckdb_table.upper() == 'JK':
+        table_up = duckdb_table.upper()
+        if table_up == 'T20':
+            _create_indexes_with_progress(duckdb_storage, duckdb_table,
+                [['INDI_DSCM_NO'], ['CMN_KEY']], progress_callback=progress_callback)
+        elif table_up == 'T30':
+            _create_indexes_with_progress(duckdb_storage, duckdb_table,
+                [['CMN_KEY', 'MCARE_DESC_LN_NO'], ['INDI_DSCM_NO']], progress_callback=progress_callback)
+        elif table_up == 'T40':
+            _create_indexes_with_progress(duckdb_storage, duckdb_table,
+                [['CMN_KEY', 'SICK_DESC_SEQ_NO'], ['INDI_DSCM_NO']], progress_callback=progress_callback)
+        elif table_up == 'T60':
+            _create_indexes_with_progress(duckdb_storage, duckdb_table,
+                [['CMN_KEY', 'MPRSC_GRANT_NO', 'MPRSC_SEQ_NO'], ['INDI_DSCM_NO']], progress_callback=progress_callback)
+        elif table_up == 'JK':
             _create_indexes_with_progress(
                 duckdb_storage, duckdb_table,
                 [['INDI_DSCM_NO', 'STD_YYYY']],
                 progress_callback=progress_callback
             )
-        elif duckdb_table.upper() == 'DEATH':
+        elif table_up == 'DEATH':
             _create_indexes_with_progress(
                 duckdb_storage, duckdb_table,
                 [['INDI_DSCM_NO']],
@@ -731,15 +769,26 @@ class MonthlyHanaExtractor:
                 months.append(f'{year:04d}{month:02d}')
         return months
 
-    def extract_all_months(self, table_name, duckdb_table, progress_callback=None):
-        """모든 월 추출 → Parquet 저장 → DuckDB 병합."""
+    def extract_all_months(self, table_name, duckdb_table, progress_callback=None,
+                           force=True):
+        """모든 월 추출 → Parquet 저장 → DuckDB 병합.
+
+        Args:
+            force: True(기본) → 기존 Parquet 전체 삭제 후 재추출.
+                   False → 이미 존재하는 월 Parquet 파일 재사용(resume 모드).
+        """
         table_upper = table_name.upper()
         cache_dir = self.cache_root / table_upper
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # 전체 재추출: 기존 Parquet 삭제
-        for f in cache_dir.glob(f'{table_upper}_*.parquet'):
-            f.unlink()
+        if force:
+            # 전체 재추출: 기존 Parquet 삭제
+            for f in cache_dir.glob(f'{table_upper}_*.parquet'):
+                f.unlink()
+        else:
+            # resume 모드: 중단된 쓰기가 남긴 stale .tmp.parquet 정리
+            for f in cache_dir.glob(f'{table_upper}_*.tmp.parquet'):
+                f.unlink()
 
         months = self._month_range()
         total = len(months)
@@ -749,12 +798,28 @@ class MonthlyHanaExtractor:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
+        # Fix C1: MDCARE_STRT_YYYYMM 컬럼 타입 감지 → INTEGER면 숫자 비교
+        col_type = self.hana._detect_column_type(self.schema, table_name, _MONTHLY_FILTER_COL)
+        use_int_where = col_type is not None and 'INT' in col_type.upper()
+
         for idx, yyyymm in enumerate(months, 1):
             parquet_path = cache_dir / f'{table_upper}_{yyyymm}.parquet'
             tmp_path = cache_dir / f'{table_upper}_{yyyymm}.tmp.parquet'
-            # MDCARE_STRT_YYYYMM 컬럼은 VARCHAR/NVARCHAR 타입 가정 (문자열 비교)
-            # INTEGER 타입인 경우 where_clause 없이 전체 테이블 로드 후 필터링 필요
-            where_clause = f"{_MONTHLY_FILTER_COL} = '{yyyymm}'"
+
+            # resume 모드: 유효한 Parquet 파일이 이미 존재하면 스킵
+            if not force and parquet_path.exists() and parquet_path.stat().st_size > 0:
+                parquet_files.append(parquet_path)
+                _emit_progress(
+                    progress_callback,
+                    f"{table_upper} {yyyymm[:4]}-{yyyymm[4:]} 캐시 사용 ({idx}/{total})"
+                )
+                continue
+
+            # Fix C1: 컬럼 타입에 따라 숫자/문자열 비교 분기
+            if use_int_where:
+                where_clause = f"{_MONTHLY_FILTER_COL} = {int(yyyymm)}"
+            else:
+                where_clause = f"{_MONTHLY_FILTER_COL} = '{yyyymm}'"
 
             _emit_progress(
                 progress_callback,
@@ -762,26 +827,34 @@ class MonthlyHanaExtractor:
             )
 
             # 월별 청크를 PyArrow ParquetWriter로 스트리밍 저장 (메모리 효율)
+            # Fix C7: try/finally로 ParquetWriter 안전 닫기
             writer = None
             month_rows = 0
-            for chunk_df in self.hana.fetch_table_chunked(
-                table_name, self.schema,
-                where_clause=where_clause
-            ):
-                chunk_df = _prepare_chunk_for_duckdb(chunk_df)
-                arrow_table = pa.Table.from_pandas(chunk_df, preserve_index=False)
-                if writer is None:
-                    writer = pq.ParquetWriter(str(tmp_path), arrow_table.schema)
-                    if schema_columns is None:
-                        schema_columns = list(chunk_df.columns)
-                writer.write_table(arrow_table)
-                month_rows += len(chunk_df)
-                del chunk_df, arrow_table
-                gc.collect()
+            try:
+                for chunk_df in self.hana.fetch_table_chunked(
+                    table_name, self.schema,
+                    where_clause=where_clause
+                ):
+                    chunk_df = _prepare_chunk_for_duckdb(chunk_df)
+                    arrow_table = pa.Table.from_pandas(chunk_df, preserve_index=False)
+                    if writer is None:
+                        writer = pq.ParquetWriter(str(tmp_path), arrow_table.schema)
+                        if schema_columns is None:
+                            schema_columns = list(chunk_df.columns)
+                    writer.write_table(arrow_table)
+                    month_rows += len(chunk_df)
+                    del chunk_df, arrow_table
+                    gc.collect()
+            finally:
+                if writer is not None:
+                    try:
+                        writer.close()
+                    except Exception as e:
+                        logger.error("ParquetWriter close 실패 (%s %s): %s", table_upper, yyyymm, e)
+                        tmp_path.unlink(missing_ok=True)
+                        raise
 
-            if writer is not None:
-                writer.close()
-            else:
+            if writer is None:
                 # 빈 월: 이미 수집된 스키마로 0행 Parquet 저장 (schema_columns 없으면 무컬럼)
                 empty_df = (
                     pd.DataFrame(columns=schema_columns)
@@ -794,11 +867,12 @@ class MonthlyHanaExtractor:
             parquet_files.append(parquet_path)
             gc.collect()
 
+        # Fix C5: 전체 0건 시 RuntimeError 발생 (빈 테이블 적재 방지)
         if schema_columns is None:
-            logger.warning(
-                "월별 추출 경고: %s 전체 %d개월 데이터가 0건입니다. "
-                "MDCARE_STRT_YYYYMM 컬럼 타입(VARCHAR 가정)을 확인하세요.",
-                table_upper, total,
+            raise RuntimeError(
+                f"{table_upper}: 전체 {total}개월 데이터가 0건입니다. "
+                f"MDCARE_STRT_YYYYMM 컬럼 타입 또는 HANA 접근 권한을 확인하세요. "
+                f"(컬럼 타입 감지 결과: {col_type!r})"
             )
 
         # Parquet → DuckDB 병합 (단일 CREATE TABLE, union_by_name으로 컬럼 드리프트 대응)
@@ -819,11 +893,21 @@ class MonthlyHanaExtractor:
             raise
 
         total_rows = self.storage.get_row_count(duckdb_table)
-        _create_indexes_with_progress(
-            self.storage, duckdb_table,
-            [['INDI_DSCM_NO'], ['CMN_KEY']],
-            progress_callback=progress_callback
-        )
+
+        # Fix I3: 테이블별 복합 인덱스 생성
+        table_up = duckdb_table.upper()
+        if table_up == 'T20':
+            _create_indexes_with_progress(self.storage, duckdb_table,
+                [['INDI_DSCM_NO'], ['CMN_KEY']], progress_callback=progress_callback)
+        elif table_up == 'T30':
+            _create_indexes_with_progress(self.storage, duckdb_table,
+                [['CMN_KEY', 'MCARE_DESC_LN_NO'], ['INDI_DSCM_NO']], progress_callback=progress_callback)
+        elif table_up == 'T40':
+            _create_indexes_with_progress(self.storage, duckdb_table,
+                [['CMN_KEY', 'SICK_DESC_SEQ_NO'], ['INDI_DSCM_NO']], progress_callback=progress_callback)
+        elif table_up == 'T60':
+            _create_indexes_with_progress(self.storage, duckdb_table,
+                [['CMN_KEY', 'MPRSC_GRANT_NO', 'MPRSC_SEQ_NO'], ['INDI_DSCM_NO']], progress_callback=progress_callback)
 
         logger.info(f"월별 추출 완료: {duckdb_table} ({total_rows:,}건, {total}개월)")
         return total_rows
@@ -860,15 +944,19 @@ class SASFileLoader:
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
-                duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
-                duckdb_storage.conn.unregister('_temp_sas')
+                try:
+                    duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
+                finally:
+                    duckdb_storage.conn.unregister('_temp_sas')
                 # 첫 청크 값이 작아 좁은 DECIMAL로 추론된 경우 DECIMAL(38,s)로 확장
                 _widen_decimal_columns(duckdb_storage, table_name)
                 first_chunk = False
             else:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
-                duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
-                duckdb_storage.conn.unregister('_temp_sas')
+                try:
+                    duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
+                finally:
+                    duckdb_storage.conn.unregister('_temp_sas')
 
             total += len(chunk_df)
             del chunk_df
@@ -921,14 +1009,18 @@ class SASFileLoader:
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_csv', chunk_df)
-                duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
-                duckdb_storage.conn.unregister('_temp_csv')
+                try:
+                    duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
+                finally:
+                    duckdb_storage.conn.unregister('_temp_csv')
                 _widen_decimal_columns(duckdb_storage, table_name)
                 first_chunk = False
             else:
                 duckdb_storage.conn.register('_temp_csv', chunk_df)
-                duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
-                duckdb_storage.conn.unregister('_temp_csv')
+                try:
+                    duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
+                finally:
+                    duckdb_storage.conn.unregister('_temp_csv')
 
             total += len(chunk_df)
             del chunk_df
@@ -990,15 +1082,19 @@ class SASFileLoader:
 
             if first_chunk:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
-                duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
-                duckdb_storage.conn.unregister('_temp_sas')
+                try:
+                    duckdb_storage.execute(f"CREATE TABLE {table_name} AS {chunk_sql}")
+                finally:
+                    duckdb_storage.conn.unregister('_temp_sas')
                 # 첫 청크 값이 작아 좁은 DECIMAL로 추론된 경우 DECIMAL(38,s)로 확장
                 _widen_decimal_columns(duckdb_storage, table_name)
                 first_chunk = False
             else:
                 duckdb_storage.conn.register('_temp_sas', chunk_df)
-                duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
-                duckdb_storage.conn.unregister('_temp_sas')
+                try:
+                    duckdb_storage.execute(f"INSERT INTO {table_name} {chunk_sql}")
+                finally:
+                    duckdb_storage.conn.unregister('_temp_sas')
 
             total += len(chunk_df)
             del chunk_df
@@ -1400,7 +1496,8 @@ class DataManager:
         return self.hana.search_tables(schema_name, keyword)
 
     def load_from_hana(self, table_name, hana_schema, hana_table=None,
-                       columns=None, where_clause=None, progress_callback=None):
+                       columns=None, where_clause=None, progress_callback=None,
+                       force=True):
         if not self.hana:
             raise RuntimeError("HANA 미연결")
         if not self.hana.conn:
@@ -1410,7 +1507,7 @@ class DataManager:
         count = self.hana.load_table_to_duckdb(
             hana_table, hana_schema, self.storage,
             table_name, columns, where_clause,
-            progress_callback=progress_callback
+            progress_callback=progress_callback, force=force
         )
         self.loaded_tables[table_name] = count
         return count
@@ -1493,6 +1590,11 @@ class DataManager:
 
     def execute(self, sql):
         self.storage.execute(sql)
+
+    @staticmethod
+    def get_hana_cache_dir() -> Path:
+        """HANA 월별 Parquet 캐시 디렉토리 경로 반환 (UI용 공개 API)."""
+        return _get_hana_cache_dir()
 
     def close(self):
         self.storage.close()

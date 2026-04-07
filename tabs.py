@@ -115,16 +115,15 @@ class ConnectionTab(QWidget):
     def test_hana(self):
         try:
             self._init_dm()
-            ok = self.ctx.dm.connect_hana(self.hana_host.text(), int(self.hana_port.text()),
-                                           self.hana_user.text(), self.hana_pass.text())
-            QMessageBox.information(self, "결과", "연결 성공!" if ok else "연결 실패")
-        except (duckdb.Error, pd.errors.EmptyDataError, ValueError,
-                MemoryError, CohortStepError) as e:
+            self.ctx.dm.connect_hana(self.hana_host.text(), int(self.hana_port.text()),
+                                     self.hana_user.text(), self.hana_pass.text())
+            QMessageBox.information(self, "결과", "HANA DB 연결 성공!")
+        except ImportError as e:
             logger.exception("HANA 연결 테스트 실패")
-            QMessageBox.critical(self, "오류", format_error_for_user(e))
+            QMessageBox.critical(self, "패키지 오류", str(e))
         except Exception as e:
-            logger.exception("HANA 연결 테스트 중 예기치 않은 오류")
-            QMessageBox.critical(self, "오류", format_error_for_user(e))
+            logger.exception("HANA 연결 테스트 실패")
+            QMessageBox.critical(self, "연결 실패", f"HANA DB 연결 실패:\n\n{e}")
 
     def init_workspace(self):
         self._init_dm()
@@ -477,6 +476,35 @@ class DataLoadTab(QWidget):
     def _init_ui(self):
         ly = QVBoxLayout(self)
 
+        # 월별 추출 설정 (T20/T30/T40/T60 전용)
+        mg = QGroupBox("HANA 월별 추출 설정 (T20/T30/T40/T60)")
+        ml = QGridLayout(mg)
+
+        ml.addWidget(QLabel("연구기간:"), 0, 0)
+        self.spin_year_start = QSpinBox()
+        self.spin_year_start.setRange(2002, 2024)
+        self.spin_year_start.setValue(STUDY_SETTINGS['STUDY_START_YEAR'])
+        ml.addWidget(self.spin_year_start, 0, 1)
+        ml.addWidget(QLabel("~"), 0, 2)
+        self.spin_year_end = QSpinBox()
+        self.spin_year_end.setRange(2002, 2024)
+        self.spin_year_end.setValue(STUDY_SETTINGS['STUDY_END_YEAR'])
+        ml.addWidget(self.spin_year_end, 0, 3)
+
+        ml.addWidget(QLabel("Parquet 캐시 폴더:"), 1, 0)
+        self.cache_dir_edit = QLineEdit(str(DataManager.get_hana_cache_dir()))
+        ml.addWidget(self.cache_dir_edit, 1, 1, 1, 2)
+        btn_cache = QPushButton("...")
+        btn_cache.setMaximumWidth(35)
+        btn_cache.clicked.connect(self._browse_cache_dir)
+        ml.addWidget(btn_cache, 1, 3)
+
+        self.chk_resume = QCheckBox("기존 캐시 재사용 — 소스 데이터 변경 시 해제하여 전체 재추출")
+        self.chk_resume.setChecked(True)
+        ml.addWidget(self.chk_resume, 2, 0, 1, 4)
+
+        ly.addWidget(mg)
+
         fg = QGroupBox("테이블별 데이터 소스")
         fl = QGridLayout(fg)
 
@@ -534,6 +562,13 @@ class DataLoadTab(QWidget):
         ly.addWidget(self.load_status)
 
     # --- helpers ---
+    def _browse_cache_dir(self):
+        """Parquet 캐시 폴더 선택"""
+        path = QFileDialog.getExistingDirectory(self, "Parquet 캐시 폴더 선택",
+                                                self.cache_dir_edit.text())
+        if path:
+            self.cache_dir_edit.setText(path)
+
     def _browse_file(self, edit):
         """단일 또는 다중 파일 선택 (세미콜론으로 구분 저장)"""
         paths, _ = QFileDialog.getOpenFileNames(
@@ -555,6 +590,15 @@ class DataLoadTab(QWidget):
             return
         self._ensure_dm()
         self.ctx.dm.init_storage()
+
+        # 월별 추출 설정을 STUDY_SETTINGS / DUCKDB_SETTINGS에 반영
+        STUDY_SETTINGS['STUDY_START_YEAR'] = self.spin_year_start.value()
+        STUDY_SETTINGS['STUDY_END_YEAR'] = self.spin_year_end.value()
+        cache_path = self.cache_dir_edit.text().strip()
+        if cache_path:
+            DUCKDB_SETTINGS['HANA_CACHE_DIR'] = cache_path
+        force_extract = not self.chk_resume.isChecked()
+
         load_cfg = {}
 
         for tname, inp in self.table_inputs.items():
@@ -609,7 +653,8 @@ class DataLoadTab(QWidget):
                                          hana_user, hana_pass)
                     cnt = dm.load_from_hana(
                         tn, src['schema'], src.get('hana_table', tn),
-                        progress_callback=progress_callback
+                        progress_callback=progress_callback,
+                        force=force_extract
                     )
                 elif src['type'] == 'sas':
                     cnt = dm.load_from_sas(
