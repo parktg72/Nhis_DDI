@@ -18,3 +18,4 @@ venv/
 .omc/
 .claude/
 *.sas7bdat
+hana_cache/
