@@ -275,6 +275,15 @@ class CohortBuilder:
 
         result = self.dm.query("SELECT exposure_group, COUNT(*) AS n FROM exposure_groups GROUP BY exposure_group ORDER BY 1")
         logger.info(f"Step 4:\n{result.to_string()}")
+
+        # I9: T2DM_OHA/T2DM_INSULIN 0건 경고 — 약물코드 또는 처방기간 설정 오류 가능성 알림
+        groups_n = dict(zip(result['exposure_group'], result['n']))
+        for grp in ('T2DM_OHA', 'T2DM_INSULIN'):
+            if groups_n.get(grp, 0) == 0:
+                logger.warning(
+                    f"Step 4: {grp} 코호트가 0건입니다 — 약물 코드 또는 처방 기간 설정을 확인하세요."
+                )
+
         return result
 
     def step5_exclude_dementia(self, cb=None):

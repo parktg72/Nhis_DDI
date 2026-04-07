@@ -486,6 +486,35 @@ class TestStep4ClassifyGroups:
         # 외래 1회만 -> DM 기준 미달 -> NON_DM
         assert group == 'NON_DM'
 
+    def test_warns_when_t2dm_oha_is_zero(self, dm):
+        """T2DM_OHA 코호트가 0건이면 WARNING 로그를 출력한다 (I9)."""
+        # T2DM T30 OHA/INSULIN 처방 없음 → T2DM_NOMED만 생성됨
+        with patch('cohort_builder.mem_manager'), \
+             patch('cohort_builder.logger') as mock_log:
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        warning_messages = [str(c) for c in mock_log.warning.call_args_list]
+        assert any('T2DM_OHA' in m for m in warning_messages), \
+            "T2DM_OHA=0 일 때 logger.warning 호출 필요"
+
+    def test_warns_when_t2dm_insulin_is_zero(self, dm):
+        """T2DM_INSULIN 코호트가 0건이면 WARNING 로그를 출력한다 (I9)."""
+        with patch('cohort_builder.mem_manager'), \
+             patch('cohort_builder.logger') as mock_log:
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        warning_messages = [str(c) for c in mock_log.warning.call_args_list]
+        assert any('T2DM_INSULIN' in m for m in warning_messages), \
+            "T2DM_INSULIN=0 일 때 logger.warning 호출 필요"
+
 
 # ===========================================================================
 # Step 5: 기존 치매 진단 + 항치매약 사용자 제외
