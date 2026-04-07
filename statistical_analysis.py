@@ -237,8 +237,8 @@ class StatisticalAnalyzer:
         """3단계 Cox — df_prepared 전달 시 재사용"""
         if cb: cb(f"Cox 회귀 ({outcome})...")
         if df_prepared is None:
-            raw, _ = self._load_data()
-            df_prepared = self._prepare(raw)
+            raw, _ = self._load_data(cb=cb)
+            df_prepared = self._prepare(raw, cb=cb)
 
         min_events = int(STUDY_SETTINGS.get('MIN_EVENTS', 10))
         if min_events <= 0:
@@ -322,8 +322,8 @@ class StatisticalAnalyzer:
         from gpu_accelerator import get_logistic_regression, get_nearest_neighbors, is_gpu_enabled
 
         if df_prepared is None:
-            raw, _ = self._load_data()
-            df_prepared = self._prepare(raw)
+            raw, _ = self._load_data(cb=cb)
+            df_prepared = self._prepare(raw, cb=cb)
 
         # ★ 필요 컬럼만 추출 (전체 복사 방지)
         need_cols = ['exposure_group', 'is_t1dm', 'age_at_index', 'male', 'income_q',

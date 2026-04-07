@@ -162,3 +162,45 @@ def test_run_competing_risks_emits_per_outcome_progress():
     assert any('dementia_event' in m for m in messages), f"dementia_event 메시지 없음: {messages}"
     assert any('ad_event' in m for m in messages), f"ad_event 메시지 없음: {messages}"
     assert any('vad_event' in m for m in messages), f"vad_event 메시지 없음: {messages}"
+
+
+def test_run_cox_standalone_passes_cb_to_load_data(monkeypatch):
+    """run_cox(cb=..., df_prepared=None) 시 _load_data 에 cb 가 전달되어야 한다."""
+    dm = MagicMock()
+    analyzer = StatisticalAnalyzer(dm)
+    load_cb_received = []
+
+    def patched_load(cb=None):
+        load_cb_received.append(cb)
+        raise pd.errors.EmptyDataError("테스트 중단")
+
+    monkeypatch.setattr(analyzer, '_load_data', patched_load)
+    cb = MagicMock()
+    try:
+        analyzer.run_cox('dementia_event', cb=cb, df_prepared=None)
+    except (pd.errors.EmptyDataError, Exception):
+        pass
+
+    assert load_cb_received and load_cb_received[0] is cb, \
+        f"run_cox fallback: _load_data 에 cb 미전달. received={load_cb_received}"
+
+
+def test_run_psm_standalone_passes_cb_to_load_data(monkeypatch):
+    """run_psm(cb=..., df_prepared=None) 시 _load_data 에 cb 가 전달되어야 한다."""
+    dm = MagicMock()
+    analyzer = StatisticalAnalyzer(dm)
+    load_cb_received = []
+
+    def patched_load(cb=None):
+        load_cb_received.append(cb)
+        raise pd.errors.EmptyDataError("테스트 중단")
+
+    monkeypatch.setattr(analyzer, '_load_data', patched_load)
+    cb = MagicMock()
+    try:
+        analyzer.run_psm(cb=cb, df_prepared=None)
+    except (pd.errors.EmptyDataError, Exception):
+        pass
+
+    assert load_cb_received and load_cb_received[0] is cb, \
+        f"run_psm fallback: _load_data 에 cb 미전달. received={load_cb_received}"
