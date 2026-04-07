@@ -1340,6 +1340,7 @@ if run_btn:
         except Exception as e:
             log(f"[{mi+1}/{_n_models}] {mname} 실패: {e}")
             st.warning(f"⚠️ {mname} 학습 실패: {e}")
+            st.exception(e)
 
     if not all_results:
         st.error("모든 모델 학습이 실패했습니다.")
