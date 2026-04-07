@@ -235,7 +235,6 @@ class StatisticalAnalyzer:
 
     def run_cox(self, outcome='dementia_event', cb=None, df_prepared=None):
         """3단계 Cox — df_prepared 전달 시 재사용"""
-        if cb: cb(f"Cox 회귀 ({outcome})...")
         if df_prepared is None:
             raw, _ = self._load_data(cb=cb)
             df_prepared = self._prepare(raw, cb=cb)
@@ -684,6 +683,7 @@ class StatisticalAnalyzer:
             df_cr = df_cr[df_cr[T] > 0]
 
             if len(df_cr) < _min_cr:
+                if cb: cb(f"경쟁위험 분석: {outcome} 스킵 (유효 행 {len(df_cr)} < {_min_cr})")
                 continue
 
             # --- 1) 이벤트 유형 분류 ---

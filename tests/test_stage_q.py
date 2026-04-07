@@ -204,3 +204,26 @@ def test_run_psm_standalone_passes_cb_to_load_data(monkeypatch):
 
     assert load_cb_received and load_cb_received[0] is cb, \
         f"run_psm fallback: _load_data 에 cb 미전달. received={load_cb_received}"
+
+
+def test_run_competing_risks_emits_skip_message_when_insufficient_rows():
+    """유효 행 부족으로 스킵될 때 스킵 메시지를 emit 해야 한다."""
+    dm = MagicMock()
+    analyzer = StatisticalAnalyzer(dm)
+
+    # MIN_VALID_ROWS=30 — 29행으로 스킵 유도
+    n = 29
+    df = pd.DataFrame({
+        'exposure_group': ['NON_DM'] * n,
+        'is_t1dm': [0] * n, 'is_t2dm_oha': [0] * n,
+        'is_t2dm_insulin': [0] * n, 'is_t2dm_nomed': [0] * n,
+        'age_at_index': [55.0] * n, 'male': [1] * n,
+        'follow_up_years': [1.0] * n,
+        'dementia_event': [0] * 24 + [1] * 5,
+        'competing_death_event': [0] * 25 + [1] * 4,
+    })
+    messages = []
+    analyzer.run_competing_risks(cb=messages.append, df_prepared=df)
+
+    skip_msgs = [m for m in messages if '스킵' in m or 'skip' in m.lower()]
+    assert skip_msgs, f"스킵 메시지 없음. 실제: {messages}"
