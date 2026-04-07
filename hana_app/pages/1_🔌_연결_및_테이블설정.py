@@ -23,7 +23,7 @@ st.set_page_config(page_title="데이터 소스 설정", page_icon="🔌", layou
 st.title("🔌 데이터 소스 설정")
 
 cfg  = load_config()
-conn = get_connection()
+conn = get_connection(st.session_state)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -115,6 +115,12 @@ with tab_hana:
                             info = conn.server_info()
                             st.success("✅ 연결 성공!")
                             st.session_state.connected = True
+                            st.session_state["hana_creds"] = {
+                                "host": host,
+                                "port": int(port),
+                                "user": user,
+                                "password": password,
+                            }
                             st.session_state.conn_host = host
                             if info:
                                 st.json({k: v for k, v in info.items()
