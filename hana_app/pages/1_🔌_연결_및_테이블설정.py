@@ -1,6 +1,7 @@
 """
 페이지 1: 데이터 소스 선택 + HANA DB 연결 또는 SAS 파일 설정
 """
+import datetime
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from hana_app.core.config import (
     load_config, save_config, set_password,
 )
 from hana_app.core.db import get_connection
+from hana_app.core.table_validator import check_column_mapping, validate_all_identifiers
 from hana_app.core.sas_reader import scan_sas_files, guess_table_type, get_sas_columns
 
 st.set_page_config(page_title="데이터 소스 설정", page_icon="🔌", layout="wide")
@@ -54,11 +56,12 @@ st.markdown("---")
 # ═════════════════════════════════════════════════════════════════════════════
 # 탭 구성: HANA 연결 / SAS 파일 / 테이블 위치 / 컬럼 매핑
 # ═════════════════════════════════════════════════════════════════════════════
-tab_hana, tab_sas, tab_tbl, tab_col = st.tabs([
+tab_hana, tab_sas, tab_tbl, tab_col, tab_validate = st.tabs([
     "🗄️ HANA DB 연결",
     "📂 SAS 파일 설정",
     "📋 테이블 위치 (HANA)",
     "🗂️ 컬럼 매핑",
+    "🔍 테이블 검증",
 ])
 
 
@@ -496,3 +499,215 @@ with tab_col:
 
     st.markdown("---")
     st.caption("★ 표시 항목이 DDI 분석 핵심 컬럼입니다. yyyymm 컬럼은 월 파티션 필터에 사용됩니다.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 탭 5: 테이블 검증 Wizard (HANA 전용)
+# ─────────────────────────────────────────────────────────────────────────────
+with tab_validate:
+    st.subheader("🔍 HANA 테이블 검증")
+    st.caption(
+        "실제 HANA DB의 테이블·컬럼이 학습 코드와 일치하는지 확인합니다. "
+        "3번 페이지(모델 학습)에서 데이터를 추출하기 전에 반드시 완료해야 합니다."
+    )
+
+    if not (st.session_state.get("connected") and conn.is_connected()):
+        st.warning("⚠️ HANA DB에 먼저 연결하세요. (🗄️ HANA DB 연결 탭)")
+        st.stop()
+
+    # ── 현재 검증 상태 표시 ───────────────────────────────────────────────
+    if cfg.get("validated"):
+        st.success(
+            f"✅ 검증 완료  |  "
+            f"{cfg.get('validated_at', '')}  |  "
+            f"호스트: {cfg.get('validated_host', '')}"
+        )
+        if cfg.get("validated_host") and cfg["validated_host"] != cfg["connection"]["host"]:
+            st.warning(
+                "⚠️ 검증된 호스트와 현재 연결 호스트가 다릅니다. 재검증을 권장합니다."
+            )
+    else:
+        st.info("ℹ️ 아직 검증되지 않았습니다. 아래 단계를 순서대로 진행하세요.")
+
+    st.markdown("---")
+
+    TABLE_LOGICAL = {
+        "t20":    "T20 (요양명세서)",
+        "t30":    "T30 (원내 약품)",
+        "t40":    "T40 (상병내역)",
+        "t60":    "T60 (원외처방)",
+        "yoyang": "요양기관",
+    }
+
+    # ── Step 1: 스키마 선택 ───────────────────────────────────────────────
+    st.markdown("#### Step 1: 스키마 선택")
+
+    col_refresh1, _ = st.columns([1, 5])
+    with col_refresh1:
+        if st.button("🔄 스키마 새로고침", key="refresh_schemas"):
+            st.session_state.pop("_wizard_schemas", None)
+
+    if "_wizard_schemas" not in st.session_state:
+        with st.spinner("스키마 목록 조회 중..."):
+            try:
+                st.session_state["_wizard_schemas"] = conn.get_schemas()
+            except Exception as e:
+                st.error(f"❌ 스키마 조회 실패: {e}")
+                st.stop()
+
+    schema_list = st.session_state["_wizard_schemas"]
+    if not schema_list:
+        st.error("❌ 접근 가능한 스키마가 없습니다. 계정 권한을 확인하세요.")
+        st.stop()
+
+    schema_selections: dict[str, str] = {}
+    cols_s = st.columns(len(TABLE_LOGICAL))
+    for (tbl_key, tbl_label), col in zip(TABLE_LOGICAL.items(), cols_s):
+        current_schema = cfg["tables"].get(tbl_key, {}).get("schema", "")
+        default_idx = schema_list.index(current_schema) if current_schema in schema_list else 0
+        with col:
+            schema_selections[tbl_key] = st.selectbox(
+                tbl_label,
+                options=schema_list,
+                index=default_idx,
+                key=f"wiz_schema_{tbl_key}",
+            )
+
+    # ── Step 2: 테이블 선택 ───────────────────────────────────────────────
+    st.markdown("#### Step 2: 테이블 선택")
+
+    table_selections: dict[str, str] = {}
+    for tbl_key, tbl_label in TABLE_LOGICAL.items():
+        schema = schema_selections[tbl_key]
+        cache_key = f"_wizard_tables_{schema}"
+        col_lbl, col_sel, col_ref = st.columns([1, 3, 1])
+        with col_ref:
+            if st.button("🔄", key=f"refresh_tbl_{tbl_key}", help="테이블 목록 새로고침"):
+                st.session_state.pop(cache_key, None)
+        if cache_key not in st.session_state:
+            with st.spinner(f"{schema} 테이블 목록 조회 중..."):
+                try:
+                    st.session_state[cache_key] = conn.get_tables(schema)
+                except Exception as e:
+                    st.session_state[cache_key] = []
+                    st.error(f"❌ {schema} 테이블 조회 실패: {e}")
+        tbl_list = st.session_state[cache_key]
+        current_tbl = cfg["tables"].get(tbl_key, {}).get("table", "")
+        default_idx = tbl_list.index(current_tbl) if current_tbl in tbl_list else 0
+        with col_lbl:
+            st.markdown(f"**{tbl_label}**")
+        with col_sel:
+            if tbl_list:
+                table_selections[tbl_key] = st.selectbox(
+                    "테이블",
+                    options=tbl_list,
+                    index=default_idx,
+                    key=f"wiz_table_{tbl_key}",
+                    label_visibility="collapsed",
+                )
+            else:
+                st.error(f"❌ {schema} 에 테이블이 없습니다")
+                table_selections[tbl_key] = ""
+
+    # ── Step 3: 컬럼 매핑 검증 ───────────────────────────────────────────
+    st.markdown("#### Step 3: 컬럼 매핑 검증")
+    st.caption("ETL에 필요한 컬럼만 검증합니다. 🔴 항목은 드롭다운으로 실제 컬럼을 선택하세요.")
+
+    # wizard에서 선택한 컬럼 매핑 (논리명 → 실제 DB 컬럼명)
+    updated_col_map: dict[str, dict[str, str]] = {}
+
+    for tbl_key, tbl_label in TABLE_LOGICAL.items():
+        schema = schema_selections[tbl_key]
+        table = table_selections.get(tbl_key, "")
+        if not table:
+            continue
+
+        cache_key = f"_wizard_cols_{schema}_{table}"
+        if cache_key not in st.session_state:
+            with st.spinner(f"{table} 컬럼 조회 중..."):
+                try:
+                    col_info = conn.get_columns(schema, table)
+                    st.session_state[cache_key] = [c["name"] for c in col_info]
+                except Exception as e:
+                    st.session_state[cache_key] = []
+                    st.error(f"❌ {table} 컬럼 조회 실패: {e}")
+
+        actual_cols = st.session_state[cache_key]
+        expected_map: dict[str, str] = cfg.get("columns", {}).get(tbl_key, {})
+
+        check_result = check_column_mapping(actual_cols, expected_map)
+
+        with st.expander(
+            f"**{tbl_label}** — "
+            f"✅ {len(check_result['ok'])}개 일치 / "
+            f"{'🔴 ' + str(len(check_result['missing'])) + '개 불일치' if check_result['missing'] else '전체 일치'}",
+            expanded=bool(check_result["missing"]),
+        ):
+            tbl_col_map: dict[str, str] = {}
+            for logical_name, db_col in expected_map.items():
+                status = "✅" if logical_name in check_result["ok"] else "🔴"
+                c1, c2, c3 = st.columns([1, 2, 2])
+                with c1:
+                    st.markdown(status)
+                with c2:
+                    st.markdown(f"`{logical_name}`")
+                with c3:
+                    if logical_name in check_result["ok"]:
+                        st.markdown(f"`{db_col}`")
+                        tbl_col_map[logical_name] = db_col
+                    else:
+                        # 불일치: 실제 컬럼 중에서 선택
+                        opts = actual_cols if actual_cols else ["(컬럼 없음)"]
+                        sel = st.selectbox(
+                            f"{logical_name} 대체 컬럼",
+                            options=opts,
+                            key=f"wiz_col_{tbl_key}_{logical_name}",
+                            label_visibility="collapsed",
+                        )
+                        tbl_col_map[logical_name] = sel
+
+            updated_col_map[tbl_key] = tbl_col_map
+
+    # ── Step 4: 저장 ─────────────────────────────────────────────────────
+    st.markdown("#### Step 4: 저장")
+
+    col_save, col_revalidate = st.columns(2)
+    with col_save:
+        if st.button("✅ 검증 완료 & 저장", type="primary", use_container_width=True):
+            # 저장 전 일괄 식별자 재검증
+            try:
+                for tbl_key, col_map in updated_col_map.items():
+                    validate_all_identifiers(col_map)
+            except ValueError as e:
+                st.error(f"❌ 식별자 검증 실패: {e}")
+                st.stop()
+
+            # config 업데이트
+            for tbl_key, tbl_label in TABLE_LOGICAL.items():
+                cfg["tables"][tbl_key] = {
+                    "schema": schema_selections.get(tbl_key, cfg["tables"].get(tbl_key, {}).get("schema", "")),
+                    "table":  table_selections.get(tbl_key, cfg["tables"].get(tbl_key, {}).get("table", "")),
+                }
+                if tbl_key in updated_col_map:
+                    if "columns" not in cfg:
+                        cfg["columns"] = {}
+                    cfg["columns"][tbl_key] = updated_col_map[tbl_key]
+
+            cfg["validated"] = True
+            cfg["validated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+            cfg["validated_host"] = cfg["connection"]["host"]
+            save_config(cfg)
+            st.success("✅ 검증 완료 — 3번 페이지에서 학습을 시작할 수 있습니다.")
+            st.rerun()
+
+    with col_revalidate:
+        if cfg.get("validated") and st.button(
+            "🔄 재검증", use_container_width=True,
+            help="DB 스키마 변경 후 재검증"
+        ):
+            cfg["validated"] = False
+            save_config(cfg)
+            for key in list(st.session_state.keys()):
+                if key.startswith("_wizard_"):
+                    del st.session_state[key]
+            st.rerun()
