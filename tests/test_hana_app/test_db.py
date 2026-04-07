@@ -89,3 +89,21 @@ class TestEnsureConnected:
             with patch.object(conn, "connect", side_effect=RuntimeError("DB down")):
                 with pytest.raises(RuntimeError, match="DB down"):
                     conn.ensure_connected(self.CREDS)
+
+    def test_stale_ttl_calls_is_connected(self):
+        """TTL 만료 시 is_connected() 가 호출된다."""
+        import time
+        conn = HANAConnection()
+        session: dict = {"_conn_ok_until": time.monotonic() - 1}  # 이미 만료
+        with patch.object(conn, "is_connected", return_value=True) as mock_check:
+            conn.ensure_connected(self.CREDS, session_state=session)
+        mock_check.assert_called_once()
+
+    def test_string_port_coerced_to_int(self):
+        """port가 문자열로 전달되면 int로 변환해 connect()를 호출한다."""
+        conn = HANAConnection()
+        creds_str_port = {"host": "h", "port": "30015", "user": "u", "password": "p"}
+        with patch.object(conn, "is_connected", return_value=False):
+            with patch.object(conn, "connect") as mock_connect:
+                conn.ensure_connected(creds_str_port)
+        mock_connect.assert_called_once_with(host="h", port=30015, user="u", password="p")
