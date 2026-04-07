@@ -957,8 +957,8 @@ class AnalysisTab(QWidget):
             return run_post_analysis(self.ctx.dm, ar, self.ctx.results_dir, log=_log)
 
         from main_app import WorkerThread
-        self._post_worker = WorkerThread(do_post)
-        mw.worker = self._post_worker  # closeEvent 에서 cleanup 가능하도록 등록
+        self._post_worker = WorkerThread(do_post)  # GC 방지: 인스턴스 변수 유지
+        mw.worker = self._post_worker  # closeEvent cleanup + mw.worker 는 '현재 실행 중인 최신 워커' 관례
         self._post_worker.progress.connect(self.log_signal.emit)
         self._post_worker.progress.connect(lambda m: self.analysis_text.append(m))
         self._post_worker.finished.connect(self._on_post_analysis)

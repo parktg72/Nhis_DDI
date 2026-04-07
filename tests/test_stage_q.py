@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pandas as pd
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -227,3 +228,13 @@ def test_run_competing_risks_emits_skip_message_when_insufficient_rows():
 
     skip_msgs = [m for m in messages if '스킵' in m or 'skip' in m.lower()]
     assert skip_msgs, f"스킵 메시지 없음. 실제: {messages}"
+
+
+def test_main_app_on_error_hides_progress_bar():
+    """_on_error 가 progress_bar 를 숨기고 버튼을 활성화해야 한다."""
+    main_app = pytest.importorskip('main_app', reason="PyQt5 필요")
+    mw = MagicMock()
+    with patch('main_app.QMessageBox'):
+        main_app.MainWindow._on_error(mw, "테스트 오류")
+    mw.progress_bar.setVisible.assert_called_once_with(False)
+    mw._set_action_buttons_enabled.assert_called_once_with(True)
