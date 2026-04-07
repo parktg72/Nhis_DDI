@@ -61,8 +61,36 @@ def test_prepare_emits_progress_message():
     })
     messages = []
     analyzer._prepare(df, cb=messages.append)
-    assert any("전처리" in m for m in messages), \
-        f"'전처리' 메시지 없음. 실제: {messages}"
+    assert any("데이터 전처리 중" in m for m in messages), \
+        f"'데이터 전처리 중' 메시지 없음. 실제: {messages}"
+
+
+def test_load_data_emits_sampling_message():
+    """total > max_rows 샘플링 분기에서 '샘플링' 관련 메시지를 emit 해야 한다."""
+    dm = MagicMock()
+    # total=100, max_rows=5 → 샘플링 분기 강제 진입
+    dm.storage.get_row_count.return_value = 100
+    group_df = pd.DataFrame({'exposure_group': ['NON_DM'], 'cnt': [100]})
+    sample_df = pd.DataFrame({
+        'exposure_group': ['NON_DM'] * 5,
+        'follow_up_days': [365] * 5,
+        'follow_up_years': [1.0] * 5,
+        'age_at_index': [55.0] * 5,
+        'SEX_TYPE': ['1'] * 5,
+    })
+    dm.query.side_effect = [group_df, sample_df]
+    dm.execute.return_value = None
+
+    with patch('statistical_analysis.mem_manager') as mock_mm:
+        mock_mm.get_safe_analysis_rows.return_value = 5
+        mock_mm.optimize_dtypes.side_effect = lambda df: df
+
+        analyzer = StatisticalAnalyzer(dm)
+        messages = []
+        analyzer._load_data(cb=messages.append)
+
+    assert any("샘플링" in m or "층화" in m for m in messages), \
+        f"샘플링 메시지 없음. 실제: {messages}"
 
 
 def test_run_selected_passes_cb_to_load_data(monkeypatch):
