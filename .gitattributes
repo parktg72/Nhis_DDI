@@ -1,0 +1,8 @@
+# Windows 배치 파일은 항상 CRLF 줄바꿈 유지
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 소스 코드는 LF 통일
+*.py  text eol=lf
+*.txt text eol=lf
+*.md  text eol=lf
