@@ -2,8 +2,13 @@
 
 **날짜:** 2026-04-06
 **목표:** 폐쇄망 SAP HANA DB에서 ETL → 학습 전체 흐름을 안정적으로 실행
-**범위:** `hana_app/core/db.py`, `hana_app/core/config.py`, Page 1, Page 3
+**범위:** `hana_app/core/db.py`, `hana_app/core/config.py`, `hana_app/core/table_validator.py` (신규), Page 1, 2, 3, 5
 **범위 외:** `hana_etl.py`, `ml_runner.py` (config를 소비만 하므로 수정 없음)
+
+> **Page별 적용 범위:**
+> - Page 1: `get_connection(st.session_state)` 교체 + wizard 추가
+> - Page 2, 5: `get_connection(st.session_state)` 교체만 (validated 가드 없음 — 연결만 되면 동작)
+> - Page 3: `get_connection(st.session_state)` 교체 + validated 가드 + 예외 표시
 
 ---
 
@@ -79,18 +84,32 @@ def get_connection(session_state: dict | None = None) -> HANAConnection:
     return session_state["hana_conn"]
 ```
 
-#### 변경 2: HANAConnection.ensure_connected()
+#### 변경 2: HANAConnection.ensure_connected() + TTL 캐시
+
+`is_connected()`는 `SELECT 1 FROM DUMMY`를 실행하므로 Streamlit rerun마다 호출되면 불필요한 DB 왕복이 발생합니다. `session_state`에 TTL 캐시를 두어 5초 이내 재확인을 생략합니다.
 
 ```python
-def ensure_connected(self, creds: dict) -> None:
+def ensure_connected(
+    self,
+    creds: dict,
+    session_state: dict | None = None,
+    ttl_seconds: int = 5,
+) -> None:
     """연결이 끊겼으면 creds로 자동 재연결.
 
     creds 구조:
         {"host": str, "port": int, "user": str, "password": str}
 
+    session_state가 제공되면 TTL 캐시를 사용해 is_connected() 호출을 제한.
     이미 연결된 상태면 아무것도 하지 않는다.
     재연결 실패 시 hdbcli 예외를 그대로 전파한다.
     """
+    import time
+    now = time.monotonic()
+    cache_key = "_conn_ok_until"
+    if session_state is not None:
+        if now < session_state.get(cache_key, 0):
+            return   # TTL 내 → 재확인 생략
     if not self.is_connected():
         self.connect(
             host=creds["host"],
@@ -98,6 +117,8 @@ def ensure_connected(self, creds: dict) -> None:
             user=creds["user"],
             password=creds["password"],
         )
+    if session_state is not None:
+        session_state[cache_key] = now + ttl_seconds
 ```
 
 #### creds 저장 위치
@@ -122,8 +143,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 ```
 
-Page 1 검증 완료 시 `cfg["validated"] = True` 후 `save_config(cfg)` 호출.
-테이블 설정 변경 시 `cfg["validated"] = False`로 초기화.
+Page 1 검증 완료 시 아래와 같이 저장:
+
+```python
+import datetime
+cfg["validated"] = True
+cfg["validated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+cfg["validated_host"] = cfg["connection"]["host"]
+save_config(cfg)
+```
+
+테이블 설정 변경 시 `cfg["validated"] = False`로 초기화 (validated_at, validated_host는 유지 — 마지막 검증 이력 보존).
+
+Page 3에서 validated_host가 현재 연결 host와 다르면 경고 표시:
+```python
+if cfg.get("validated_host") != cfg["connection"]["host"]:
+    st.warning("⚠️ 검증된 DB 호스트와 현재 연결 호스트가 다릅니다. 재검증을 권장합니다.")
+```
 
 ---
 
@@ -148,18 +184,35 @@ st.session_state["hana_creds"] = {
 }
 ```
 
+**wizard 캐시 전략:** Streamlit은 UI 조작마다 전체 페이지를 재실행합니다. DB 조회 결과를 `session_state`에 캐시해 중복 호출을 방지합니다.
+
+```python
+# 캐시 키 구조
+st.session_state["_wizard_schemas"]           # get_schemas() 결과
+st.session_state["_wizard_tables_{schema}"]   # get_tables(schema) 결과
+st.session_state["_wizard_cols_{schema}_{table}"]  # get_columns() 결과
+```
+
+각 단계 옆에 "🔄 새로고침" 버튼 → 해당 캐시 키 삭제 후 재조회.
+
 #### Step 1: 스키마 선택
-- `conn.get_schemas()` 호출 → 사용 가능한 스키마 목록 표시
+- `session_state["_wizard_schemas"]` 없으면 `conn.get_schemas()` 호출, 결과 캐시
 - t20 / t30 / t40 / t60 / yoyang 각각 selectbox로 스키마 선택
 - 현재 config 값을 기본 선택으로 pre-fill
 
 #### Step 2: 테이블 선택
-- 선택된 스키마별 `conn.get_tables(schema)` 호출
+- 선택된 스키마별 `conn.get_tables(schema)` 호출 (캐시 적용)
 - 각 논리 테이블에 실제 테이블명 selectbox 매핑
 - 현재 config 값을 기본 선택으로 pre-fill
 
 #### Step 3: 컬럼 매핑 검증
-- 선택된 각 테이블의 `conn.get_columns(schema, table)` 호출
+- **검증 대상: `DEFAULT_TABLE_COLS`에 정의된 ETL 필수 컬럼만** (테이블 전체 컬럼 아님)
+  - t20: patient_id, bill_no, institution_id, start_date, yyyymm, sex, age_id, institution_type (8개)
+  - t30: patient_id, bill_no, drug_code, edi_code, dose_once, dose_freq, total_days (7개)
+  - t40: patient_id, bill_no, sick_code (3개)
+  - t60: patient_id, bill_no, drug_code, edi_code, dose_once, dose_freq, total_days, sick_code (8개)
+  - yoyang: institution_id, institution_type, std_year (3개)
+- 선택된 각 테이블의 `conn.get_columns(schema, table)` 호출 (캐시 적용)
 - 코드가 기대하는 논리 컬럼명 ↔ 실제 DB 컬럼명 비교 표 표시:
 
 | 논리명 | 기대 컬럼 | 실제 존재 | 상태 |
@@ -172,10 +225,12 @@ st.session_state["hana_creds"] = {
 
 #### Step 4: 저장 및 완료
 - "✅ 검증 완료 & 저장" 버튼
+- **저장 전 일괄 식별자 재검증:** 모든 컬럼명에 `_assert_safe_identifier()` 재실행 (드롭다운 조작 방어)
 - config["tables"] + config["columns"] 업데이트
-- config["validated"] = True
+- config["validated"] = True, validated_at, validated_host 기록
 - `save_config(cfg)` 호출
 - `st.success("✅ 검증 완료 — 3번 페이지에서 학습을 시작할 수 있습니다.")`
+- 검증 완료 후에도 "🔄 재검증" 버튼 상시 표시 (DB 스키마 변경 대비)
 
 #### 검증 오류 메시지 세분화
 
@@ -270,6 +325,23 @@ except Exception as e:
 
 ## 6. 테스트 전략
 
+### 6.0 테스트 픽스처 — `_fallback_conn` 격리
+
+`_fallback_conn`이 모듈 레벨 객체이므로 테스트 간 상태 누출 방지를 위해 autouse 픽스처 추가:
+
+```python
+# conftest.py
+import pytest
+from hana_app.core import db as _db_module
+
+@pytest.fixture(autouse=True)
+def reset_fallback_conn():
+    """각 테스트 전 _fallback_conn을 새 인스턴스로 교체."""
+    _db_module._fallback_conn = _db_module.HANAConnection()
+    yield
+    _db_module._fallback_conn = _db_module.HANAConnection()
+```
+
 ### 6.1 db.py 단위 테스트
 
 ```python
@@ -347,12 +419,15 @@ def test_page3_guard_passes_when_validated():
 
 | Task | 파일 | 내용 |
 |------|------|------|
-| 1 | `hana_app/core/db.py` | `get_connection(session_state)` + `ensure_connected()` + 테스트 4건 |
-| 2 | `hana_app/core/config.py` | `validated` 플래그 추가 + 테스트 |
-| 3 | `hana_app/core/table_validator.py` (신규) | `check_column_mapping()` 헬퍼 + 테스트 |
-| 4 | `hana_app/pages/1_🔌_연결_및_테이블설정.py` | 연결 코드 교체 + creds 저장 + wizard 4단계 |
-| 5 | `hana_app/pages/3_🤖_모델_학습.py` | 가드 로직 교체 + ETL 예외 표시 |
-| 6 | 통합 검증 | 전체 테스트 스위트 통과 확인 |
+| 1 | `hana_app/core/db.py` | `get_connection(session_state)` + `ensure_connected()` (TTL 캐시 포함) + 테스트 |
+| 2 | `hana_app/core/config.py` | `validated` + `validated_at` + `validated_host` 플래그 + 테스트 |
+| 3 | `hana_app/core/table_validator.py` (신규) | `check_column_mapping()` 헬퍼 + 일괄 식별자 검증 + 테스트 |
+| 4 | `tests/conftest.py` | `reset_fallback_conn` autouse 픽스처 추가 |
+| 5 | `hana_app/pages/1_🔌_연결_및_테이블설정.py` | 연결 코드 교체 + creds 저장 + wizard 4단계 (캐시 포함) |
+| 6 | `hana_app/pages/2_🔍_데이터_미리보기.py` | `get_connection(st.session_state)` 교체만 |
+| 7 | `hana_app/pages/3_🤖_모델_학습.py` | 가드 로직 교체 + ETL 예외 표시 + host 불일치 경고 |
+| 8 | `hana_app/pages/5_🗄️_분석DB_관리.py` | `get_connection(st.session_state)` 교체만 |
+| 9 | 통합 검증 | 전체 테스트 스위트 통과 확인 |
 
 ---
 
