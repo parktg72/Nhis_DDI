@@ -752,6 +752,86 @@ class TestRegisterUnregisterFinally:
             f"unregister 2회 이상 호출 기대, 실제: {len(unregister_calls)}"
 
 
+class TestLoadTableCohortIDsFilter:
+    """비월별 테이블 load_table_to_duckdb 시 cohort_ids IN 필터 적용 검증."""
+
+    def test_non_monthly_table_applies_cohort_ids_where(self, tmp_path):
+        """JK 같은 비월별 테이블에 cohort_ids가 주어지면 INDI_DSCM_NO IN 조건으로 조회."""
+        captured_wheres = []
+
+        hana = HANAConnector.__new__(HANAConnector)
+        hana.conn = MagicMock()
+
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+            captured_wheres.append(where_clause)
+            return iter([])
+
+        hana.fetch_table_chunked = MagicMock(side_effect=fake_fetch)
+
+        mock_storage = MagicMock()
+        mock_storage.conn = MagicMock()
+
+        cohort_ids = frozenset(['P001', 'P002', 'P003'])
+        hana.load_table_to_duckdb('JK', 'NHIS', mock_storage, 'JK', cohort_ids=cohort_ids)
+
+        assert len(captured_wheres) > 0, "fetch_table_chunked 호출이 없음"
+        assert any(w and 'INDI_DSCM_NO IN' in w for w in captured_wheres), \
+            f"비월별 테이블에 cohort_ids IN 조건 필요. 캡처된 WHERE: {captured_wheres}"
+
+    def test_non_monthly_table_no_cohort_ids_uses_original_where(self, tmp_path):
+        """cohort_ids=None 이면 기존 where_clause 그대로 사용."""
+        captured_wheres = []
+
+        hana = HANAConnector.__new__(HANAConnector)
+        hana.conn = MagicMock()
+
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+            captured_wheres.append(where_clause)
+            return iter([])
+
+        hana.fetch_table_chunked = MagicMock(side_effect=fake_fetch)
+        mock_storage = MagicMock()
+        mock_storage.conn = MagicMock()
+
+        hana.load_table_to_duckdb(
+            'JK', 'NHIS', mock_storage, 'JK',
+            where_clause="STD_YYYY = '2013'",
+            cohort_ids=None,
+        )
+
+        assert len(captured_wheres) == 1
+        assert captured_wheres[0] == "STD_YYYY = '2013'", \
+            f"cohort_ids=None 시 원본 where_clause 유지 필요. 실제: {captured_wheres[0]}"
+
+    def test_non_monthly_table_combines_where_and_cohort_ids(self, tmp_path):
+        """where_clause + cohort_ids 둘 다 있으면 AND로 결합."""
+        captured_wheres = []
+
+        hana = HANAConnector.__new__(HANAConnector)
+        hana.conn = MagicMock()
+
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+            captured_wheres.append(where_clause)
+            return iter([])
+
+        hana.fetch_table_chunked = MagicMock(side_effect=fake_fetch)
+        mock_storage = MagicMock()
+        mock_storage.conn = MagicMock()
+
+        cohort_ids = frozenset(['P001'])
+        hana.load_table_to_duckdb(
+            'JK', 'NHIS', mock_storage, 'JK',
+            where_clause="STD_YYYY = '2013'",
+            cohort_ids=cohort_ids,
+        )
+
+        assert len(captured_wheres) > 0
+        assert any(
+            w and "STD_YYYY = '2013'" in w and "INDI_DSCM_NO IN" in w
+            for w in captured_wheres
+        ), f"where_clause AND cohort_ids 결합 필요. 캡처된 WHERE: {captured_wheres}"
+
+
 class TestDataManagerConnectHana:
     """Fix H-1: connect_hana가 실패하면 self.hana를 None으로 리셋한다."""
 

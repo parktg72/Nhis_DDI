@@ -660,43 +660,55 @@ class HANAConnector:
         first_chunk = True
         total = 0
 
-        for chunk_df in self.fetch_table_chunked(
-            hana_table, hana_schema, columns, where_clause, chunk_size
-        ):
-            # DuckDB 적재 시 optimize_dtypes 사용 금지:
-            # 청크별 min/max가 달라 첫 청크 기준 스키마와 이후 청크 값이 불일치
-            # (예: 첫 청크 max=999999 → DECIMAL(6,0), 이후 값 1031900 → 범위 초과)
-            # Integral Decimal은 적재 전에 넉넉한 DECIMAL(38,0)으로 고정한다.
-            chunk_df = _prepare_chunk_for_duckdb(chunk_df)
-            chunk_sql = _build_chunk_select_sql(chunk_df, '_temp_chunk')
+        # cohort_ids 적용: 900개 단위 IN절로 분할 후 각 파트별 개별 조회
+        id_parts = _cohort_id_where_parts(cohort_ids)
+        fetch_parts = id_parts if id_parts else [None]
 
-            if first_chunk:
-                duckdb_storage.drop_table(duckdb_table)
-                duckdb_storage.conn.register('_temp_chunk', chunk_df)
-                try:
-                    duckdb_storage.execute(f"CREATE TABLE {duckdb_table} AS {chunk_sql}")
-                finally:
-                    duckdb_storage.conn.unregister('_temp_chunk')
-                # 첫 청크 값이 작아 좁은 DECIMAL로 추론된 경우 DECIMAL(38,s)로 확장
-                _widen_decimal_columns(duckdb_storage, duckdb_table)
-                first_chunk = False
+        for id_part in fetch_parts:
+            if id_part is not None:
+                combined_where = (
+                    f"({where_clause}) AND {id_part}" if where_clause else id_part
+                )
             else:
-                duckdb_storage.conn.register('_temp_chunk', chunk_df)
-                try:
-                    duckdb_storage.execute(f"INSERT INTO {duckdb_table} {chunk_sql}")
-                finally:
-                    duckdb_storage.conn.unregister('_temp_chunk')
+                combined_where = where_clause
 
-            total += len(chunk_df)
-            # chunk_df 즉시 삭제 → Pandas 메모리 적층 방지
-            del chunk_df
-            gc.collect()
+            for chunk_df in self.fetch_table_chunked(
+                hana_table, hana_schema, columns, combined_where, chunk_size
+            ):
+                # DuckDB 적재 시 optimize_dtypes 사용 금지:
+                # 청크별 min/max가 달라 첫 청크 기준 스키마와 이후 청크 값이 불일치
+                # (예: 첫 청크 max=999999 → DECIMAL(6,0), 이후 값 1031900 → 범위 초과)
+                # Integral Decimal은 적재 전에 넉넉한 DECIMAL(38,0)으로 고정한다.
+                chunk_df = _prepare_chunk_for_duckdb(chunk_df)
+                chunk_sql = _build_chunk_select_sql(chunk_df, '_temp_chunk')
 
-            # 메모리 상태 체크 → 위험 시 chunk 자동 축소
-            chunk_controller.auto_adjust()
+                if first_chunk:
+                    duckdb_storage.drop_table(duckdb_table)
+                    duckdb_storage.conn.register('_temp_chunk', chunk_df)
+                    try:
+                        duckdb_storage.execute(f"CREATE TABLE {duckdb_table} AS {chunk_sql}")
+                    finally:
+                        duckdb_storage.conn.unregister('_temp_chunk')
+                    # 첫 청크 값이 작아 좁은 DECIMAL로 추론된 경우 DECIMAL(38,s)로 확장
+                    _widen_decimal_columns(duckdb_storage, duckdb_table)
+                    first_chunk = False
+                else:
+                    duckdb_storage.conn.register('_temp_chunk', chunk_df)
+                    try:
+                        duckdb_storage.execute(f"INSERT INTO {duckdb_table} {chunk_sql}")
+                    finally:
+                        duckdb_storage.conn.unregister('_temp_chunk')
 
-            if progress_callback:
-                _emit_chunk_progress(progress_callback, hana_table, total)
+                total += len(chunk_df)
+                # chunk_df 즉시 삭제 → Pandas 메모리 적층 방지
+                del chunk_df
+                gc.collect()
+
+                # 메모리 상태 체크 → 위험 시 chunk 자동 축소
+                chunk_controller.auto_adjust()
+
+                if progress_callback:
+                    _emit_chunk_progress(progress_callback, hana_table, total)
 
         table_up = duckdb_table.upper()
         if table_up == 'T20':
