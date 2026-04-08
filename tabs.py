@@ -806,7 +806,7 @@ class DataLoadTab(QWidget):
         for t, err in errors.items():
             self.load_status.setItem(row, 0, QTableWidgetItem(t))
             self.load_status.setItem(row, 1, QTableWidgetItem("—"))
-            item_err = QTableWidgetItem(f"오류: {err[:60]}")
+            item_err = QTableWidgetItem(f"오류: {err[:120]}")
             item_err.setForeground(QColor('red'))
             self.load_status.setItem(row, 2, item_err)
             row += 1
@@ -1053,8 +1053,12 @@ class AnalysisTab(QWidget):
             return False  # 테이블 없음 — start_analysis에서 경고 표시
         try:
             total = self.ctx.dm.storage.get_row_count('final_analysis')
-        except Exception:
-            return False  # 조회 실패 — 안전하게 취소
+        except Exception as e:
+            logger.warning("final_analysis 행 수 조회 실패: %s", e)
+            QMessageBox.warning(self, "안내",
+                f"분석 대상 테이블 조회 중 오류가 발생했습니다:\n{e}\n\n"
+                "코호트 구축 후 다시 시도하세요.")
+            return False
 
         from memory_manager import mem_manager as _mm
         max_rows = _mm.get_safe_analysis_rows()

@@ -339,9 +339,10 @@ class StatisticalAnalyzer:
             results['failed_models'] = failed_models
 
         # PH 검정 요약을 모델별로 취합하여 최상위에 저장
+        # failed_models 등 메타데이터 키는 dict가 아닐 수 있으므로 isinstance 가드
         ph_combined = {}
         for mname, entry in results.items():
-            if 'ph_test' in entry:
+            if isinstance(entry, dict) and 'ph_test' in entry:
                 ph_combined[mname] = entry['ph_test']
         if ph_combined:
             results['ph_test_summary'] = ph_combined
@@ -991,7 +992,6 @@ class StatisticalAnalyzer:
         def _safe_run(step_name, fn):
             try:
                 fn()
-                mem_manager.cleanup_after_step(step_name)
             except (InsufficientDataError, RuntimeError) as e:
                 step_errors[step_name] = str(e)
                 logger.warning("분석 단계 스킵 (%s): %s", step_name, e)
@@ -1000,6 +1000,8 @@ class StatisticalAnalyzer:
                 step_errors[step_name] = str(e)
                 logger.exception("분석 단계 오류 (%s)", step_name)
                 if cb: cb(f"[오류] {step_name}: {e}")
+            finally:
+                mem_manager.cleanup_after_step(step_name)  # 성공/실패 무관 항상 정리
 
         # Table 1은 항상 생성
         _safe_run('table1', lambda: self.generate_table1(cb=cb, df_prepared=df_prepared))
