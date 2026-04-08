@@ -1164,6 +1164,21 @@ class AnalysisTab(QWidget):
         result = data.get('result') or {}
         for err in result.get('errors', []):
             self.log_signal.emit(err)
+
+        # Cox 부분 실패 집계 → 경고 메시지
+        ar = self.ctx.all_results.get('analysis', {})
+        cox_warnings = []
+        for key, val in ar.items():
+            if key.startswith('cox_') and isinstance(val, dict) and 'failed_models' in val:
+                outcome = key[4:]
+                for mname, reason in val['failed_models'].items():
+                    cox_warnings.append(f"  • {outcome}/{mname}: {reason[:80]}")
+        if cox_warnings:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Cox 분석 부분 실패",
+                f"일부 Cox 모델이 실패했습니다 (나머지 결과는 정상):\n" +
+                "\n".join(cox_warnings))
+
         self.log_signal.emit(f"분석 완료! 결과: {self.ctx.results_dir}")
         QMessageBox.information(self, "완료", f"분석 완료\n{self.ctx.results_dir}")
 

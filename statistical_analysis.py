@@ -255,6 +255,7 @@ class StatisticalAnalyzer:
 
         T, E = 'follow_up_years', outcome
         results = {}
+        failed_models = {}  # {model_name: error_message}
         exposure = ['is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin', 'is_t2dm_nomed']
 
         models = {
@@ -308,12 +309,15 @@ class StatisticalAnalyzer:
                 raise  # 노출변수 PH 위반 등 복구 불가 오류
             except InsufficientDataError as e:
                 logger.warning(f"Cox {mname} 데이터 부족 — 스킵: {e}")
+                failed_models[mname] = f"데이터 부족: {e}"
             except (duckdb.Error, pd.errors.EmptyDataError, ValueError, MemoryError) as e:
                 logger.exception(f"분석 오류 (Cox {mname})")
                 logger.warning(f"Cox {mname} 실패: {e}")
+                failed_models[mname] = str(e)
             except Exception as e:
                 logger.exception(f"예기치 않은 오류 (Cox {mname})")
                 logger.warning(f"Cox {mname} 실패: {e}")
+                failed_models[mname] = str(e)
             finally:
                 del df_model
                 gc.collect()
@@ -324,6 +328,15 @@ class StatisticalAnalyzer:
                 f"Cox 회귀 분석({outcome}) 실패: 모든 모델 피팅에 실패했습니다. "
                 f"데이터 크기나 공변량 구성을 확인하세요."
             )
+
+        # 부분 실패 요약 로깅
+        if failed_models:
+            logger.warning(
+                "Cox(%s) 부분 실패 — 성공 %d개, 실패 %d개: %s",
+                outcome, len(results), len(failed_models),
+                {k: v[:80] for k, v in failed_models.items()}
+            )
+            results['failed_models'] = failed_models
 
         # PH 검정 요약을 모델별로 취합하여 최상위에 저장
         ph_combined = {}
