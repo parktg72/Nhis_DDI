@@ -1077,6 +1077,79 @@ class TestCohortIDExtractor:
         assert result == frozenset(['P999'])
         hana.fetch_table_chunked.assert_not_called()
 
+
+# ===========================================================================
+# HANAConnector.connect 재시도 테스트
+# ===========================================================================
+
+def _mock_hdbcli(connect_side_effect=None, connect_return=None):
+    """hdbcli 모듈 목업 반환. sys.modules patch에 사용."""
+    mock_dbapi = MagicMock()
+    if connect_side_effect is not None:
+        mock_dbapi.connect.side_effect = connect_side_effect
+    else:
+        mock_dbapi.connect.return_value = connect_return or MagicMock()
+    mock_hdbcli = MagicMock()
+    mock_hdbcli.dbapi = mock_dbapi
+    return mock_hdbcli, mock_dbapi
+
+
+class TestHANAConnectorRetry:
+    """HANAConnector.connect(): 네트워크 오류 시 max_retries회 재시도."""
+
+    def test_connect_succeeds_on_first_attempt(self):
+        """첫 시도에 성공하면 재시도 없이 True 반환."""
+        conn = HANAConnector('host', 30015, 'user', 'pw')
+        mock_conn = MagicMock()
+        mock_hdbcli, mock_dbapi = _mock_hdbcli(connect_return=mock_conn)
+        with patch('db_connector.time.sleep') as mock_sleep, \
+             patch.dict('sys.modules', {'hdbcli': mock_hdbcli, 'hdbcli.dbapi': mock_dbapi}):
+            result = conn.connect()
+        assert result is True
+        assert conn.conn is mock_conn
+        mock_sleep.assert_not_called()
+
+    def test_connect_retries_on_failure_then_succeeds(self):
+        """1회 실패 후 2회째 성공 — sleep 1회 호출."""
+        conn = HANAConnector('host', 30015, 'user', 'pw')
+        mock_conn = MagicMock()
+        call_count = {'n': 0}
+
+        def side_effect(**kwargs):
+            call_count['n'] += 1
+            if call_count['n'] == 1:
+                raise ConnectionError("일시적 오류")
+            return mock_conn
+
+        mock_hdbcli, mock_dbapi = _mock_hdbcli(connect_side_effect=side_effect)
+        with patch('db_connector.time.sleep') as mock_sleep, \
+             patch.dict('sys.modules', {'hdbcli': mock_hdbcli, 'hdbcli.dbapi': mock_dbapi}):
+            result = conn.connect(max_retries=2, retry_delay=0.0)
+
+        assert result is True
+        assert conn.conn is mock_conn
+        assert mock_sleep.call_count == 1
+
+    def test_connect_raises_after_all_retries_exhausted(self):
+        """모든 재시도 실패 시 마지막 예외 전파."""
+        conn = HANAConnector('host', 30015, 'user', 'pw')
+        mock_hdbcli, mock_dbapi = _mock_hdbcli(
+            connect_side_effect=ConnectionError("영구 오류")
+        )
+        with patch('db_connector.time.sleep'), \
+             patch.dict('sys.modules', {'hdbcli': mock_hdbcli, 'hdbcli.dbapi': mock_dbapi}):
+            with pytest.raises(ConnectionError, match="영구 오류"):
+                conn.connect(max_retries=2, retry_delay=0.0)
+
+    def test_connect_import_error_not_retried(self):
+        """ImportError(드라이버 미설치)는 재시도 없이 즉시 전파."""
+        conn = HANAConnector('host', 30015, 'user', 'pw')
+        with patch('db_connector.time.sleep') as mock_sleep, \
+             patch.dict('sys.modules', {'hdbcli': None, 'hdbcli.dbapi': None}):
+            with pytest.raises(ImportError):
+                conn.connect(max_retries=2, retry_delay=0.0)
+        mock_sleep.assert_not_called()
+
     def test_raises_when_no_cohort_found(self, tmp_path):
         """조건 만족 환자가 없으면 RuntimeError 발생."""
         hana = _make_mock_hana(
