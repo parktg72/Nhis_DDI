@@ -318,15 +318,10 @@ class HANAConnector:
             self._password_buf[i] = 0
         self._password_buf = bytearray()
 
-    def connect(self):
+    def connect(self, max_retries: int = 2, retry_delay: float = 2.0):
+        """HANA DB 연결. 네트워크 오류 시 max_retries회 재시도."""
         try:
             from hdbcli import dbapi
-            self.conn = dbapi.connect(
-                address=self.host, port=self.port,
-                user=self.user, password=self._password,
-            )
-            logger.info(f"HANA DB 연결 성공: {self.host}:{self.port}")
-            return True
         except ImportError:
             raise ImportError(
                 "SAP HANA 드라이버가 설치되지 않았습니다.\n"
@@ -334,9 +329,26 @@ class HANAConnector:
                 "  venv\\Scripts\\activate\n"
                 "  pip install -r requirements-hana.txt"
             )
-        except Exception as e:
-            logger.error(f"HANA DB 연결 실패: {e}")
-            raise
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                self.conn = dbapi.connect(
+                    address=self.host, port=self.port,
+                    user=self.user, password=self._password,
+                )
+                logger.info(f"HANA DB 연결 성공: {self.host}:{self.port}")
+                return True
+            except Exception as e:
+                last_exc = e
+                if attempt < max_retries:
+                    logger.warning(
+                        f"HANA DB 연결 실패 (시도 {attempt + 1}/{max_retries + 1}), "
+                        f"{retry_delay:.0f}초 후 재시도: {e}"
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"HANA DB 연결 최종 실패: {e}")
+        raise last_exc
 
     def test_connection(self):
         try:

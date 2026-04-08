@@ -1231,12 +1231,35 @@ class ResultsTab(QWidget):
                 return pd.DataFrame(rows), 'Subgroup'
         return None, 'Sheet1'
 
+    def _format_cell(self, v) -> str:
+        """셀 값을 문자열로 변환. NaN/inf 특수 처리."""
+        import math
+        if isinstance(v, float):
+            if math.isnan(v):
+                return "N/A"
+            if math.isinf(v):
+                return "∞" if v > 0 else "-∞"
+            return f"{v:.4f}"
+        return str(v)
+
     # --- actions ---
     def show_result(self, idx):
-        df, base_title = self._get_result_df(idx)
+        try:
+            df, base_title = self._get_result_df(idx)
+        except Exception as e:
+            logger.exception("결과 조회 실패")
+            self.result_table.clearContents()
+            self.result_table.setRowCount(0)
+            self.result_title_label.setText(f"오류: {e}")
+            return
         sampling_suffix = f" ({self.ctx.sampling_label})" if getattr(self.ctx, 'sampling_label', '') else ""
         self.result_title_label.setText(f"{base_title}{sampling_suffix}")
-        if df is not None:
+        if df is None or (hasattr(df, '__len__') and len(df) == 0):
+            self.result_table.clearContents()
+            self.result_table.setRowCount(0)
+            self.result_table.setColumnCount(0)
+            return
+        try:
             df2 = df.reset_index() if df.index.name else df
             self.result_table.setRowCount(len(df2))
             self.result_table.setColumnCount(len(df2.columns))
@@ -1244,8 +1267,12 @@ class ResultsTab(QWidget):
             for i in range(len(df2)):
                 for j in range(len(df2.columns)):
                     v = df2.iloc[i, j]
-                    self.result_table.setItem(i, j, QTableWidgetItem(f"{v:.4f}" if isinstance(v, float) else str(v)))
+                    self.result_table.setItem(i, j, QTableWidgetItem(self._format_cell(v)))
             self.result_table.resizeColumnsToContents()
+        except Exception as e:
+            logger.exception("결과 테이블 표시 실패")
+            self.result_table.clearContents()
+            self.result_title_label.setText(f"{base_title} — 표시 오류: {e}")
 
     def export(self, fmt):
         """현재 결과 탭에 표시된 DataFrame을 Excel로 내보내기"""
