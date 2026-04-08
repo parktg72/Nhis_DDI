@@ -1022,6 +1022,7 @@ class CohortIDExtractor:
         from config import STUDY_SETTINGS
         min_age = int(STUDY_SETTINGS.get('MIN_AGE', 40))
         max_age = int(STUDY_SETTINGS.get('MAX_AGE', 64))
+        hhdv_table = STUDY_SETTINGS.get('HHDV_TABLE', 'HHDV_DSEC_YY')
 
         months = self._enrollment_month_range()
         total = len(months)
@@ -1038,7 +1039,7 @@ class CohortIDExtractor:
         t20_col_type = self.hana._detect_column_type(self.schema, 'T20', _MONTHLY_FILTER_COL)
         t20_int_where = t20_col_type is not None and 'INT' in t20_col_type.upper()
 
-        # HHDV_DSEC_YY: 연도별 데이터이므로 연도별 캐시로 중복 HANA 조회 방지
+        # 연령 테이블: 연도별 데이터이므로 연도별 캐시로 중복 HANA 조회 방지
         age_ids_by_year: dict = {}
 
         for idx, yyyymm in enumerate(months, 1):
@@ -1049,7 +1050,7 @@ class CohortIDExtractor:
                 f"누적 {len(cohort_set):,}명"
             )
 
-            # ── 연령 조건: HHDV_DSEC_YY (연도별 1회 조회 후 캐시) ──────────────
+            # ── 연령 조건: hhdv_table (연도별 1회 조회 후 캐시) ──────────────────
             if year not in age_ids_by_year:
                 age_where = (
                     f"STD_YYYY = '{year}' AND "
@@ -1059,7 +1060,7 @@ class CohortIDExtractor:
                 year_ids: set = set()
                 try:
                     for chunk_df in self.hana.fetch_table_chunked(
-                        'HHDV_DSEC_YY', self.schema,
+                        hhdv_table, self.schema,
                         columns=['INDI_DSCM_NO'],
                         where_clause=age_where,
                     ):
@@ -1067,9 +1068,9 @@ class CohortIDExtractor:
                         del chunk_df
                         gc.collect()
                 except Exception as e:
-                    logger.warning("HHDV_DSEC_YY %s 조회 실패: %s", year, e)
+                    logger.warning("%s %s 조회 실패: %s", hhdv_table, year, e)
                 age_ids_by_year[year] = year_ids
-                logger.debug("HHDV_DSEC_YY %s: %d명 (연령 조건)", year, len(year_ids))
+                logger.debug("%s %s: %d명 (연령 조건)", hhdv_table, year, len(year_ids))
 
             age_ids = age_ids_by_year[year]
             if not age_ids:
@@ -1106,7 +1107,7 @@ class CohortIDExtractor:
         if not cohort_set:
             raise RuntimeError(
                 "CohortIDExtractor: 조건을 만족하는 환자가 없습니다. "
-                "ENROLLMENT 기간, 연령 범위, HHDV_DSEC_YY/T20 접근 권한을 확인하세요."
+                f"ENROLLMENT 기간, 연령 범위, {hhdv_table}/T20 접근 권한을 확인하세요."
             )
 
         # 캐시 저장

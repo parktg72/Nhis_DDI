@@ -1004,3 +1004,34 @@ class TestCohortIDExtractor:
         # 적어도 하나의 WHERE 절에 INDI_DSCM_NO IN 조건이 포함돼야 한다
         assert any('INDI_DSCM_NO IN' in w for w in captured_wheres), \
             f"cohort_ids 전달 시 WHERE에 INDI_DSCM_NO IN 조건 필요. 캡처된 WHERE: {captured_wheres}"
+
+    def test_uses_hhdv_table_from_study_settings(self, tmp_path):
+        """STUDY_SETTINGS['HHDV_TABLE']이 설정되면 해당 테이블명으로 HANA 조회한다."""
+        custom_table = 'CUSTOM_AGE_TABLE'
+        queried_tables = []
+
+        hana = MagicMock(spec=HANAConnector)
+        hana._detect_column_type.return_value = 'NVARCHAR'
+
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+            queried_tables.append(table_name)
+            # custom_table 조회 시 ID 1개 반환 (empty → skip 방지)
+            if table_name == custom_table:
+                yield pd.DataFrame({'INDI_DSCM_NO': ['P001']})
+            elif table_name == 'T20':
+                yield pd.DataFrame({'INDI_DSCM_NO': ['P001']})
+
+        hana.fetch_table_chunked.side_effect = fake_fetch
+        extractor = CohortIDExtractor(hana, 'NHIS', tmp_path)
+
+        with patch.dict('config.STUDY_SETTINGS', {
+            'ENROLLMENT_START': 2013, 'ENROLLMENT_END': 2013,
+            'MIN_AGE': 40, 'MAX_AGE': 64,
+            'HHDV_TABLE': custom_table,
+        }):
+            extractor.extract(force=True)
+
+        assert custom_table in queried_tables, \
+            f"HHDV_TABLE='{custom_table}' 설정 시 해당 테이블 조회 필요. 실제 조회: {queried_tables}"
+        assert 'HHDV_DSEC_YY' not in queried_tables, \
+            "커스텀 HHDV_TABLE 설정 시 기본 'HHDV_DSEC_YY' 조회 금지"
