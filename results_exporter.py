@@ -189,6 +189,31 @@ class ResultsExporter:
             )
         return str(path)
 
+    def export_sensitivity_results(self, sensitivity_results, filename='sensitivity.xlsx', sampling_info=None):
+        """민감도 분석 결과 내보내기."""
+        if not sensitivity_results:
+            logger.warning("민감도 결과 내보내기 생략: 데이터 없음")
+            return None
+
+        rows = []
+        for key, val in sensitivity_results.items():
+            if isinstance(val, dict):
+                row = {'항목': key}
+                row.update(val)
+                rows.append(row)
+
+        if not rows:
+            logger.warning("민감도 결과 내보내기 생략: 저장할 행 없음")
+            return None
+
+        df_out = pd.DataFrame(rows)
+        path = self.output_dir / filename
+        with pd.ExcelWriter(path, engine='openpyxl') as writer:
+            self._write_df_with_sampling_header(
+                writer, df_out, 'Sensitivity', sampling_info
+            )
+        return str(path)
+
     def export_ph_tests(self, cox_results_all, filename='ph_tests.xlsx', sampling_info=None):
         """PH 가정 검정 결과 내보내기"""
         sheets = {}
@@ -246,6 +271,10 @@ class ResultsExporter:
                 exported.append(path)
         if 'interaction' in results:
             path = self.export_interaction_results(results['interaction'], f'{prefix}interaction.xlsx', sampling_info)
+            if path:
+                exported.append(path)
+        if 'sensitivity' in results:
+            path = self.export_sensitivity_results(results['sensitivity'], f'{prefix}sensitivity.xlsx', sampling_info)
             if path:
                 exported.append(path)
         return exported

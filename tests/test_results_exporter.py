@@ -98,3 +98,45 @@ class TestExportAll:
         assert len(exported) == 2, f"table1 + interaction = 2개 파일 기대: {exported}"
         assert any('table1' in str(p) for p in exported)
         assert any('interaction' in str(p) for p in exported)
+
+
+class TestExportSensitivityResults:
+    """sensitivity 결과 내보내기 검증."""
+
+    def _make_sensitivity(self):
+        return {
+            'dementia_with_drug': {'n': 1234, 'desc': '치매진단 + 항치매약'},
+            'fine_gray': {'implemented': True, 'desc': 'Fine-Gray 설명'},
+        }
+
+    def test_export_sensitivity_creates_file(self, tmp_path):
+        """정상 sensitivity 결과 → xlsx 파일 생성."""
+        exp = ResultsExporter(str(tmp_path))
+        path = exp.export_sensitivity_results(self._make_sensitivity())
+        assert path is not None
+        assert Path(path).exists(), f"sensitivity 파일 미생성: {path}"
+
+    def test_export_sensitivity_none_returns_none(self, tmp_path):
+        """None → None 반환, 파일 미생성."""
+        exp = ResultsExporter(str(tmp_path))
+        assert exp.export_sensitivity_results(None) is None
+        assert not (tmp_path / 'sensitivity.xlsx').exists()
+
+    def test_export_sensitivity_empty_dict_returns_none(self, tmp_path):
+        """빈 dict → None 반환."""
+        exp = ResultsExporter(str(tmp_path))
+        assert exp.export_sensitivity_results({}) is None
+
+    def test_export_all_includes_sensitivity(self, tmp_path):
+        """export_all이 sensitivity 키를 처리하고 exported 목록에 포함."""
+        exp = ResultsExporter(str(tmp_path))
+        results = {'sensitivity': self._make_sensitivity()}
+        exported = exp.export_all(results)
+        assert any('sensitivity' in str(p) for p in exported if p), \
+            f"sensitivity 파일이 exported 목록에 없음: {exported}"
+
+    def test_export_all_missing_sensitivity_not_exported(self, tmp_path):
+        """sensitivity 키 없으면 sensitivity 파일 미생성."""
+        exp = ResultsExporter(str(tmp_path))
+        exported = exp.export_all({'interaction': {'skipped': True, 'reason': 'x'}})
+        assert not any('sensitivity' in str(p) for p in exported if p)

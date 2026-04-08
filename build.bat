@@ -153,6 +153,11 @@ python -m PyInstaller --noconfirm --onedir --windowed^
  --collect-all hdbcli^
  --hidden-import hdbcli^
  --hidden-import hdbcli.dbapi^
+ --hidden-import analysis_runner^
+ --hidden-import gpu_accelerator^
+ --hidden-import visualization^
+ --hidden-import results_exporter^
+ --hidden-import memory_manager^
  main_app.py
 
 if errorlevel 1 (
