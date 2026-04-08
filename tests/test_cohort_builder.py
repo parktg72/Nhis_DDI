@@ -421,12 +421,13 @@ class TestStep4ClassifyGroups:
         assert 'P0003' in patients
 
     def test_result_dataframe_structure(self, builder, dm):
-        """step4 반환값은 exposure_group별 카운트 DataFrame이다."""
+        """step4 반환값은 (groups_df, warnings) 튜플이다."""
         _run_steps_up_to(builder, 3)
-        result = builder.step4_classify_groups()
+        result, warnings = builder.step4_classify_groups()
         assert isinstance(result, pd.DataFrame)
         assert 'exposure_group' in result.columns
         assert 'n' in result.columns
+        assert isinstance(warnings, list)
 
     def test_t2dm_insulin_classification(self, dm):
         """인슐린 처방이 있는 T2DM 환자는 T2DM_INSULIN로 분류된다."""
@@ -487,7 +488,7 @@ class TestStep4ClassifyGroups:
         assert group == 'NON_DM'
 
     def test_warns_when_t2dm_oha_is_zero(self, dm):
-        """T2DM_OHA 코호트가 0건이면 WARNING 로그를 출력한다 (I9)."""
+        """T2DM_OHA 코호트가 0건이면 WARNING 로그 + warnings 반환값에 포함 (I9)."""
         # T2DM T30 OHA/INSULIN 처방 없음 → T2DM_NOMED만 생성됨
         with patch('cohort_builder.mem_manager'), \
              patch('cohort_builder.logger') as mock_log:
@@ -495,25 +496,29 @@ class TestStep4ClassifyGroups:
             cb.step1_base_population()
             cb.step2_dm_claims()
             cb.step3_dm_medications()
-            cb.step4_classify_groups()
+            _, warnings = cb.step4_classify_groups()
 
         warning_messages = [str(c) for c in mock_log.warning.call_args_list]
         assert any('T2DM_OHA' in m for m in warning_messages), \
             "T2DM_OHA=0 일 때 logger.warning 호출 필요"
+        assert any('T2DM_OHA' in w for w in warnings), \
+            "T2DM_OHA=0 일 때 warnings 반환값에 포함 필요"
 
     def test_warns_when_t2dm_insulin_is_zero(self, dm):
-        """T2DM_INSULIN 코호트가 0건이면 WARNING 로그를 출력한다 (I9)."""
+        """T2DM_INSULIN 코호트가 0건이면 WARNING 로그 + warnings 반환값에 포함 (I9)."""
         with patch('cohort_builder.mem_manager'), \
              patch('cohort_builder.logger') as mock_log:
             cb = CohortBuilder(dm)
             cb.step1_base_population()
             cb.step2_dm_claims()
             cb.step3_dm_medications()
-            cb.step4_classify_groups()
+            _, warnings = cb.step4_classify_groups()
 
         warning_messages = [str(c) for c in mock_log.warning.call_args_list]
         assert any('T2DM_INSULIN' in m for m in warning_messages), \
             "T2DM_INSULIN=0 일 때 logger.warning 호출 필요"
+        assert any('T2DM_INSULIN' in w for w in warnings), \
+            "T2DM_INSULIN=0 일 때 warnings 반환값에 포함 필요"
 
     def test_lookback_years_respected(self, dm):
         """LOOKBACK_YEARS 설정이 처방 집계 윈도우에 반영된다 (C-1).

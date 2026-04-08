@@ -965,6 +965,12 @@ class CohortTab(QWidget):
         txt += f"제외: {format_number(cr.get('excluded_dementia', ''))}\n"
         txt += f"최종: {format_number(cr.get('final_n', ''))}\n"
         self.cohort_text.append(txt)
+        warnings = cr.get('warnings', [])
+        if warnings:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "코호트 구축 경고",
+                "\n".join(warnings) +
+                "\n\n약물 코드 또는 연구 기간 설정을 확인하세요.")
 
 
 # ---------------------------------------------------------------------------

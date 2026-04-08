@@ -63,6 +63,18 @@ class CohortBuilder:
         """40-64세, 진입기간 2013-2016, 진입 전 1년 자격유지"""
         if cb: cb("Step 1: 기본 대상 인구 정의 중...")
         es = int(self.settings.get('ENROLLMENT_START', 2013))
+        # NULL 품질 사전 점검 — BYEAR/STD_YYYY NULL 건수 로깅
+        try:
+            null_res = self.dm.query(
+                "SELECT COUNT(*) AS n FROM JK WHERE BYEAR IS NULL OR STD_YYYY IS NULL"
+            )
+            n_null = int(null_res.iloc[0, 0]) if len(null_res) > 0 else 0
+            if n_null > 0:
+                msg = f"[경고] JK 테이블 BYEAR/STD_YYYY NULL 값 {n_null:,}건 — 해당 행은 자동 제외됩니다."
+                logger.warning(msg)
+                if cb: cb(msg)
+        except Exception:
+            pass  # 점검 실패는 무시 (주요 로직에 영향 없음)
         ee = int(self.settings.get('ENROLLMENT_END', 2016))
         washout = int(self.settings.get('WASHOUT_YEARS', 1))
 
@@ -279,13 +291,15 @@ class CohortBuilder:
 
         # I9: T2DM_OHA/T2DM_INSULIN 0건 경고 — 약물코드 또는 처방기간 설정 오류 가능성 알림
         groups_n = dict(zip(result['exposure_group'], result['n']))
+        warnings = []
         for grp in ('T2DM_OHA', 'T2DM_INSULIN'):
             if groups_n.get(grp, 0) == 0:
-                logger.warning(
-                    f"Step 4: {grp} 코호트가 0건입니다 — 약물 코드 또는 처방 기간 설정을 확인하세요."
-                )
+                msg = f"[경고] {grp} 코호트가 0건입니다 — 약물 코드 또는 처방 기간 설정을 확인하세요."
+                logger.warning(f"Step 4: {msg}")
+                if cb: cb(msg)
+                warnings.append(msg)
 
-        return result
+        return result, warnings
 
     def step5_exclude_dementia(self, cb=None):
         """기존 치매 진단 + 항치매약 사용자 제외
@@ -542,10 +556,16 @@ class CohortBuilder:
         )
         mem_manager.cleanup_after_step('step3')
 
-        results['groups'], _ = _safe_step(
+        step4_ret, _ = _safe_step(
             4, "노출군 분류",
             self.step4_classify_groups, "exposure_groups"
         )
+        # step4_classify_groups returns (groups_df, warnings_list)
+        if isinstance(step4_ret, tuple):
+            results['groups'], results['warnings'] = step4_ret
+        else:
+            results['groups'] = step4_ret
+            results['warnings'] = []
         mem_manager.cleanup_after_step('step4')
 
         (n, excl), _ = _safe_step(
