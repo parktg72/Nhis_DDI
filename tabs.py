@@ -474,13 +474,47 @@ class DataLoadTab(QWidget):
         self.ctx = ctx
         self.connection_tab = connection_tab
         self.table_inputs = {}
+        self._cohort_ids = None  # CohortIDExtractor 결과 (frozenset or None)
         self._init_ui()
 
     def _init_ui(self):
         ly = QVBoxLayout(self)
 
-        # 월별 추출 설정 (T20/T30/T40/T60 전용)
-        mg = QGroupBox("HANA 월별 추출 설정 (T20/T30/T40/T60)")
+        # ── 코호트 ID 추출 설정 (1단계) ──────────────────────────────────────
+        cg = QGroupBox("① 코호트 ID 추출 (HHDV_DSEC_YY + T20, 진입기간 월별)")
+        cl = QGridLayout(cg)
+
+        cl.addWidget(QLabel("HANA 스키마:"), 0, 0)
+        self.cohort_schema_edit = QLineEdit()
+        self.cohort_schema_edit.setPlaceholderText("예: NHIS")
+        cl.addWidget(self.cohort_schema_edit, 0, 1, 1, 2)
+
+        cl.addWidget(QLabel("진입기간:"), 1, 0)
+        self.spin_enroll_start = QSpinBox()
+        self.spin_enroll_start.setRange(2002, 2024)
+        self.spin_enroll_start.setValue(STUDY_SETTINGS.get('ENROLLMENT_START', 2013))
+        cl.addWidget(self.spin_enroll_start, 1, 1)
+        cl.addWidget(QLabel("~"), 1, 2)
+        self.spin_enroll_end = QSpinBox()
+        self.spin_enroll_end.setRange(2002, 2024)
+        self.spin_enroll_end.setValue(STUDY_SETTINGS.get('ENROLLMENT_END', 2016))
+        cl.addWidget(self.spin_enroll_end, 1, 3)
+
+        self.lbl_cohort_status = QLabel("코호트 ID: 미추출")
+        self.lbl_cohort_status.setStyleSheet("color: gray;")
+        cl.addWidget(self.lbl_cohort_status, 2, 0, 1, 3)
+
+        self.btn_extract_cohort = QPushButton("코호트 ID 추출")
+        self.btn_extract_cohort.setStyleSheet(
+            "background-color: #27AE60; color: white; padding: 6px;"
+        )
+        self.btn_extract_cohort.clicked.connect(self.extract_cohort_ids)
+        cl.addWidget(self.btn_extract_cohort, 2, 3)
+
+        ly.addWidget(cg)
+
+        # ── 월별 추출 설정 (2단계: T20/T30/T40/T60) ───────────────────────────
+        mg = QGroupBox("② HANA 월별 추출 설정 (T20/T30/T40/T60, 연구기간)")
         ml = QGridLayout(mg)
 
         ml.addWidget(QLabel("연구기간:"), 0, 0)
@@ -587,6 +621,60 @@ class DataLoadTab(QWidget):
         self.connection_tab._init_dm()
 
     # --- actions ---
+    def extract_cohort_ids(self):
+        """① 코호트 ID 추출 버튼 — HHDV_DSEC_YY + T20에서 대상자 ID를 먼저 추출."""
+        mw = self.ctx.main_window
+        if mw._is_worker_running():
+            return
+        schema = self.cohort_schema_edit.text().strip()
+        if not schema:
+            QMessageBox.warning(self, "안내", "HANA 스키마를 입력하세요.")
+            return
+        self._ensure_dm()
+
+        # 진입기간 설정을 STUDY_SETTINGS에 반영
+        from config import STUDY_SETTINGS
+        STUDY_SETTINGS['ENROLLMENT_START'] = self.spin_enroll_start.value()
+        STUDY_SETTINGS['ENROLLMENT_END'] = self.spin_enroll_end.value()
+
+        ct = self.connection_tab
+        hana_host = ct.hana_host.text()
+        hana_port = ct.hana_port.text()
+        hana_user = ct.hana_user.text()
+        hana_pass = ct.hana_pass.text()
+        force_extract = not self.chk_resume.isChecked()
+        dm = self.ctx.dm
+
+        self.lbl_cohort_status.setText("코호트 ID 추출 중...")
+        self.lbl_cohort_status.setStyleSheet("color: #E67E22;")
+        mw.progress_bar.setVisible(True)
+        mw._set_action_buttons_enabled(False)
+
+        def do_extract(progress_callback=None):
+            if not dm.hana or not dm.hana.conn:
+                dm.connect_hana(hana_host, int(hana_port), hana_user, hana_pass)
+            return dm.extract_cohort_ids(
+                schema, force=force_extract, progress_callback=progress_callback
+            )
+
+        def on_done(result):
+            mw.progress_bar.setVisible(False)
+            mw._set_action_buttons_enabled(True)
+            if isinstance(result, Exception):
+                self.lbl_cohort_status.setText("코호트 ID 추출 실패")
+                self.lbl_cohort_status.setStyleSheet("color: red;")
+                QMessageBox.critical(self, "오류", f"코호트 ID 추출 실패:\n{result}")
+                return
+            n = len(result)
+            self.lbl_cohort_status.setText(f"코호트 ID 추출 완료: {n:,}명")
+            self.lbl_cohort_status.setStyleSheet("color: #27AE60; font-weight: bold;")
+            self._cohort_ids = result
+            self.log_signal.emit(f"[코호트 ID] {n:,}명 추출 완료 (진입기간 "
+                                 f"{STUDY_SETTINGS['ENROLLMENT_START']}~"
+                                 f"{STUDY_SETTINGS['ENROLLMENT_END']})")
+
+        mw._run_worker(do_extract, on_done)
+
     def start_data_load(self):
         mw = self.ctx.main_window
         if mw._is_worker_running():
@@ -644,6 +732,7 @@ class DataLoadTab(QWidget):
         hana_pass = ct.hana_pass.text()
 
         dm = self.ctx.dm  # capture for worker closure
+        cohort_ids = self._cohort_ids  # None이면 전수 추출, frozenset이면 대상자 한정
 
         def do_load(progress_callback=None):
             results = {}
@@ -657,7 +746,8 @@ class DataLoadTab(QWidget):
                     cnt = dm.load_from_hana(
                         tn, src['schema'], src.get('hana_table', tn),
                         progress_callback=progress_callback,
-                        force=force_extract
+                        force=force_extract,
+                        cohort_ids=cohort_ids,
                     )
                 elif src['type'] == 'sas':
                     cnt = dm.load_from_sas(

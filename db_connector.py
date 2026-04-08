@@ -634,7 +634,8 @@ class HANAConnector:
 
     def load_table_to_duckdb(self, hana_table, hana_schema, duckdb_storage,
                               duckdb_table, columns=None, where_clause=None,
-                              chunk_size=None, progress_callback=None, force=True):
+                              chunk_size=None, progress_callback=None, force=True,
+                              cohort_ids=None):
         # hana_table 기준으로 라우팅: T20/T30/T40/T60 HANA 소스 테이블은 월별 추출
         if hana_table.upper() in _MONTHLY_TABLES and where_clause is None:
             if columns is not None:
@@ -652,7 +653,7 @@ class HANAConnector:
                 self, duckdb_storage, hana_schema, _get_hana_cache_dir()
             )
             return extractor.extract_all_months(hana_table, duckdb_table, progress_callback,
-                                                force=force)
+                                                force=force, cohort_ids=cohort_ids)
 
         if chunk_size is None:
             chunk_size = chunk_controller.get_chunk('hana')
@@ -770,12 +771,15 @@ class MonthlyHanaExtractor:
         return months
 
     def extract_all_months(self, table_name, duckdb_table, progress_callback=None,
-                           force=True):
+                           force=True, cohort_ids=None):
         """모든 월 추출 → Parquet 저장 → DuckDB 병합.
 
         Args:
             force: True(기본) → 기존 Parquet 전체 삭제 후 재추출.
                    False → 이미 존재하는 월 Parquet 파일 재사용(resume 모드).
+            cohort_ids: frozenset[str] 또는 None.
+                        지정 시 INDI_DSCM_NO를 해당 집합으로 한정하여 추출
+                        (CohortIDExtractor로 선추출된 대상자만 적재).
         """
         table_upper = table_name.upper()
         cache_dir = self.cache_root / table_upper
@@ -823,34 +827,42 @@ class MonthlyHanaExtractor:
 
             # Fix C1: 컬럼 타입에 따라 숫자/문자열 비교 분기
             if use_int_where:
-                where_clause = f"{_MONTHLY_FILTER_COL} = {int(yyyymm)}"
+                month_where = f"{_MONTHLY_FILTER_COL} = {int(yyyymm)}"
             else:
-                where_clause = f"{_MONTHLY_FILTER_COL} = '{yyyymm}'"
+                month_where = f"{_MONTHLY_FILTER_COL} = '{yyyymm}'"
 
             _emit_progress(
                 progress_callback,
                 f"{table_upper} {yyyymm[:4]}-{yyyymm[4:]} 추출 중 ({idx}/{total})"
             )
 
+            # cohort_ids가 있으면 INDI_DSCM_NO IN(...) 조건을 900개 단위 청크로 추가
+            id_parts = _cohort_id_where_parts(cohort_ids)
+
             # 월별 청크를 PyArrow ParquetWriter로 스트리밍 저장 (메모리 효율)
             # Fix C7: try/finally로 ParquetWriter 안전 닫기
             writer = None
             month_rows = 0
             try:
-                for chunk_df in self.hana.fetch_table_chunked(
-                    table_name, self.schema,
-                    where_clause=where_clause
-                ):
-                    chunk_df = _prepare_chunk_for_duckdb(chunk_df)
-                    arrow_table = pa.Table.from_pandas(chunk_df, preserve_index=False)
-                    if writer is None:
-                        writer = pq.ParquetWriter(str(tmp_path), arrow_table.schema)
-                        if schema_columns is None:
-                            schema_columns = list(chunk_df.columns)
-                    writer.write_table(arrow_table)
-                    month_rows += len(chunk_df)
-                    del chunk_df, arrow_table
-                    gc.collect()
+                fetch_parts = id_parts if id_parts else [None]
+                for id_part in fetch_parts:
+                    where_clause = (
+                        f"{month_where} AND {id_part}" if id_part else month_where
+                    )
+                    for chunk_df in self.hana.fetch_table_chunked(
+                        table_name, self.schema,
+                        where_clause=where_clause
+                    ):
+                        chunk_df = _prepare_chunk_for_duckdb(chunk_df)
+                        arrow_table = pa.Table.from_pandas(chunk_df, preserve_index=False)
+                        if writer is None:
+                            writer = pq.ParquetWriter(str(tmp_path), arrow_table.schema)
+                            if schema_columns is None:
+                                schema_columns = list(chunk_df.columns)
+                        writer.write_table(arrow_table)
+                        month_rows += len(chunk_df)
+                        del chunk_df, arrow_table
+                        gc.collect()
             finally:
                 if writer is not None:
                     try:
@@ -921,6 +933,191 @@ class MonthlyHanaExtractor:
 
         logger.info(f"월별 추출 완료: {duckdb_table} ({total_rows:,}건, {total}개월)")
         return total_rows
+
+
+# ---------------------------------------------------------------------------
+# 코호트 ID 필터 헬퍼
+# ---------------------------------------------------------------------------
+_DM_CODES = ('E10', 'E11', 'E12', 'E13', 'E14')
+_SICK_SYM_COLS = ('SICK_SYM1', 'SICK_SYM2', 'SICK_SYM3', 'SICK_SYM4', 'SICK_SYM5')
+_COHORT_ID_CHUNK_SIZE = 900  # HANA IN 절 안전 상한
+
+
+def _cohort_id_where_parts(cohort_ids):
+    """cohort_ids를 _COHORT_ID_CHUNK_SIZE 단위로 나눈 IN-절 문자열 목록 반환.
+
+    각 원소는 단독으로 AND 조건에 추가 가능한 문자열.
+    cohort_ids가 None이거나 비어 있으면 빈 리스트 반환.
+    """
+    if not cohort_ids:
+        return []
+    ids = sorted(cohort_ids)
+    parts = []
+    for i in range(0, len(ids), _COHORT_ID_CHUNK_SIZE):
+        chunk = ids[i:i + _COHORT_ID_CHUNK_SIZE]
+        quoted = ', '.join(f"'{_id}'" for _id in chunk)
+        parts.append(f"INDI_DSCM_NO IN ({quoted})")
+    return parts
+
+
+class CohortIDExtractor:
+    """진입기간 내 연령+DM 코드 조건 충족 INDI_DSCM_NO를 월별로 추출해 DISTINCT 집합 반환.
+
+    흐름:
+      ① 진입기간(ENROLLMENT_START~END) 모든 YYYYMM 순회
+      ② 각 월: HHDV_DSEC_YY(연령조건) ∩ T20(E10~E14 상병조건) → 교집합을 set에 누적
+      ③ 전체 누적 set → cohort_ids.parquet 캐시 (resume 지원)
+
+    Args:
+        hana_connector: HANAConnector 인스턴스
+        hana_schema: HANA 스키마 (예: 'NHIS')
+        cache_root: Parquet 캐시 루트 디렉토리
+    """
+
+    def __init__(self, hana_connector, hana_schema, cache_root):
+        self.hana = hana_connector
+        self.schema = hana_schema
+        self.cache_root = Path(cache_root)
+
+    def _enrollment_month_range(self):
+        """ENROLLMENT_START ~ ENROLLMENT_END 범위의 YYYYMM 문자열 목록 반환."""
+        from config import STUDY_SETTINGS
+        start_year = int(STUDY_SETTINGS.get('ENROLLMENT_START', 2013))
+        end_year = int(STUDY_SETTINGS.get('ENROLLMENT_END', 2016))
+        if start_year > end_year:
+            raise ValueError(
+                f"ENROLLMENT_START({start_year}) > ENROLLMENT_END({end_year}): "
+                "config.py 설정을 확인하세요."
+            )
+        months = []
+        for year in range(start_year, end_year + 1):
+            for month in range(1, 13):
+                months.append(f'{year:04d}{month:02d}')
+        return months
+
+    def cache_path(self):
+        return self.cache_root / 'cohort_ids.parquet'
+
+    def extract(self, force=True, progress_callback=None):
+        """코호트 INDI_DSCM_NO를 월별 추출해 frozenset 반환.
+
+        Args:
+            force: True → 기존 캐시 무시하고 재추출.
+                   False → 캐시 존재 시 로드만 수행(resume).
+        Returns:
+            frozenset[str]: 조건 충족 INDI_DSCM_NO 집합
+        """
+        self.cache_root.mkdir(parents=True, exist_ok=True)
+        cache_file = self.cache_path()
+
+        # resume 모드: 캐시 파일이 있으면 로드
+        if not force and cache_file.exists() and cache_file.stat().st_size > 0:
+            _emit_progress(progress_callback, "코호트 ID 캐시 로드 중...")
+            df_cache = pd.read_parquet(str(cache_file))
+            ids = frozenset(df_cache['INDI_DSCM_NO'].astype(str).tolist())
+            _emit_progress(progress_callback, f"코호트 ID 캐시 로드 완료: {len(ids):,}명")
+            logger.info("CohortIDExtractor: 캐시 로드 %d명", len(ids))
+            return ids
+
+        from config import STUDY_SETTINGS
+        min_age = int(STUDY_SETTINGS.get('MIN_AGE', 40))
+        max_age = int(STUDY_SETTINGS.get('MAX_AGE', 64))
+
+        months = self._enrollment_month_range()
+        total = len(months)
+        cohort_set = set()
+
+        # T20 상병조건 SQL 조각 (E10~E14 명시적 IN)
+        dm_codes_sql = ', '.join(f"'{c}'" for c in _DM_CODES)
+        sick_conditions = ' OR '.join(
+            f"SUBSTR(\"{col}\", 1, 3) IN ({dm_codes_sql})"
+            for col in _SICK_SYM_COLS
+        )
+
+        # T20 MDCARE_STRT_YYYYMM 컬럼 타입 (INT vs VARCHAR) — 루프 전 1회만 감지
+        t20_col_type = self.hana._detect_column_type(self.schema, 'T20', _MONTHLY_FILTER_COL)
+        t20_int_where = t20_col_type is not None and 'INT' in t20_col_type.upper()
+
+        # HHDV_DSEC_YY: 연도별 데이터이므로 연도별 캐시로 중복 HANA 조회 방지
+        age_ids_by_year: dict = {}
+
+        for idx, yyyymm in enumerate(months, 1):
+            year = yyyymm[:4]
+            _emit_progress(
+                progress_callback,
+                f"코호트 ID 추출 {yyyymm[:4]}-{yyyymm[4:]} ({idx}/{total}) "
+                f"누적 {len(cohort_set):,}명"
+            )
+
+            # ── 연령 조건: HHDV_DSEC_YY (연도별 1회 조회 후 캐시) ──────────────
+            if year not in age_ids_by_year:
+                age_where = (
+                    f"STD_YYYY = '{year}' AND "
+                    f"(CAST(STD_YYYY AS INT) - CAST(BYEAR AS INT)) "
+                    f"BETWEEN {min_age} AND {max_age}"
+                )
+                year_ids: set = set()
+                try:
+                    for chunk_df in self.hana.fetch_table_chunked(
+                        'HHDV_DSEC_YY', self.schema,
+                        columns=['INDI_DSCM_NO'],
+                        where_clause=age_where,
+                    ):
+                        year_ids.update(chunk_df['INDI_DSCM_NO'].astype(str).tolist())
+                        del chunk_df
+                        gc.collect()
+                except Exception as e:
+                    logger.warning("HHDV_DSEC_YY %s 조회 실패: %s", year, e)
+                age_ids_by_year[year] = year_ids
+                logger.debug("HHDV_DSEC_YY %s: %d명 (연령 조건)", year, len(year_ids))
+
+            age_ids = age_ids_by_year[year]
+            if not age_ids:
+                continue
+
+            # ── 상병 조건: T20 월별 MDCARE_STRT_YYYYMM 필터 ────────────────────
+            if t20_int_where:
+                month_filter = f"{_MONTHLY_FILTER_COL} = {int(yyyymm)}"
+            else:
+                month_filter = f"{_MONTHLY_FILTER_COL} = '{yyyymm}'"
+            t20_where = f"{month_filter} AND ({sick_conditions})"
+
+            month_dm_ids: set = set()
+            try:
+                for chunk_df in self.hana.fetch_table_chunked(
+                    'T20', self.schema,
+                    columns=['INDI_DSCM_NO'],
+                    where_clause=t20_where,
+                ):
+                    month_dm_ids.update(chunk_df['INDI_DSCM_NO'].astype(str).tolist())
+                    del chunk_df
+                    gc.collect()
+            except Exception as e:
+                logger.warning("T20 %s DM코드 조회 실패: %s", yyyymm, e)
+
+            # ── 교집합 누적 ───────────────────────────────────────────────────
+            intersection = age_ids & month_dm_ids
+            cohort_set.update(intersection)
+            logger.debug(
+                "%s: 연령 %d명, DM코드 %d명, 교집합 %d명 (누적 %d명)",
+                yyyymm, len(age_ids), len(month_dm_ids), len(intersection), len(cohort_set)
+            )
+
+        if not cohort_set:
+            raise RuntimeError(
+                "CohortIDExtractor: 조건을 만족하는 환자가 없습니다. "
+                "ENROLLMENT 기간, 연령 범위, HHDV_DSEC_YY/T20 접근 권한을 확인하세요."
+            )
+
+        # 캐시 저장
+        _emit_progress(progress_callback, f"코호트 ID 저장 중 ({len(cohort_set):,}명)...")
+        pd.DataFrame({'INDI_DSCM_NO': sorted(cohort_set)}).to_parquet(
+            str(cache_file), index=False
+        )
+        result = frozenset(cohort_set)
+        _emit_progress(progress_callback, f"코호트 ID 추출 완료: {len(result):,}명")
+        logger.info("CohortIDExtractor: 완료 %d명 → %s", len(result), cache_file)
+        return result
 
 
 class SASFileLoader:
@@ -1509,9 +1706,22 @@ class DataManager:
             self.hana.connect()
         return self.hana.search_tables(schema_name, keyword)
 
+    def extract_cohort_ids(self, hana_schema, force=True, progress_callback=None):
+        """진입기간 내 연령+DM 코드 조건 충족 INDI_DSCM_NO를 월별 추출해 frozenset 반환.
+
+        HHDV_DSEC_YY(연령) ∩ T20(E10~E14 상병)을 진입기간 월별로 순회하며 누적.
+        결과는 cohort_ids.parquet으로 캐시되어 resume 모드에서 재사용된다.
+        """
+        if not self.hana:
+            raise RuntimeError("HANA 미연결")
+        if not self.hana.conn:
+            self.hana.connect()
+        extractor = CohortIDExtractor(self.hana, hana_schema, _get_hana_cache_dir())
+        return extractor.extract(force=force, progress_callback=progress_callback)
+
     def load_from_hana(self, table_name, hana_schema, hana_table=None,
                        columns=None, where_clause=None, progress_callback=None,
-                       force=True):
+                       force=True, cohort_ids=None):
         if not self.hana:
             raise RuntimeError("HANA 미연결")
         if not self.hana.conn:
@@ -1521,7 +1731,8 @@ class DataManager:
         count = self.hana.load_table_to_duckdb(
             hana_table, hana_schema, self.storage,
             table_name, columns, where_clause,
-            progress_callback=progress_callback, force=force
+            progress_callback=progress_callback, force=force,
+            cohort_ids=cohort_ids,
         )
         self.loaded_tables[table_name] = count
         return count
