@@ -25,7 +25,7 @@ st.set_page_config(page_title="데이터 미리보기", page_icon="🔍", layout
 st.title("🔍 데이터 미리보기")
 
 cfg  = load_config()
-conn = get_connection()
+conn = get_connection(st.session_state)
 
 # ── 데이터 소스 상태 확인 ────────────────────────────────────────────────────
 using_hana = is_hana(cfg)

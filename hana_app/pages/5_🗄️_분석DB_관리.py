@@ -29,7 +29,7 @@ st.title("🗄️ 분석 DB 관리")
 st.caption("건강검진 · 문진 · 자격DB 등 추가 데이터를 DDI 위험도 분석에 포함하거나 제외합니다.")
 
 cfg  = load_config()
-conn = get_connection()
+conn = get_connection(st.session_state)
 
 # ── analysis_dbs 누락 시 초기화 ──────────────────────────────────────────────
 _defaults: dict[str, dict[str, Any]] = {

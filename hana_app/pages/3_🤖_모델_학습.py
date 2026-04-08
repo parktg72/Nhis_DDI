@@ -29,8 +29,7 @@ cfg  = load_config()
 conn = get_connection(st.session_state)
 
 # ── validated 가드 ────────────────────────────────────────────────────────
-_cfg_for_guard = load_config()
-if is_hana(_cfg_for_guard) and not _cfg_for_guard.get("validated"):
+if is_hana(cfg) and not cfg.get("validated"):
     st.warning("⚠️ HANA 테이블 검증이 완료되지 않았습니다.")
     st.page_link(
         "pages/1_🔌_연결_및_테이블설정.py",
@@ -38,14 +37,14 @@ if is_hana(_cfg_for_guard) and not _cfg_for_guard.get("validated"):
     )
     st.stop()
 
-if is_hana(_cfg_for_guard):
-    if _cfg_for_guard.get("validated_host") and \
-       _cfg_for_guard["validated_host"] != _cfg_for_guard["connection"]["host"]:
+if is_hana(cfg):
+    if cfg.get("validated_host") and \
+       cfg["validated_host"] != cfg["connection"]["host"]:
         st.warning("⚠️ 검증된 DB 호스트와 현재 연결 호스트가 다릅니다. 1번 페이지에서 재검증을 권장합니다.")
 
 # ── 자동 재연결 ───────────────────────────────────────────────────────────
 _hana_creds = st.session_state.get("hana_creds")
-if is_hana(_cfg_for_guard):
+if is_hana(cfg):
     if _hana_creds:
         try:
             conn.ensure_connected(_hana_creds, session_state=st.session_state)
@@ -169,10 +168,8 @@ else:
 # 섹션 1: 데이터 추출 범위 (추출 모드에서만 표시)
 # ─────────────────────────────────────────────────────────────────────────────
 _show_extract_section = (data_mode == DATA_MODE_EXTRACT)
-if _show_extract_section:
-    st.header("1️⃣ 데이터 추출 범위")
-else:
-    st.header("1️⃣ 데이터 추출 범위")
+st.header("1️⃣ 데이터 추출 범위")
+if not _show_extract_section:
     st.info("📂 저장된 데이터 모드 — 추출 범위 설정을 건너뜁니다.")
 col1, col2, col3, col4 = st.columns(4)
 
