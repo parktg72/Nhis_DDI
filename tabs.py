@@ -739,36 +739,44 @@ class DataLoadTab(QWidget):
         cohort_ids = self._cohort_ids  # None이면 전수 추출, frozenset이면 대상자 한정
 
         def do_load(progress_callback=None):
-            results = {}
+            ok, errors = {}, {}
             for tn, src in load_cfg.items():
                 if progress_callback:
                     progress_callback(f"{tn} 로드 중...")
-                if src['type'] == 'hana':
-                    if not dm.hana or not dm.hana.conn:
-                        dm.connect_hana(hana_host, int(hana_port),
-                                         hana_user, hana_pass)
-                    cnt = dm.load_from_hana(
-                        tn, src['schema'], src.get('hana_table', tn),
-                        progress_callback=progress_callback,
-                        force=force_extract,
-                        cohort_ids=cohort_ids,
-                    )
-                elif src['type'] == 'sas':
-                    cnt = dm.load_from_sas(
-                        tn, src['path'], progress_callback=progress_callback
-                    )
-                elif src['type'] == 'sas_multi':
-                    cnt = dm.load_from_files_multi(tn, src['paths'], file_type='sas',
-                                                    progress_callback=progress_callback)
-                elif src['type'] == 'csv_multi':
-                    cnt = dm.load_from_files_multi(tn, src['paths'], file_type='csv',
-                                                    progress_callback=progress_callback)
-                else:
-                    cnt = dm.load_from_csv(
-                        tn, src['path'], progress_callback=progress_callback
-                    )
-                results[tn] = cnt
-            return results
+                try:
+                    if src['type'] == 'hana':
+                        if not dm.hana or not dm.hana.conn:
+                            dm.connect_hana(hana_host, int(hana_port),
+                                             hana_user, hana_pass)
+                        cnt = dm.load_from_hana(
+                            tn, src['schema'], src.get('hana_table', tn),
+                            progress_callback=progress_callback,
+                            force=force_extract,
+                            cohort_ids=cohort_ids,
+                        )
+                    elif src['type'] == 'sas':
+                        cnt = dm.load_from_sas(
+                            tn, src['path'], progress_callback=progress_callback
+                        )
+                    elif src['type'] == 'sas_multi':
+                        cnt = dm.load_from_files_multi(tn, src['paths'], file_type='sas',
+                                                        progress_callback=progress_callback)
+                    elif src['type'] == 'csv_multi':
+                        cnt = dm.load_from_files_multi(tn, src['paths'], file_type='csv',
+                                                        progress_callback=progress_callback)
+                    else:
+                        cnt = dm.load_from_csv(
+                            tn, src['path'], progress_callback=progress_callback
+                        )
+                    ok[tn] = cnt
+                    if progress_callback:
+                        progress_callback(f"{tn} 완료: {cnt:,}행")
+                except Exception as e:
+                    errors[tn] = str(e)
+                    logger.exception(f"테이블 로드 실패: {tn}")
+                    if progress_callback:
+                        progress_callback(f"[오류] {tn}: {e}")
+            return {'ok': ok, 'errors': errors}
 
         mw._set_action_buttons_enabled(False)
         from main_app import WorkerThread
@@ -780,16 +788,35 @@ class DataLoadTab(QWidget):
         self.ctx.worker.start()
 
     def _on_loaded(self, data):
+        from PyQt5.QtGui import QColor
         mw = self.ctx.main_window
         mw.progress_bar.setVisible(False)
         mw._set_action_buttons_enabled(True)
-        results = data.get('result', {})
-        self.load_status.setRowCount(len(results))
-        for i, (t, c) in enumerate(results.items()):
-            self.load_status.setItem(i, 0, QTableWidgetItem(t))
-            self.load_status.setItem(i, 1, QTableWidgetItem(format_number(c)))
-            self.load_status.setItem(i, 2, QTableWidgetItem("완료"))
-        self.log_signal.emit(f"로드 완료: {len(results)}개 테이블")
+        result = data.get('result', {})
+        ok = result.get('ok', {})
+        errors = result.get('errors', {})
+        all_tables = list(ok.keys()) + list(errors.keys())
+        self.load_status.setRowCount(len(all_tables))
+        row = 0
+        for t, c in ok.items():
+            self.load_status.setItem(row, 0, QTableWidgetItem(t))
+            self.load_status.setItem(row, 1, QTableWidgetItem(format_number(c)))
+            self.load_status.setItem(row, 2, QTableWidgetItem("완료"))
+            row += 1
+        for t, err in errors.items():
+            self.load_status.setItem(row, 0, QTableWidgetItem(t))
+            self.load_status.setItem(row, 1, QTableWidgetItem("—"))
+            item_err = QTableWidgetItem(f"오류: {err[:60]}")
+            item_err.setForeground(QColor('red'))
+            self.load_status.setItem(row, 2, item_err)
+            row += 1
+        msg = f"로드 완료: {len(ok)}개 성공"
+        if errors:
+            msg += f", {len(errors)}개 실패 ({', '.join(errors.keys())})"
+            QMessageBox.warning(self, "일부 로드 실패",
+                f"{len(errors)}개 테이블 로드에 실패했습니다:\n" +
+                "\n".join(f"  • {t}: {e[:120]}" for t, e in errors.items()))
+        self.log_signal.emit(msg)
 
     def merge_exam_data(self):
         """검진 데이터 통합 (연도별 → 통합) (WorkerThread로 GUI 블로킹 방지)"""
