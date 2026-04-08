@@ -1,28 +1,33 @@
 # ============================================================
 # NHIS YOD-DM Analyzer v2.1 - Python 3.12 Windows 64-bit
+#
+# 설치 방법:
+#   1) 간편 설치 (권장): setup.bat 더블클릭
+#   2) 수동 설치:
+#      python -m venv venv
+#      call venv\Scripts\activate.bat
+#      pip install -r requirements.txt
+#   3) SAP HANA 연결 필요 시 추가:
+#      pip install -r requirements-hana.txt
 # ============================================================
 
 # --- GUI ---
-PyQt5>=5.15.10
+PyQt5>=5.15.10,<5.16
 
 # --- Data / DB ---
-duckdb>=1.0.0
-pandas>=2.2.0
-numpy>=1.26.4
+duckdb>=1.0.0,<2.0.0
+pandas>=2.2.0,<3.0.0
+numpy>=1.26.4,<2.1.0
 pyreadstat>=1.2.7
-openpyxl>=3.1.2
+openpyxl>=3.1.2,<4.0.0
 
 # --- Statistics / ML ---
-scipy>=1.13.0
-lifelines>=0.28.0
-scikit-learn>=1.4.0
+scipy>=1.13.0,<2.0.0
+lifelines>=0.28.0,<0.30.0
+scikit-learn>=1.4.0,<2.0.0
 
 # --- Visualization ---
-matplotlib>=3.8.4
-
-# --- Optional: SAP HANA DB 연결 ---
-# SAP HANA 서버에 접속하려면 별도 설치 필요:
-#   pip install -r requirements-hana.txt
+matplotlib>=3.8.4,<4.0.0
 
 # --- System ---
 psutil>=5.9.8
@@ -34,8 +39,13 @@ autograd>=1.7.0
 autograd-gamma>=0.5.0
 
 # ============================================================
-# GPU acceleration (optional - NVIDIA GPU + CUDA 12.x 필요)
-# GPU가 없으면 아래 줄은 주석 상태를 유지하세요.
-# cupy-cuda12x>=13.0.0
-# torch>=2.2.0
+# SAP HANA DB 연결 (선택 — HANA 서버가 있는 경우에만):
+#   pip install -r requirements-hana.txt
+# ============================================================
+
+# ============================================================
+# GPU acceleration (선택 — NVIDIA GPU + CUDA 12.x 필요):
+#   cupy-cuda12x>=13.0.0
+#   torch>=2.2.0
+# GPU가 없으면 위 두 줄은 주석 상태를 유지하세요.
 # ============================================================

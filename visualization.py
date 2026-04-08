@@ -242,3 +242,63 @@ class Visualizer:
         fig.savefig(p, dpi=300, bbox_inches='tight')
         plt.close(fig)
         return str(p)
+
+    def plot_love(self, balance_before: dict, balance_after: dict,
+                  filename: str = 'love_plot.png'):
+        """Love plot — PSM 전후 SMD 비교 (표준화 평균 차이).
+
+        Args:
+            balance_before: PSM 전 {var: {'treated_mean': ..., 'control_mean': ..., 'smd': ...}}
+            balance_after:  PSM 후 동일 구조
+            filename: 저장 파일명
+
+        Returns:
+            저장된 파일 경로 문자열, 실패 시 None
+        """
+        if not balance_before or not balance_after:
+            logger.warning("plot_love: balance_before 또는 balance_after가 비어 있음 — 생략")
+            return None
+
+        vars_union = list(dict.fromkeys(
+            list(balance_before.keys()) + list(balance_after.keys())
+        ))
+        if not vars_union:
+            return None
+
+        smd_before = [balance_before.get(v, {}).get('smd', float('nan')) for v in vars_union]
+        smd_after = [balance_after.get(v, {}).get('smd', float('nan')) for v in vars_union]
+
+        n_vars = len(vars_union)
+        fig, ax = plt.subplots(figsize=(9, max(5, n_vars * 0.45 + 2)))
+
+        y_pos = list(range(n_vars))
+        var_labels = [v.replace('_', ' ').title() for v in vars_union]
+
+        ax.scatter(smd_before, y_pos, color='#E74C3C', marker='o', s=60,
+                   label='Before PSM', zorder=3)
+        ax.scatter(smd_after, y_pos, color='#3498DB', marker='D', s=60,
+                   label='After PSM', zorder=3)
+
+        for i, (sb, sa) in enumerate(zip(smd_before, smd_after)):
+            if not (pd.isna(sb) or pd.isna(sa)):
+                ax.plot([sb, sa], [i, i], color='#BDC3C7', linewidth=0.8, zorder=2)
+
+        ax.axvline(x=0.1, color='#E74C3C', linestyle='--', linewidth=1.2,
+                   alpha=0.7, label='Threshold 0.1')
+        ax.axvline(x=0.0, color='#2C3E50', linestyle='-', linewidth=0.8, alpha=0.5)
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(var_labels, fontsize=10)
+        ax.set_xlabel('Standardized Mean Difference (SMD)', fontsize=12)
+        ax.set_title('Love Plot: Covariate Balance Before and After PSM',
+                     fontsize=13, fontweight='bold', pad=12)
+        ax.legend(fontsize=10, loc='lower right')
+        ax.grid(True, axis='x', alpha=0.3)
+        ax.set_xlim(left=0)
+
+        fig.tight_layout()
+        p = self.out / filename
+        fig.savefig(p, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        logger.info("Love plot 저장: %s", p)
+        return str(p)

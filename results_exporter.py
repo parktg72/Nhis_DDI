@@ -2,6 +2,8 @@
 results_exporter.py - 결과 내보내기 (CSV/Excel)
 """
 import logging
+import os
+import tempfile
 import pandas as pd
 from pathlib import Path
 from datetime import date
@@ -12,6 +14,26 @@ class ResultsExporter:
     def __init__(self, output_dir='./results'):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _atomic_excel_write(target_path: Path, write_fn):
+        """C4: 원자적 Excel 저장 — tempfile 기록 후 rename.
+
+        write_fn(tmp_path: str) → None  으로 실제 쓰기를 수행하고,
+        성공 시 target_path 로 rename. 실패 시 temp 파일 정리.
+        """
+        suffix = target_path.suffix or '.xlsx'
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir=target_path.parent)
+        os.close(tmp_fd)
+        try:
+            write_fn(tmp_path)
+            os.replace(tmp_path, target_path)  # 원자적 rename (Windows도 지원)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def _write_df_with_sampling_header(self, writer, df, sheet_name, sampling_info):
         """샘플링 정보가 Excel 첫 번째 행에 오도록 시트를 작성한다.
@@ -37,10 +59,14 @@ class ResultsExporter:
             return None
         try:
             path = self.output_dir / filename
-            with pd.ExcelWriter(path, engine='openpyxl') as writer:
-                self._write_df_with_sampling_header(
-                    writer, df.copy(), 'Table 1', sampling_info
-                )
+            _df = df.copy()
+            _si = sampling_info
+
+            def _write(tmp_path):
+                with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                    self._write_df_with_sampling_header(writer, _df, 'Table 1', _si)
+
+            self._atomic_excel_write(path, _write)
             return str(path)
         except Exception as e:
             logger.warning("Table 1 내보내기 실패: %s", e)
@@ -53,14 +79,18 @@ class ResultsExporter:
             logger.warning(f"Cox 결과 내보내기 생략: 저장할 모델 요약 없음 ({filename})")
             return None
         path = self.output_dir / filename
-        with pd.ExcelWriter(path, engine='openpyxl') as writer:
-            for name, data in summaries.items():
-                df_out = data['summary'].copy()
-                if df_out.index.name:
-                    df_out = df_out.reset_index()
-                self._write_df_with_sampling_header(
-                    writer, df_out, name[:31], sampling_info
-                )
+        _summaries = summaries
+        _si = sampling_info
+
+        def _write(tmp_path):
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                for name, data in _summaries.items():
+                    df_out = data['summary'].copy()
+                    if df_out.index.name:
+                        df_out = df_out.reset_index()
+                    self._write_df_with_sampling_header(writer, df_out, name[:31], _si)
+
+        self._atomic_excel_write(path, _write)
         return str(path)
 
     def export_psm_results(self, psm_results, filename='psm_results.xlsx', sampling_info=None):
@@ -79,43 +109,60 @@ class ResultsExporter:
             logger.warning("PSM 결과 내보내기 생략: 저장할 데이터 없음")
             return None
 
-        with pd.ExcelWriter(path, engine='openpyxl') as writer:
-            if balance:
-                df_bal = pd.DataFrame(balance).T
-                if df_bal.index.name is None:
+        _balance = balance
+        _balance_before = psm_results.get('balance_before', {})
+        _cox_results = cox_results
+        _si = sampling_info
+
+        def _write(tmp_path):
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                if _balance_before:
+                    df_bb = pd.DataFrame(_balance_before).T
+                    df_bb.index.name = 'Variable'
+                    df_bb = df_bb.reset_index()
+                    self._write_df_with_sampling_header(writer, df_bb, 'Balance_Before', _si)
+                if _balance:
+                    df_bal = pd.DataFrame(_balance).T
                     df_bal.index.name = 'Variable'
-                df_bal = df_bal.reset_index()
-                self._write_df_with_sampling_header(
-                    writer, df_bal, 'Balance', sampling_info
-                )
-            for outcome, data in cox_results.items():
-                df_cox = data['summary'].copy()
-                if df_cox.index.name:
-                    df_cox = df_cox.reset_index()
-                self._write_df_with_sampling_header(
-                    writer, df_cox, f'Cox_{outcome[:20]}', sampling_info
-                )
+                    df_bal = df_bal.reset_index()
+                    self._write_df_with_sampling_header(writer, df_bal, 'Balance_After', _si)
+                for outcome, data in _cox_results.items():
+                    df_cox = data['summary'].copy()
+                    if df_cox.index.name:
+                        df_cox = df_cox.reset_index()
+                    self._write_df_with_sampling_header(writer, df_cox, f'Cox_{outcome[:20]}', _si)
+
+        self._atomic_excel_write(path, _write)
         return str(path)
 
     def export_subgroup_results(self, subgroup_results, filename='subgroup.xlsx', sampling_info=None):
         path = self.output_dir / filename
+        bonf_n = subgroup_results.get('_interaction_bonferroni_n', 1)
         rows = []
         for sg_name, sg_data in subgroup_results.items():
+            if not isinstance(sg_data, dict):
+                continue
             for var, hr in sg_data.get('hr_data', {}).items():
                 rows.append({
                     'Subgroup': sg_name, 'Variable': var,
                     'N': sg_data.get('n', ''), 'Events': sg_data.get('events', ''),
                     'HR': hr.get('hr', ''), 'CI_Lower': hr.get('ci_lower', ''),
                     'CI_Upper': hr.get('ci_upper', ''), 'P_value': hr.get('p_value', ''),
+                    'P_interaction': sg_data.get('p_interaction', ''),
+                    'P_interaction_Bonferroni': sg_data.get('p_interaction_bonferroni', ''),
+                    'Bonferroni_N': bonf_n,
                 })
         if not rows:
             logger.warning("하위그룹 결과 내보내기 생략: 저장할 데이터 없음")
             return None
         df_out = pd.DataFrame(rows)
-        with pd.ExcelWriter(path, engine='openpyxl') as writer:
-            self._write_df_with_sampling_header(
-                writer, df_out, 'Subgroup', sampling_info
-            )
+        _si = sampling_info
+
+        def _write(tmp_path):
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                self._write_df_with_sampling_header(writer, df_out, 'Subgroup', _si)
+
+        self._atomic_excel_write(path, _write)
         return str(path)
 
     def export_competing_risks(self, cr_results, filename='competing_risks.xlsx', sampling_info=None):
@@ -152,11 +199,15 @@ class ResultsExporter:
             return None
 
         path = self.output_dir / filename
-        with pd.ExcelWriter(path, engine='openpyxl') as writer:
-            for name, df in sheets.items():
-                self._write_df_with_sampling_header(
-                    writer, df, name[:31], sampling_info
-                )
+        _sheets = sheets
+        _si = sampling_info
+
+        def _write(tmp_path):
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                for name, df in _sheets.items():
+                    self._write_df_with_sampling_header(writer, df, name[:31], _si)
+
+        self._atomic_excel_write(path, _write)
         return str(path)
 
     def export_interaction_results(self, interaction_results, filename='interaction.xlsx', sampling_info=None):
@@ -177,10 +228,13 @@ class ResultsExporter:
         df_out = summary.copy()
         if df_out.index.name:
             df_out = df_out.reset_index()
-        with pd.ExcelWriter(path, engine='openpyxl') as writer:
-            self._write_df_with_sampling_header(
-                writer, df_out, 'Interaction', sampling_info
-            )
+        _si = sampling_info
+
+        def _write(tmp_path):
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                self._write_df_with_sampling_header(writer, df_out, 'Interaction', _si)
+
+        self._atomic_excel_write(path, _write)
         return str(path)
 
     def export_sensitivity_results(self, sensitivity_results, filename='sensitivity.xlsx', sampling_info=None):
@@ -202,10 +256,13 @@ class ResultsExporter:
 
         df_out = pd.DataFrame(rows)
         path = self.output_dir / filename
-        with pd.ExcelWriter(path, engine='openpyxl') as writer:
-            self._write_df_with_sampling_header(
-                writer, df_out, 'Sensitivity', sampling_info
-            )
+        _si = sampling_info
+
+        def _write(tmp_path):
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                self._write_df_with_sampling_header(writer, df_out, 'Sensitivity', _si)
+
+        self._atomic_excel_write(path, _write)
         return str(path)
 
     def export_ph_tests(self, cox_results_all, filename='ph_tests.xlsx', sampling_info=None):
@@ -229,11 +286,15 @@ class ResultsExporter:
             return None
 
         path = self.output_dir / filename
-        with pd.ExcelWriter(path, engine='openpyxl') as writer:
-            for name, df in sheets.items():
-                self._write_df_with_sampling_header(
-                    writer, df, name, sampling_info
-                )
+        _sheets = sheets
+        _si = sampling_info
+
+        def _write(tmp_path):
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                for name, df in _sheets.items():
+                    self._write_df_with_sampling_header(writer, df, name, _si)
+
+        self._atomic_excel_write(path, _write)
         return str(path)
 
     def export_all(self, results, prefix='', sampling_info=None):

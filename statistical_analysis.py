@@ -178,6 +178,63 @@ class StatisticalAnalyzer:
                            context, len(df), min_valid)
             raise InsufficientDataError(valid_rows=len(df), min_rows=min_valid)
 
+    @staticmethod
+    def _compute_interaction_pval(df_full: pd.DataFrame, exposure_cols: list,
+                                   indicator_col: str, covariate_cols: list,
+                                   outcome: str = 'dementia_event',
+                                   duration: str = 'follow_up_years') -> float:
+        """LRT 기반 노출×하위그룹 상호작용 p-value 계산.
+
+        Args:
+            df_full: 전체 분석 데이터프레임 (복사본 전달 권장 안 함 — 내부에서만 참조)
+            exposure_cols: 노출 지시 변수 목록 (is_t1dm 등)
+            indicator_col: 하위그룹 이진 지시 변수 컬럼명
+            covariate_cols: 기저 공변량 목록
+
+        Returns:
+            LRT p-value (float), 계산 실패 시 np.nan
+        """
+        try:
+            base_use = [c for c in exposure_cols + [indicator_col] + covariate_cols
+                        if c in df_full.columns]
+            df_b = df_full[base_use + [duration, outcome]].dropna()
+            df_b = df_b[df_b[duration] > 0]
+            if len(df_b) < 30 or df_b[outcome].sum() < 5:
+                return np.nan
+
+            cph_base = CoxPHFitter()
+            cph_base.fit(df_b, duration_col=duration, event_col=outcome)
+
+            # 상호작용 항 생성 (exposure × indicator)
+            int_data = {}
+            for exp_col in exposure_cols:
+                if exp_col in df_full.columns and indicator_col in df_full.columns:
+                    int_data[f'_int_{exp_col}'] = (
+                        pd.to_numeric(df_full[exp_col], errors='coerce') *
+                        pd.to_numeric(df_full[indicator_col], errors='coerce')
+                    )
+            if not int_data:
+                return np.nan
+
+            int_df = pd.DataFrame(int_data, index=df_full.index)
+            int_cols = list(int_data.keys())
+            full_use = base_use + int_cols
+            df_combined = pd.concat([df_full[base_use + [duration, outcome]], int_df], axis=1)
+            df_f = df_combined[full_use + [duration, outcome]].dropna()
+            df_f = df_f[df_f[duration] > 0]
+            if len(df_f) < 30:
+                return np.nan
+
+            cph_full = CoxPHFitter()
+            cph_full.fit(df_f, duration_col=duration, event_col=outcome)
+
+            # LRT: χ² = 2 × (LL_full − LL_base), df = len(int_cols)
+            lr_stat = max(0.0, 2.0 * (cph_full.log_likelihood_ - cph_base.log_likelihood_))
+            return float(stats.chi2.sf(lr_stat, df=len(int_cols)))
+        except Exception as e:
+            logger.debug("Interaction p-value 계산 실패 (%s): %s", indicator_col, e)
+            return np.nan
+
     def _release_cache(self):
         """캐시된 데이터 해제"""
         if self._cached_df is not None:
@@ -273,15 +330,60 @@ class StatisticalAnalyzer:
                             'comp_hypoglycemia'],
         }
 
+        # A7: 전체 노출군별 Events/N/Person-years 요약 (모델 공통)
+        exposure_group_summary = {}
+        for g_name, g_col in [('T1DM', 'is_t1dm'), ('T2DM_OHA', 'is_t2dm_oha'),
+                                ('T2DM_INSULIN', 'is_t2dm_insulin'), ('T2DM_NOMED', 'is_t2dm_nomed'),
+                                ('NON_DM', None)]:
+            if g_col is not None:
+                mask = df_prepared.get(g_col, pd.Series(dtype='int8')) == 1 if g_col in df_prepared.columns else pd.Series(False, index=df_prepared.index)
+            else:
+                exp_cols = [c for c in ['is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin', 'is_t2dm_nomed']
+                            if c in df_prepared.columns]
+                mask = (df_prepared[exp_cols] == 0).all(axis=1) if exp_cols else pd.Series(False, index=df_prepared.index)
+            if mask.sum() > 0 and E in df_prepared.columns and T in df_prepared.columns:
+                sub = df_prepared.loc[mask]
+                exposure_group_summary[g_name] = {
+                    'n': int(mask.sum()),
+                    'events': int(pd.to_numeric(sub[E], errors='coerce').fillna(0).sum()),
+                    'person_years': float(pd.to_numeric(sub[T], errors='coerce').dropna().sum()),
+                }
+        results['_exposure_group_summary'] = exposure_group_summary
+
         for mname, mcols in models.items():
             if cb: cb(f"Cox 회귀 ({outcome}) — {mname} 피팅 중...")
-            cols = [c for c in mcols if c in df_prepared.columns] + [T, E]
+            # C3: 0-count 노출군 자동 제외
+            zero_exposure = [e for e in exposure if e in df_prepared.columns
+                              and df_prepared[e].sum() == 0]
+            active_mcols = [c for c in mcols if c not in zero_exposure]
+            if zero_exposure:
+                logger.warning("Cox %s(%s): 0건 노출군 제외 — %s", mname, outcome, zero_exposure)
+                if cb: cb(f"[경고] Cox {mname}: {zero_exposure} 노출군이 0건으로 분석에서 제외됩니다.")
+
+            cols = [c for c in active_mcols if c in df_prepared.columns] + [T, E]
             df_model = df_prepared[cols].dropna()
             try:
                 self._check_min_rows(df_model, context=f"run_cox {mname}")
+                n_model_events = int(df_model[E].sum())
+                n_vars = len([c for c in active_mcols if c in df_model.columns])
                 cph = CoxPHFitter()
                 cph.fit(df_model, duration_col=T, event_col=E)
-                result_entry = {'summary': cph.summary, 'concordance': cph.concordance_index_}
+                result_entry = {
+                    'summary': cph.summary,
+                    'concordance': cph.concordance_index_,
+                    'n': len(df_model),
+                    'events': n_model_events,
+                    'person_years': float(df_model[T].sum()),
+                }
+                # A3: EPV check (Events Per Variable — 권장 ≥ 10)
+                epv = n_model_events / n_vars if n_vars > 0 else 0
+                result_entry['epv'] = round(epv, 1)
+                if epv < 10:
+                    epv_msg = (f"EPV={epv:.1f} (이벤트 {n_model_events}건, 변수 {n_vars}개) "
+                               f"— EPV < 10 권장기준 미달. {mname} 결과 해석 주의.")
+                    logger.warning("Cox %s(%s): %s", mname, outcome, epv_msg)
+                    result_entry['epv_warning'] = epv_msg
+                    if cb: cb(f"[경고] Cox {mname}: {epv_msg}")
                 # PH 가정 검정 (Schoenfeld residuals)
                 exposure_ph_violation = []
                 try:
@@ -330,8 +432,10 @@ class StatisticalAnalyzer:
                 del df_model
                 gc.collect()
 
-        # 전체 모델 실패 감지
-        if not results:
+        # 전체 모델 실패 감지 — 메타데이터 키(_로 시작)는 제외하여 실제 모델 결과만 확인
+        model_results = {k: v for k, v in results.items()
+                         if not k.startswith('_') and k != 'failed_models'}
+        if not model_results:
             raise RuntimeError(
                 f"Cox 회귀 분석({outcome}) 실패: 모든 모델 피팅에 실패했습니다. "
                 f"데이터 크기나 공변량 구성을 확인하세요."
@@ -341,7 +445,7 @@ class StatisticalAnalyzer:
         if failed_models:
             logger.warning(
                 "Cox(%s) 부분 실패 — 성공 %d개, 실패 %d개: %s",
-                outcome, len(results), len(failed_models),
+                outcome, len(model_results), len(failed_models),
                 {k: v[:80] for k, v in failed_models.items()}
             )
             results['failed_models'] = failed_models
@@ -470,7 +574,21 @@ class StatisticalAnalyzer:
 
         matched = pd.concat([df_dm.loc[mt_list], df_dm.loc[mc_list]])
 
-        # Balance
+        # A2: PSM 전 Balance (Love plot용)
+        balance_before = {}
+        for col in ps_vars:
+            if col not in df_ps.columns:
+                continue
+            tm_b = df_ps.loc[df_ps['is_t1dm'] == 1, col].mean()
+            cm_b = df_ps.loc[df_ps['is_t1dm'] == 0, col].mean()
+            ts_b = df_ps.loc[df_ps['is_t1dm'] == 1, col].std()
+            cs_b = df_ps.loc[df_ps['is_t1dm'] == 0, col].std()
+            ps2_b = np.sqrt((ts_b**2 + cs_b**2) / 2)
+            smd_b = abs(tm_b - cm_b) / (ps2_b if ps2_b > 0 else 1)
+            balance_before[col] = {'treated_mean': round(tm_b, 4), 'control_mean': round(cm_b, 4),
+                                    'smd': round(smd_b, 4)}
+
+        # PSM 후 Balance
         balance = {}
         for col in ps_vars:
             tm = matched.loc[matched['is_t1dm'] == 1, col].mean()
@@ -503,7 +621,9 @@ class StatisticalAnalyzer:
 
         self.results['psm'] = {
             'n_treated': len(mt_list), 'n_control': len(mc_list),
-            'balance': balance, 'cox_results': psm_cox,
+            'balance_before': balance_before,  # A2: Love plot용 PSM 전 SMD
+            'balance': balance,
+            'cox_results': psm_cox,
             # ★ matched_df 저장하지 않음 → 메모리 대폭 절약
         }
 
@@ -606,6 +726,33 @@ class StatisticalAnalyzer:
             subgroups['cvd_yes'] = any_cvd == 1
             subgroups['cvd_no'] = any_cvd == 0
 
+        # A4: 상호작용 p-value 계산을 위한 지시 변수 정의
+        # (각 이분형 하위그룹 변수에 대해 LRT 기반 interaction p-value 계산)
+        exposure_cols = ['is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin', 'is_t2dm_nomed']
+        sg_base_covars = ['age_at_index', 'male', 'cci_score']
+        # (sg_name → parent_var) 역매핑 및 지시 변수 컬럼명 정의
+        _sg_parent: dict[str, str] = {}
+        _sg_indicators: dict[str, str] = {}  # parent_var → indicator col in df
+
+        if 'male' in df.columns:
+            _sg_parent.update({'sex_male': 'sex', 'sex_female': 'sex'})
+            _sg_indicators['sex'] = 'male'
+        if 'age_group' in df.columns:
+            _sg_parent.update({'age_40_54': 'age_group', 'age_55_64': 'age_group'})
+        if 'income_q' in df.columns:
+            _sg_parent.update({'income_low': 'income', 'income_high': 'income'})
+        if 'bmi' in df.columns:
+            _sg_parent.update({'bmi_normal': 'bmi', 'bmi_obese': 'bmi'})
+        if 'cci_score' in df.columns:
+            _sg_parent.update({'cci_low': 'cci', 'cci_high': 'cci'})
+        if comp_cols:
+            _sg_parent.update({'dm_comp_yes': 'dm_comp', 'dm_comp_no': 'dm_comp'})
+        if 'comp_hypoglycemia' in df.columns:
+            _sg_parent.update({'hypo_yes': 'hypo', 'hypo_no': 'hypo'})
+            _sg_indicators['hypo'] = 'comp_hypoglycemia'
+        if cvd_cols:
+            _sg_parent.update({'cvd_yes': 'cvd', 'cvd_no': 'cvd'})
+
         model_cols_base = ['is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin', 'is_t2dm_nomed',
                            'age_at_index', 'male', 'cci_score',
                            'follow_up_years', 'dementia_event']
@@ -648,6 +795,67 @@ class StatisticalAnalyzer:
                 logger.warning(f"하위그룹 {name} 실패: {e}")
             finally:
                 gc.collect()
+
+        # A4: 상호작용 p-value (LRT) 계산 — 하위그룹 변수별
+        # 지시 변수가 없는 경우 임시 컬럼을 df 복사본에 추가
+        df_int = df[[c for c in model_cols_base + list(_sg_indicators.values())
+                      if c in df.columns]].copy()
+
+        # 임시 지시 변수 추가
+        if 'age_group' in df.columns:
+            df_int['_age_4054'] = (df['age_group'] == '40-54').astype(float)
+            _sg_indicators['age_group'] = '_age_4054'
+        if 'income_q' in df.columns:
+            df_int['_income_low'] = (df['income_q'] <= df['income_q'].median()).astype(float)
+            _sg_indicators['income'] = '_income_low'
+        if 'bmi' in df.columns:
+            df_int['_bmi_normal'] = (df['bmi'] < 25).astype(float)
+            _sg_indicators['bmi'] = '_bmi_normal'
+        if 'cci_score' in df.columns:
+            df_int['_cci_low'] = (df['cci_score'] <= 2).astype(float)
+            _sg_indicators['cci'] = '_cci_low'
+        if comp_cols:
+            df_int['_dm_comp'] = df[comp_cols].max(axis=1).astype(float)
+            _sg_indicators['dm_comp'] = '_dm_comp'
+        if cvd_cols:
+            df_int['_cvd'] = df[cvd_cols].max(axis=1).astype(float)
+            _sg_indicators['cvd'] = '_cvd'
+
+        # 고유 parent 변수별 1회 계산
+        interaction_pvals: dict[str, float] = {}
+        unique_parents = {pv for pv in _sg_parent.values() if pv in _sg_indicators}
+        for parent_var in unique_parents:
+            ind_col = _sg_indicators[parent_var]
+            if ind_col not in df_int.columns:
+                continue
+            exp_in_df = [c for c in exposure_cols if c in df_int.columns]
+            if not exp_in_df:
+                continue
+            base_covars = [c for c in sg_base_covars if c in df_int.columns]
+            p_int = self._compute_interaction_pval(
+                df_int, exp_in_df, ind_col, base_covars
+            )
+            interaction_pvals[parent_var] = p_int
+
+        # Bonferroni 보정: 유효한 p_interaction 수로 보정
+        n_valid_tests = sum(1 for p in interaction_pvals.values() if not np.isnan(p))
+        bonf_n = max(n_valid_tests, 1)
+
+        # 각 하위그룹 결과에 p_interaction 및 보정값 기입
+        for sg_name in list(sg_results.keys()):
+            parent = _sg_parent.get(sg_name)
+            if parent and parent in interaction_pvals:
+                p_int = interaction_pvals[parent]
+                sg_results[sg_name]['p_interaction'] = float(p_int) if not np.isnan(p_int) else None
+                if not np.isnan(p_int):
+                    p_int_bonf = min(float(p_int) * bonf_n, 1.0)
+                    sg_results[sg_name]['p_interaction_bonferroni'] = p_int_bonf
+                else:
+                    sg_results[sg_name]['p_interaction_bonferroni'] = None
+
+        sg_results['_interaction_bonferroni_n'] = bonf_n
+        del df_int
+        gc.collect()
 
         self.results['subgroup'] = sg_results
         return sg_results
@@ -856,6 +1064,14 @@ class StatisticalAnalyzer:
                 'n_event': int((event_type == 1).sum()),
                 'n_competing': int((event_type == 2).sum()),
                 'n_censored': int((event_type == 0).sum()),
+                # A5: 방법론 검증 상태 명시 — 논문 제출 시 교차 검증 필수
+                'validation_status': 'NOT_VALIDATED',
+                'validation_note': (
+                    '이 구현은 IPCW 고정 가중치 근사입니다. '
+                    '논문 게재 전 R cmprsk::crr() 또는 SAS PHREG EVENTCODE= 옵션으로 '
+                    '교차 검증하여 결과 일치성을 확인하세요. '
+                    'subdistribution HR이 원 Fine-Gray와 최대 ±5% 이내이면 허용 가능.'
+                ),
             }
 
             del df_cr, event_type
@@ -866,8 +1082,9 @@ class StatisticalAnalyzer:
             gc.collect()
 
         results['_method_warning'] = (
-            "IPCW 고정 가중치 근사 방법 사용. "
-            "논문 게재 전 R cmprsk::crr() 교차 검증 필수."
+            "[NOT_VALIDATED] IPCW 고정 가중치 근사 방법 사용. "
+            "논문 게재 전 R cmprsk::crr() 또는 SAS PHREG로 교차 검증 필수. "
+            "validation_status='NOT_VALIDATED' 확인 후 제출."
         )
         self.results['competing_risks'] = results
         return results
@@ -911,11 +1128,93 @@ class StatisticalAnalyzer:
                      '논문 게재 시 R cmprsk::crr()와 교차 검증 권장. '
                      'run_competing_risks() 참조.'),
         }
+
+        # A6-1: 추적기간 절단 변형 (1년, 2년, 5년)
+        if cb: cb("민감도 분석 — 추적기간 절단 변형 분석 중...")
+        for cutoff_yr in [1, 2, 5]:
+            key = f'followup_cutoff_{cutoff_yr}y'
+            try:
+                raw, _ = self._load_data(cb=None)
+                df_cut = self._prepare(raw, cb=None)
+                df_cut = df_cut.copy()
+                # 추적기간 절단: follow_up_years > cutoff → 절단 처리
+                cut_mask = df_cut['follow_up_years'] > cutoff_yr
+                df_cut.loc[cut_mask, 'dementia_event'] = 0
+                df_cut.loc[cut_mask, 'follow_up_years'] = cutoff_yr
+                df_cut = df_cut[df_cut['follow_up_years'] > 0]
+                n_events = int(df_cut['dementia_event'].sum()) if 'dementia_event' in df_cut.columns else 0
+                exp_cols_cut = [c for c in ['is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin', 'is_t2dm_nomed']
+                                if c in df_cut.columns]
+                cox_results = {}
+                if n_events >= int(STUDY_SETTINGS.get('MIN_EVENTS', 10)):
+                    for exp_var in exp_cols_cut:
+                        cols_m = [exp_var, 'age_at_index', 'male', 'follow_up_years', 'dementia_event']
+                        cols_m = [c for c in cols_m if c in df_cut.columns]
+                        dm2 = df_cut[cols_m].dropna()
+                        dm2 = dm2[dm2['follow_up_years'] > 0]
+                        if len(dm2) >= 30 and dm2['dementia_event'].sum() >= 5:
+                            try:
+                                cph = CoxPHFitter()
+                                cph.fit(dm2, duration_col='follow_up_years', event_col='dementia_event')
+                                if exp_var in cph.summary.index:
+                                    cox_results[exp_var] = {
+                                        'hr': round(cph.summary.loc[exp_var, 'exp(coef)'], 4),
+                                        'ci_lower': round(cph.summary.loc[exp_var, 'exp(coef) lower 95%'], 4),
+                                        'ci_upper': round(cph.summary.loc[exp_var, 'exp(coef) upper 95%'], 4),
+                                        'p_value': round(cph.summary.loc[exp_var, 'p'], 6),
+                                    }
+                            except Exception as e2:
+                                logger.debug("민감도 cutoff %dy Cox (%s) 실패: %s", cutoff_yr, exp_var, e2)
+                sens[key] = {
+                    'n': len(df_cut), 'n_events': n_events,
+                    'desc': f'추적기간 {cutoff_yr}년 절단 민감도 분석',
+                    'cox_results': cox_results,
+                }
+                del df_cut
+                gc.collect()
+            except Exception as e:
+                logger.warning("민감도(추적기간 절단 %dy): %s", cutoff_yr, e)
+                sens[key] = {'n': None, 'desc': f'추적기간 {cutoff_yr}년 절단', 'error': str(e)}
+
+        # A6-2: DM 정의 변형 (외래 방문 ≥2회) — 실제 데이터에서만 의미 있음
+        # 코호트 빌더가 이미 필터링하므로 여기서는 메타데이터만 기록
+        sens['dm_definition_outpatient_ge2'] = {
+            'implemented': False,
+            'desc': (
+                'DM 정의 민감도: 외래 ≥2회 방문 기준. '
+                '현재 구현은 cohort_builder에서 설정 가능 (MIN_OUTPATIENT_VISITS 파라미터). '
+                '코호트 재구축 후 분석 재실행 필요.'
+            ),
+        }
+
+        # A6-3: 검열 연령 변형 (AGE65 vs AGE70 vs AGE75) — 메타데이터 기록
+        current_censor_month = STUDY_SETTINGS.get('AGE65_CENSOR_MONTH', '0101')
+        sens['censoring_age_variation'] = {
+            'implemented': False,
+            'current_setting': f'AGE65_CENSOR_MONTH={current_censor_month}',
+            'desc': (
+                '검열 연령 민감도: 65세/70세/75세 비교. '
+                'config.py의 AGE65_CENSOR_MONTH 및 cohort_builder를 수정하여 '
+                '각 기준으로 코호트 재구축 후 분석을 재실행하세요.'
+            ),
+        }
+
         self.results['sensitivity'] = sens
         gc.collect()
         return sens
 
     def generate_table1(self, cb=None, df_prepared=None):
+        """Table 1 생성 — 역학 논문 표준 형식.
+
+        구조: 행=특성 변수, 열=노출군 + P_value
+        포함 항목:
+          - N (건수)
+          - 연속변수: mean ± SD  (Kruskal-Wallis p)
+          - 이분형 변수: n (%)   (chi-square p)
+          - Person-years (총합)
+          - Follow-up (years): Median (IQR)
+          - Events (dementia/AD/VaD/death): n, Incidence Rate per 1000 PY
+        """
         if cb: cb("Table 1 생성 중...")
         if df_prepared is None:
             raw, _ = self._load_data(cb=cb)
@@ -923,73 +1222,128 @@ class StatisticalAnalyzer:
 
         groups = sorted(df_prepared['exposure_group'].unique())
         rows = []
-        for g in groups:
-            # ★ copy 대신 boolean mask만 사용
-            mask = df_prepared['exposure_group'] == g
-            gd = df_prepared[mask]
-            row = {'Group': g, 'N': int(mask.sum())}
-            for col, lbl in [('age_at_index', 'Age'), ('bmi', 'BMI'), ('fbs', 'FBS'), ('cci_score', 'CCI')]:
-                if col in gd.columns:
-                    v = pd.to_numeric(gd[col], errors='coerce').dropna()
-                    row[f'{lbl}_mean'] = round(v.mean(), 2)
-                    row[f'{lbl}_sd'] = round(v.std(), 2)
-            row['Male_pct'] = round((gd['male'] == 1).mean() * 100, 1) if 'male' in gd.columns else 0
-            for c in [x for x in gd.columns if x.startswith('comor_')]:
-                row[f'{c}_pct'] = round(pd.to_numeric(gd[c], errors='coerce').mean() * 100, 1)
-            rows.append(row)
 
-        # --- P-value 계산: 그룹 간 통계 검정 ---
-        p_values = {}
-        # 연속변수: Kruskal-Wallis test
-        for col, lbl in [('age_at_index', 'Age'), ('bmi', 'BMI'), ('fbs', 'FBS'), ('cci_score', 'CCI')]:
-            if col not in df_prepared.columns:
-                continue
-            group_vals = []
-            for g in groups:
-                v = pd.to_numeric(df_prepared.loc[df_prepared['exposure_group'] == g, col], errors='coerce').dropna()
-                if len(v) > 0:
-                    group_vals.append(v.values)
-            if len(group_vals) >= 2:
-                try:
-                    _, pval = stats.kruskal(*group_vals)
-                    p_values[f'{lbl}_mean'] = round(pval, 4)
-                except Exception:
-                    p_values[f'{lbl}_mean'] = np.nan
+        def _fmt_p(p):
+            if p is None or (isinstance(p, float) and np.isnan(p)):
+                return ''
+            return '<0.001' if p < 0.001 else f'{p:.3f}'
 
-        # 이분형 변수: Chi-square test
-        # Male_pct
-        if 'male' in df_prepared.columns:
+        def _kruskal_p(col):
+            gvs = [pd.to_numeric(df_prepared.loc[df_prepared['exposure_group'] == g, col],
+                                  errors='coerce').dropna().values for g in groups]
+            gvs = [v for v in gvs if len(v) > 0]
+            if len(gvs) < 2:
+                return np.nan
             try:
-                ct = pd.crosstab(df_prepared['exposure_group'], df_prepared['male'])
-                if ct.shape[0] >= 2 and ct.shape[1] >= 2:
-                    _, pval, _, _ = stats.chi2_contingency(ct)
-                    p_values['Male_pct'] = round(pval, 4)
+                _, p = stats.kruskal(*gvs)
+                return p
             except Exception:
-                p_values['Male_pct'] = np.nan
+                return np.nan
 
-        # 동반질환 변수
-        comor_cols = [c for c in df_prepared.columns if c.startswith('comor_')]
-        for c in comor_cols:
+        def _chi2_p(col):
             try:
-                binary = pd.to_numeric(df_prepared[c], errors='coerce').fillna(0).astype(int)
+                binary = pd.to_numeric(df_prepared[col], errors='coerce').fillna(0).astype(int)
                 ct = pd.crosstab(df_prepared['exposure_group'], binary)
                 if ct.shape[0] >= 2 and ct.shape[1] >= 2:
-                    _, pval, _, _ = stats.chi2_contingency(ct)
-                    p_values[f'{c}_pct'] = round(pval, 4)
+                    _, p, _, _ = stats.chi2_contingency(ct)
+                    return p
             except Exception:
-                p_values[f'{c}_pct'] = np.nan
+                pass
+            return np.nan
 
-        # P_value 열 추가 (첫 번째 행에만 기록, 나머지 행은 빈 값)
-        for i, row in enumerate(rows):
-            if i == 0:
-                pv = {}
-                for key, val in p_values.items():
-                    pv[key] = val
-                row['P_value'] = '; '.join(f"{k}={v}" for k, v in pv.items())
-            else:
-                row['P_value'] = ''
+        # ---- N ----
+        row_n = {'Variable': 'N', 'Category': ''}
+        for g in groups:
+            row_n[g] = str(int((df_prepared['exposure_group'] == g).sum()))
+        row_n['P_value'] = ''
+        rows.append(row_n)
 
-        self.results['table1'] = pd.DataFrame(rows)
+        # ---- 연속 변수: mean ± SD ----
+        continuous_vars = [
+            ('age_at_index', 'Age (years)'),
+            ('bmi', 'BMI (kg/m²)'),
+            ('fbs', 'FBS (mg/dL)'),
+            ('sbp', 'SBP (mmHg)'),
+            ('egfr', 'eGFR (mL/min/1.73m²)'),
+            ('cci_score', 'CCI score'),
+            ('dm_duration_years', 'DM duration (years)'),
+        ]
+        for col, label in continuous_vars:
+            if col not in df_prepared.columns:
+                continue
+            row = {'Variable': label, 'Category': 'Mean ± SD'}
+            for g in groups:
+                v = pd.to_numeric(df_prepared.loc[df_prepared['exposure_group'] == g, col],
+                                   errors='coerce').dropna()
+                row[g] = f'{v.mean():.1f} ± {v.std():.1f}' if len(v) > 0 else 'N/A'
+            row['P_value'] = _fmt_p(_kruskal_p(col))
+            rows.append(row)
+
+        # ---- 이분형 변수: n (%) ----
+        binary_vars = [('male', 'Male sex')]
+        for c in sorted(c for c in df_prepared.columns if c.startswith('comor_')):
+            binary_vars.append((c, c.replace('comor_', '').replace('_', ' ').title()))
+        for c in sorted(c for c in df_prepared.columns if c.startswith('comp_')):
+            binary_vars.append((c, 'DM complication: ' + c.replace('comp_', '').replace('_', ' ').title()))
+
+        for col, label in binary_vars:
+            if col not in df_prepared.columns:
+                continue
+            row = {'Variable': label, 'Category': 'n (%)'}
+            for g in groups:
+                v = pd.to_numeric(df_prepared.loc[df_prepared['exposure_group'] == g, col],
+                                   errors='coerce').dropna()
+                if len(v) > 0:
+                    row[g] = f'{int(v.sum())} ({v.mean() * 100:.1f}%)'
+                else:
+                    row[g] = 'N/A'
+            row['P_value'] = _fmt_p(_chi2_p(col))
+            rows.append(row)
+
+        # ---- 추적 기간 ----
+        if 'follow_up_years' in df_prepared.columns:
+            row_py = {'Variable': 'Person-years', 'Category': 'Total', 'P_value': ''}
+            row_fu = {'Variable': 'Follow-up (years)', 'Category': 'Median (IQR)', 'P_value': ''}
+            for g in groups:
+                v = pd.to_numeric(df_prepared.loc[df_prepared['exposure_group'] == g, 'follow_up_years'],
+                                   errors='coerce').dropna()
+                row_py[g] = f'{v.sum():.1f}' if len(v) > 0 else 'N/A'
+                if len(v) > 0:
+                    med = v.median()
+                    q1, q3 = v.quantile(0.25), v.quantile(0.75)
+                    row_fu[g] = f'{med:.1f} ({q1:.1f}–{q3:.1f})'
+                else:
+                    row_fu[g] = 'N/A'
+            rows.append(row_py)
+            rows.append(row_fu)
+
+        # ---- 이벤트 수 및 발생률 ----
+        event_defs = [
+            ('dementia_event', 'Dementia'),
+            ('ad_event', "Alzheimer's disease"),
+            ('vad_event', 'Vascular dementia'),
+            ('competing_death_event', 'Death (competing risk)'),
+        ]
+        has_py = 'follow_up_years' in df_prepared.columns
+        for ecol, elabel in event_defs:
+            if ecol not in df_prepared.columns:
+                continue
+            row_ev = {'Variable': elabel + ' events', 'Category': 'n', 'P_value': ''}
+            row_ir = {'Variable': elabel + ' events', 'Category': 'IR per 1000 PY', 'P_value': ''}
+            for g in groups:
+                mask = df_prepared['exposure_group'] == g
+                ev = pd.to_numeric(df_prepared.loc[mask, ecol], errors='coerce').fillna(0).sum()
+                row_ev[g] = str(int(ev))
+                if has_py:
+                    py = pd.to_numeric(df_prepared.loc[mask, 'follow_up_years'],
+                                        errors='coerce').dropna().sum()
+                    row_ir[g] = f'{ev / py * 1000:.2f}' if py > 0 else 'N/A'
+            rows.append(row_ev)
+            if has_py:
+                rows.append(row_ir)
+
+        cols = ['Variable', 'Category'] + list(groups) + ['P_value']
+        self.results['table1'] = pd.DataFrame(rows, columns=cols)
         return self.results['table1']
 
     def run_selected(self, cb=None, run_cox=True, run_psm=True,
@@ -1010,6 +1364,17 @@ class StatisticalAnalyzer:
 
         step_errors = {}  # {step_name: error_message}
 
+        # B1: 진행률(%) 계산 — 활성 단계 수 기준
+        _active_steps = (['table1'] +
+                         ([f'cox_{oc}' for oc in ['dementia_event', 'ad_event', 'vad_event']] if run_cox else []) +
+                         (['psm'] if run_psm else []) +
+                         (['interaction'] if run_interaction else []) +
+                         (['subgroup'] if run_subgroup else []) +
+                         (['competing_risks'] if run_competing_risks else []) +
+                         (['sensitivity'] if run_sensitivity else []))
+        _total_steps = len(_active_steps)
+        _done_steps = [0]  # 가변 카운터 (클로저용 리스트)
+
         def _safe_run(step_name, fn):
             try:
                 fn()
@@ -1022,6 +1387,9 @@ class StatisticalAnalyzer:
                 logger.exception("분석 단계 오류 (%s)", step_name)
                 if cb: cb(f"[오류] {step_name}: {e}")
             finally:
+                _done_steps[0] += 1
+                pct = int(_done_steps[0] / _total_steps * 100) if _total_steps > 0 else 100
+                if cb: cb(f"[{pct}%] {step_name} 완료")
                 mem_manager.cleanup_after_step(step_name)  # 성공/실패 무관 항상 정리
 
         # Table 1은 항상 생성

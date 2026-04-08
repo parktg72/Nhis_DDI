@@ -49,12 +49,12 @@ def test_run_psm_skip_reason_uses_format_error_for_user():
         result = analyzer.run_psm(df_prepared=df)
     assert result.get('skipped') is True
     reason = result.get('reason', '')
-    # format_error_for_user 경유 시 "유효 데이터 부족: ... MIN_VALID_ROWS ..." 형식
-    # str(e) 경유 시 "유효 행 수(..." 형식 — MIN_VALID_ROWS 언급 없음
-    assert '유효 데이터 부족' in reason, \
-        f"skip reason 에 '유효 데이터 부족' 없음 — format_error_for_user 미사용(str(e) 사용 중): {reason!r}"
+    # format_error_for_user 경유: InsufficientDataError 메시지에 해결 방법 포함
+    # "유효 데이터 행 수 부족: N건 — 최소 분석 기준 M건 필요.\n해결 방법:..."
+    assert '유효 데이터 행 수 부족' in reason, \
+        f"skip reason 에 '유효 데이터 행 수 부족' 없음 — format_error_for_user 미사용: {reason!r}"
     assert 'MIN_VALID_ROWS' in reason, \
-        f"skip reason 에 'MIN_VALID_ROWS' 없음 — format_error_for_user 미경유(str(e) 사용 중): {reason!r}"
+        f"skip reason 에 'MIN_VALID_ROWS' 없음 — format_error_for_user 미경유: {reason!r}"
 
 
 def test_run_subgroup_respects_min_subgroup_events():
@@ -106,8 +106,10 @@ def test_run_subgroup_respects_min_subgroup_events():
 
     assert len(result_runs) > 0, \
         f"MIN_SUBGROUP_EVENTS=4 인데 이벤트 5건 서브그룹이 실행 안 됨 (하드코딩 5 사용 중일 수 있음)"
-    assert len(result_skips) == 0, \
-        f"MIN_SUBGROUP_EVENTS=10 인데 이벤트 5건 서브그룹이 skip 안 됨: {list(result_skips.keys())}"
+    # _로 시작하는 메타데이터 키(_interaction_bonferroni_n 등)는 제외
+    actual_sg_keys = [k for k in result_skips if not k.startswith('_')]
+    assert len(actual_sg_keys) == 0, \
+        f"MIN_SUBGROUP_EVENTS=10 인데 이벤트 5건 서브그룹이 skip 안 됨: {actual_sg_keys}"
 
 
 def test_run_competing_risks_dementia_event_no_duplicate_column_error():

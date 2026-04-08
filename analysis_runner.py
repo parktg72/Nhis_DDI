@@ -63,13 +63,24 @@ def run_post_analysis(dm, analysis_results, results_dir, log=None):
             errors.append(f"Forest plot 오류: {e}")
             log(f"Forest plot 오류: {e}")
 
-    # PSM Balance
+    # PSM Balance (After)
     if 'psm' in analysis_results:
         try:
             viz.plot_psm_balance(analysis_results['psm'].get('balance', {}))
         except Exception as e:
             errors.append(f"PSM balance plot 오류: {e}")
             log(f"PSM balance plot 오류: {e}")
+
+    # A2: Love Plot (Before vs After PSM)
+    if 'psm' in analysis_results:
+        try:
+            b_before = analysis_results['psm'].get('balance_before', {})
+            b_after = analysis_results['psm'].get('balance', {})
+            if b_before and b_after:
+                viz.plot_love(b_before, b_after, filename='love_plot.png')
+        except Exception as e:
+            errors.append(f"Love plot 오류: {e}")
+            log(f"Love plot 오류: {e}")
 
     # CIF
     if 'competing_risks' in analysis_results:

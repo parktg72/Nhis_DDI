@@ -117,13 +117,19 @@ class InsufficientDataError(ValueError):
         self.kind = kind
         if kind == "events":
             super().__init__(
-                f"이벤트 수({valid_rows:,}건)가 EPV 최소 기준({min_rows:,}건)에 미달합니다. "
-                "코호트 크기를 확인하거나 MIN_EVENTS 설정을 조정하세요."
+                f"이벤트(결과 발생) 수 부족: {valid_rows:,}건 — EPV 최소 기준 {min_rows:,}건 필요.\n"
+                "해결 방법:\n"
+                "  1) 연구 기간을 확장하거나 진입 연령 기준을 완화하세요.\n"
+                "  2) config.py의 MIN_EVENTS 값을 낮추세요 (단, 통계적 검정력 감소 주의).\n"
+                "  3) 희귀 결과(AD/VaD)는 모든 치매를 복합 결과로 통합하는 방안을 고려하세요."
             )
         else:
             super().__init__(
-                f"유효 행 수({valid_rows:,}건)가 최소 분석 기준({min_rows:,}건)에 미달합니다. "
-                "코호트 크기를 확인하거나 MIN_VALID_ROWS 설정을 낮추세요."
+                f"유효 데이터 행 수 부족: {valid_rows:,}건 — 최소 분석 기준 {min_rows:,}건 필요.\n"
+                "해결 방법:\n"
+                "  1) 데이터가 정상적으로 추출되었는지 DataLoad 탭에서 확인하세요.\n"
+                "  2) 코호트 조건(연령, 진입기간 등)이 너무 좁지 않은지 검토하세요.\n"
+                "  3) config.py의 MIN_VALID_ROWS 값을 낮출 수 있습니다 (최소 10 권장)."
             )
 
 
@@ -144,15 +150,7 @@ def format_error_for_user(exc: Exception) -> str:
             "재시도하거나 데이터를 다시 적재해 주세요."
         )
     if isinstance(exc, InsufficientDataError):
-        if exc.kind == "events":
-            return (
-                f"이벤트(결과 발생) 수 부족: {exc.valid_rows:,}건 (EPV 최소 {exc.min_rows:,}건 필요). "
-                "코호트 크기를 확인하거나 MIN_EVENTS 설정을 조정하세요."
-            )
-        return (
-            f"유효 데이터 부족: {exc.valid_rows:,}건 (최소 {exc.min_rows:,}건 필요). "
-            "코호트 크기를 확인하거나 MIN_VALID_ROWS 설정을 조정하세요."
-        )
+        return str(exc)  # InsufficientDataError.__init__에 이미 해결 방법 포함
     if isinstance(exc, _pd.errors.EmptyDataError):
         return "분석 대상 데이터가 없습니다. 코호트 구성 단계를 확인해 주세요."
     if isinstance(exc, ValueError):
