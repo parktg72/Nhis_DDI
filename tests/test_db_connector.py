@@ -592,6 +592,71 @@ class TestCompositeIndexes:
         storage.close()
 
 
+    def test_gj_result_gets_index(self, tmp_path, monkeypatch):
+        """GJ_RESULT 로드 시 (INDI_DSCM_NO, HC_DT) 인덱스 생성."""
+        from db_connector import _create_indexes_with_progress
+        calls = []
+
+        def mock_create(storage, table, indexes, progress_callback=None):
+            calls.append((table, indexes))
+
+        monkeypatch.setattr('db_connector._create_indexes_with_progress', mock_create)
+
+        storage = DuckDBStorage(str(tmp_path / "test.duckdb"))
+        storage.connect()
+
+        fake_hana = HANAConnector("localhost", 30015, "user", "pw")
+        fake_hana.fetch_table_chunked = MagicMock(return_value=[
+            pd.DataFrame({"INDI_DSCM_NO": ["P001"], "HC_DT": ["20130101"],
+                          "G1E_BMI": [22.0]})
+        ])
+
+        fake_hana.load_table_to_duckdb(
+            'GJ_RESULT', 'NHIS', storage, 'GJ_RESULT',
+            where_clause="INDI_DSCM_NO = 'P001'",
+        )
+
+        assert len(calls) == 1, f"인덱스 생성 1회 기대, 실제: {len(calls)}"
+        table, indexes = calls[0]
+        assert table == 'GJ_RESULT'
+        assert ['INDI_DSCM_NO', 'HC_DT'] in indexes, \
+            f"GJ_RESULT (INDI_DSCM_NO, HC_DT) 인덱스 누락: {indexes}"
+
+        storage.close()
+
+    def test_gj_quest_gets_index(self, tmp_path, monkeypatch):
+        """GJ_QUEST 로드 시 (INDI_DSCM_NO, HC_BZ_YYYY) 인덱스 생성."""
+        from db_connector import _create_indexes_with_progress
+        calls = []
+
+        def mock_create(storage, table, indexes, progress_callback=None):
+            calls.append((table, indexes))
+
+        monkeypatch.setattr('db_connector._create_indexes_with_progress', mock_create)
+
+        storage = DuckDBStorage(str(tmp_path / "test.duckdb"))
+        storage.connect()
+
+        fake_hana = HANAConnector("localhost", 30015, "user", "pw")
+        fake_hana.fetch_table_chunked = MagicMock(return_value=[
+            pd.DataFrame({"INDI_DSCM_NO": ["P001"], "HC_BZ_YYYY": ["2013"],
+                          "Q_SMK_NOW_YN": [0]})
+        ])
+
+        fake_hana.load_table_to_duckdb(
+            'GJ_QUEST', 'NHIS', storage, 'GJ_QUEST',
+            where_clause="INDI_DSCM_NO = 'P001'",
+        )
+
+        assert len(calls) == 1
+        table, indexes = calls[0]
+        assert table == 'GJ_QUEST'
+        assert ['INDI_DSCM_NO', 'HC_BZ_YYYY'] in indexes, \
+            f"GJ_QUEST (INDI_DSCM_NO, HC_BZ_YYYY) 인덱스 누락: {indexes}"
+
+        storage.close()
+
+
 class TestExtractAllMonthsFailFast:
     """Fix C5: Empty Parquet fail-fast."""
 

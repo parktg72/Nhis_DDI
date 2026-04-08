@@ -735,6 +735,18 @@ class HANAConnector:
                 [['INDI_DSCM_NO']],
                 progress_callback=progress_callback
             )
+        elif table_up == 'GJ_RESULT':
+            _create_indexes_with_progress(
+                duckdb_storage, duckdb_table,
+                [['INDI_DSCM_NO', 'HC_DT']],
+                progress_callback=progress_callback
+            )
+        elif table_up == 'GJ_QUEST':
+            _create_indexes_with_progress(
+                duckdb_storage, duckdb_table,
+                [['INDI_DSCM_NO', 'HC_BZ_YYYY']],
+                progress_callback=progress_callback
+            )
 
         logger.info(f"DuckDB 적재: {duckdb_table} ({total:,}건)")
         return total
