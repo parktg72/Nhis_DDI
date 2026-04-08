@@ -165,6 +165,30 @@ class ResultsExporter:
                 )
         return str(path)
 
+    def export_interaction_results(self, interaction_results, filename='interaction.xlsx', sampling_info=None):
+        """인터랙션(DM 유병기간 × 노출군) 분석 결과 내보내기."""
+        if not interaction_results:
+            logger.warning("인터랙션 결과 내보내기 생략: 데이터 없음")
+            return None
+        if interaction_results.get('skipped'):
+            reason = interaction_results.get('reason', '인터랙션 스킵됨')
+            logger.warning(f"인터랙션 결과 내보내기 생략: {reason}")
+            return None
+        summary = interaction_results.get('summary')
+        if summary is None:
+            logger.warning("인터랙션 결과 내보내기 생략: summary 없음")
+            return None
+
+        path = self.output_dir / filename
+        df_out = summary.copy()
+        if df_out.index.name:
+            df_out = df_out.reset_index()
+        with pd.ExcelWriter(path, engine='openpyxl') as writer:
+            self._write_df_with_sampling_header(
+                writer, df_out, 'Interaction', sampling_info
+            )
+        return str(path)
+
     def export_ph_tests(self, cox_results_all, filename='ph_tests.xlsx', sampling_info=None):
         """PH 가정 검정 결과 내보내기"""
         sheets = {}
@@ -218,6 +242,10 @@ class ResultsExporter:
                 exported.append(path)
         if 'competing_risks' in results:
             path = self.export_competing_risks(results['competing_risks'], f'{prefix}competing_risks.xlsx', sampling_info)
+            if path:
+                exported.append(path)
+        if 'interaction' in results:
+            path = self.export_interaction_results(results['interaction'], f'{prefix}interaction.xlsx', sampling_info)
             if path:
                 exported.append(path)
         return exported
