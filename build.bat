@@ -158,6 +158,19 @@ python -m PyInstaller --noconfirm --onedir --windowed^
  --hidden-import visualization^
  --hidden-import results_exporter^
  --hidden-import memory_manager^
+ --hidden-import analysis_checkpoint^
+ --hidden-import cohort_builder^
+ --hidden-import config^
+ --hidden-import db_connector^
+ --hidden-import tabs^
+ --hidden-import utils^
+ --hidden-import nhis_schema^
+ --hidden-import variable_generator^
+ --hidden-import statistical_analysis^
+ --hidden-import pyarrow^
+ --hidden-import pyarrow.parquet^
+ --hidden-import pyarrow.lib^
+ --collect-all pyarrow^
  main_app.py
 
 if errorlevel 1 (
