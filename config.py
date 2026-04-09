@@ -222,10 +222,10 @@ STUDY_SETTINGS = {
     # ── 실제 HANA 테이블명 매핑 ─────────────────────────────────────────────
     # 내부 별칭(T20/T30/T40/T60)과 실제 HANA 테이블명이 다를 때 설정.
     'HANA_TABLE_MAP': {
-        'T20': 'TBGJME20',        # NHISBASE.TBGJME20
-        'T30': 'TBGJME30',        # NHISBASE.TBGJME30
-        'T40': 'TBGJME40',        # NHISBASE.TBGJME40
-        'T60': 'TBGJME60',        # NHISBASE.TBGJME60
+        'T20': 'HBMT_TBGJME20',   # NHISBASE.HBMT_TBGJME20
+        'T30': 'HBMT_TBGJME30',   # NHISBASE.HBMT_TBGJME30
+        'T40': 'HBMT_TBGJME40',   # NHISBASE.HBMT_TBGJME40
+        'T60': 'HBMT_TBGJME60',   # NHISBASE.HBMT_TBGJME60
     },
     'INPATIENT_FORM_CD': '02',        # T20 입원 진료명세서 구분코드 (외래='01', 입원='02')
     'AGE65_CENSOR_MONTH': '0101',     # 65세 censoring 기준월일 (MMDD). 기본='0101'(1월1일).
