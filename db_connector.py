@@ -22,8 +22,18 @@ from config import DUCKDB_SETTINGS, EXAM_STRUCTURE
 from memory_manager import mem_manager, chunk_controller
 
 _VALID_TABLE_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-_MONTHLY_TABLES = frozenset({'T20', 'T30', 'T40', 'T60'})
+_MONTHLY_TABLES = frozenset({'T20', 'T30', 'T40', 'T60'})  # 내부 별칭 기준
 _MONTHLY_FILTER_COL = 'MDCARE_STRT_YYYYMM'
+
+
+def _resolve_hana_table(alias: str) -> str:
+    """내부 별칭(T20 등)을 실제 HANA 테이블명으로 변환.
+
+    config.py HANA_TABLE_MAP에 매핑이 없으면 alias를 그대로 반환.
+    """
+    from config import STUDY_SETTINGS
+    table_map = STUDY_SETTINGS.get('HANA_TABLE_MAP') or {}
+    return table_map.get(alias, table_map.get(alias.upper(), alias))
 _READ_ONLY_FORBIDDEN = re.compile(
     r'\b(DROP|DELETE|INSERT|UPDATE|CREATE|ALTER|EXEC|EXECUTE|GRANT|REVOKE|TRUNCATE)\b',
     re.IGNORECASE
@@ -665,8 +675,8 @@ class HANAConnector:
                               duckdb_table, columns=None, where_clause=None,
                               chunk_size=None, progress_callback=None, force=True,
                               cohort_ids=None):
-        # hana_table 기준으로 라우팅: T20/T30/T40/T60 HANA 소스 테이블은 월별 추출
-        if hana_table.upper() in _MONTHLY_TABLES and where_clause is None:
+        # duckdb_table(내부 별칭) 기준으로 라우팅: 실제 HANA 테이블명과 무관하게 월별 추출 결정
+        if duckdb_table.upper() in _MONTHLY_TABLES and where_clause is None:
             if columns is not None:
                 logger.warning(
                     "load_table_to_duckdb: %s 월별 추출 경로에서 columns 인수 무시됨 "
@@ -1075,7 +1085,8 @@ class CohortIDExtractor:
         from config import STUDY_SETTINGS
         min_age = int(STUDY_SETTINGS.get('MIN_AGE', 40))
         max_age = int(STUDY_SETTINGS.get('MAX_AGE', 64))
-        hhdv_table = STUDY_SETTINGS.get('HHDV_TABLE', 'HHDV_DSEC_YY')
+        hhdv_alias = STUDY_SETTINGS.get('HHDV_TABLE', 'HHDV_DSEC_YY')
+        hhdv_table = _resolve_hana_table(hhdv_alias)  # 실제 HANA 테이블명
         std_yyyy_col = STUDY_SETTINGS.get('HHDV_STD_YYYY_COL', 'STD_YYYY')
         byear_col = STUDY_SETTINGS.get('HHDV_BYEAR_COL', 'BYEAR')
         # 테이블별 스키마 분리 지원: None이면 UI 입력값(self.schema) 사용
@@ -1093,8 +1104,10 @@ class CohortIDExtractor:
             for col in _SICK_SYM_COLS
         )
 
+        # T20 실제 HANA 테이블명 (HANA_TABLE_MAP 참조)
+        t20_hana_table = _resolve_hana_table('T20')
         # T20 MDCARE_STRT_YYYYMM 컬럼 타입 (INT vs VARCHAR) — 루프 전 1회만 감지
-        t20_col_type = self.hana._detect_column_type(t20_schema, 'T20', _MONTHLY_FILTER_COL)
+        t20_col_type = self.hana._detect_column_type(t20_schema, t20_hana_table, _MONTHLY_FILTER_COL)
         t20_int_where = t20_col_type is not None and 'INT' in t20_col_type.upper()
 
         # 연령 테이블: 연도별 데이터이므로 연도별 캐시로 중복 HANA 조회 방지
@@ -1144,7 +1157,7 @@ class CohortIDExtractor:
             month_dm_ids: set = set()
             try:
                 for chunk_df in self.hana.fetch_table_chunked(
-                    'T20', t20_schema,
+                    t20_hana_table, t20_schema,
                     columns=['INDI_DSCM_NO'],
                     where_clause=t20_where,
                 ):
@@ -1786,7 +1799,8 @@ class DataManager:
         if not self.hana.conn:
             self.hana.connect()
         if hana_table is None:
-            hana_table = table_name
+            # UI에서 실제 테이블명을 입력하지 않으면 내부 별칭 → 실제 HANA 테이블명 자동 변환
+            hana_table = _resolve_hana_table(table_name)
         count = self.hana.load_table_to_duckdb(
             hana_table, hana_schema, self.storage,
             table_name, columns, where_clause,
