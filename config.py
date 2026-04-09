@@ -211,8 +211,7 @@ STUDY_SETTINGS = {
     'HHDV_TABLE': 'HHDV_DSEC_YY',    # 연령 정보 테이블 (코호트 ID 추출 시 사용)
     'HHDV_STD_YYYY_COL': 'STD_YYYY', # HHDV 자격 연도 컬럼명
     'HHDV_BYEAR_COL': 'BYEAR',        # HHDV 생년 컬럼명
-    'HHDV_SCHEMA': None,              # HHDV 전용 스키마 — None이면 코호트 UI 입력값 사용
-                                      # 예: 'NHISBDA'
+    'HHDV_SCHEMA': 'NHISBDA',         # HHDV_DSEC_YY 조회 스키마
     'T20_SCHEMA': 'NHISASE',          # CohortIDExtractor T20 조회 스키마
     # ── 실제 HANA 테이블명 매핑 ─────────────────────────────────────────────
     # 내부 별칭(T20/T30/T40/T60)과 실제 HANA 테이블명이 다를 때 설정.
