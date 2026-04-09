@@ -242,7 +242,21 @@ class DuckDBStorage:
         _raw_temp = DUCKDB_SETTINGS.get('TEMP_DIRECTORY')
         temp_dir = str(_BASE_DIR / 'temp_duckdb') if not _raw_temp else _raw_temp
         os.makedirs(temp_dir, exist_ok=True)
-        self.conn = duckdb.connect(self.db_path)
+        try:
+            self.conn = duckdb.connect(self.db_path)
+        except Exception as e:
+            err_str = str(e).lower()
+            if 'locked' in err_str or 'already opened' in err_str or 'lock' in err_str:
+                raise RuntimeError(
+                    f"DuckDB 파일이 잠겨 있습니다: {self.db_path}\n"
+                    "원인: 이전 세션이 비정상 종료되어 파일 잠금이 남아 있거나, "
+                    "다른 프로세스(Python/DBeaver 등)가 같은 파일을 열고 있습니다.\n"
+                    "해결 방법:\n"
+                    "  1. 앱을 완전히 종료한 뒤 다시 실행하세요.\n"
+                    "  2. 작업 관리자에서 python.exe 프로세스가 남아 있으면 종료하세요.\n"
+                    f"  3. 그래도 안 되면 '{self.db_path}' 파일을 삭제 후 다시 추출하세요."
+                ) from e
+            raise
         mem_limit = DUCKDB_SETTINGS['MEMORY_LIMIT']
         threads = DUCKDB_SETTINGS['THREADS']
         if not re.match(r'^\d+(\.\d+)?(GB|MB|KB|B)$', str(mem_limit), re.IGNORECASE):

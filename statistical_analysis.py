@@ -361,7 +361,15 @@ class StatisticalAnalyzer:
                 if cb: cb(f"[경고] Cox {mname}: {zero_exposure} 노출군이 0건으로 분석에서 제외됩니다.")
 
             cols = [c for c in active_mcols if c in df_prepared.columns] + [T, E]
+            n_before_drop = len(df_prepared)
             df_model = df_prepared[cols].dropna()
+            n_dropped = n_before_drop - len(df_model)
+            if n_before_drop > 0 and n_dropped / n_before_drop > 0.10:
+                drop_pct = n_dropped / n_before_drop * 100
+                drop_msg = (f"Cox {mname}({outcome}): dropna로 {n_dropped:,}건({drop_pct:.1f}%) 제외 "
+                            f"— 결측 공변량 확인 필요 (남은 행: {len(df_model):,}건)")
+                logger.warning(drop_msg)
+                if cb: cb(f"[경고] {drop_msg}")
             try:
                 self._check_min_rows(df_model, context=f"run_cox {mname}")
                 n_model_events = int(df_model[E].sum())
@@ -573,6 +581,22 @@ class StatisticalAnalyzer:
             return self.results.get('psm', {})
 
         matched = pd.concat([df_dm.loc[mt_list], df_dm.loc[mc_list]])
+
+        # PSM 매칭 후 크기 검증
+        min_valid = int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30))
+        n_treated_original = len(treated)
+        if len(mt_list) < min_valid:
+            match_warn = (f"PSM 매칭 결과 T1DM {len(mt_list)}명 — "
+                          f"최소 기준({min_valid}명) 미달. PSM Cox 결과 해석 주의.")
+            logger.warning(match_warn)
+            if cb: cb(f"[경고] {match_warn}")
+        elif n_treated_original > 0 and len(mt_list) / n_treated_original < 0.5:
+            # 원본 T1DM 대비 50% 미만 매칭 → caliper가 너무 좁을 수 있음
+            match_rate = len(mt_list) / n_treated_original * 100
+            match_warn = (f"PSM T1DM 매칭률 {match_rate:.1f}% ({len(mt_list):,}/{n_treated_original:,}명) "
+                          f"— PSM_CALIPER 또는 매칭 기준 조정 고려.")
+            logger.warning(match_warn)
+            if cb: cb(f"[경고] {match_warn}")
 
         # A2: PSM 전 Balance (Love plot용)
         balance_before = {}
