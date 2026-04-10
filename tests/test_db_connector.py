@@ -1015,6 +1015,8 @@ class TestCohortIDExtractor:
             'ENROLLMENT_START': 2013, 'ENROLLMENT_END': 2013,
             'MIN_AGE': 40, 'MAX_AGE': 64,
             'COHORT_USE_HHDV': True,
+            'HHDV_TABLE': 'HHDV_DSES_YY',
+            'HHDV_STD_YYYY_COL': 'STD_YYYY',
             'HANA_TABLE_MAP': {},  # 테스트: alias 그대로 사용 (T20 → T20)
         }):
             result = extractor.extract(force=True)
@@ -1037,6 +1039,9 @@ class TestCohortIDExtractor:
         with patch.dict('config.STUDY_SETTINGS', {
             'ENROLLMENT_START': 2013, 'ENROLLMENT_END': 2013,
             'MIN_AGE': 40, 'MAX_AGE': 64,
+            'COHORT_USE_HHDV': True,
+            'HHDV_TABLE': 'HHDV_DSES_YY',
+            'HHDV_STD_YYYY_COL': 'STD_YYYY',
             'HANA_TABLE_MAP': {},
         }):
             result = extractor.extract(force=True)
@@ -1054,6 +1059,9 @@ class TestCohortIDExtractor:
         with patch.dict('config.STUDY_SETTINGS', {
             'ENROLLMENT_START': 2013, 'ENROLLMENT_END': 2013,
             'MIN_AGE': 40, 'MAX_AGE': 64,
+            'COHORT_USE_HHDV': True,
+            'HHDV_TABLE': 'HHDV_DSES_YY',
+            'HHDV_STD_YYYY_COL': 'STD_YYYY',
             'HANA_TABLE_MAP': {},
         }):
             extractor.extract(force=True)
@@ -1108,6 +1116,8 @@ class TestCohortIDExtractor:
             'ENROLLMENT_START': 2013, 'ENROLLMENT_END': 2014,
             'MIN_AGE': 40, 'MAX_AGE': 64,
             'COHORT_USE_HHDV': True,
+            'HHDV_TABLE': 'HHDV_DSES_YY',
+            'HHDV_STD_YYYY_COL': 'STD_YYYY',
             'HANA_TABLE_MAP': {},
         }):
             result = extractor.extract(force=True)
@@ -1216,6 +1226,8 @@ class TestHANAConnectorRetry:
             'ENROLLMENT_START': 2013, 'ENROLLMENT_END': 2013,
             'MIN_AGE': 40, 'MAX_AGE': 64,
             'COHORT_USE_HHDV': True,
+            'HHDV_TABLE': 'HHDV_DSES_YY',
+            'HHDV_STD_YYYY_COL': 'STD_YYYY',
             'HANA_TABLE_MAP': {},
         }):
             extractor.extract(force=True)
