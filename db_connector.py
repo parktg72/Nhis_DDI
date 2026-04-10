@@ -595,17 +595,23 @@ class HANAConnector:
         return clause
 
     def fetch_table_chunked(self, table_name, schema_name, columns=None,
-                            where_clause=None, chunk_size=None):
+                            where_clause=None, chunk_size=None, distinct=False):
         """서버 측 LIMIT/OFFSET 페이징으로 대용량 테이블 분할 조회.
 
         HANA의 search result size limit 초과를 방지하기 위해
         한 번의 대형 SELECT 대신 LIMIT/OFFSET으로 분할 실행한다.
+
+        Args:
+            distinct: True 이면 SELECT DISTINCT를 사용해 HANA 측에서 중복 제거.
+                      Python set()으로도 중복 제거되지만 distinct=True 시 전송량 절감.
+                      DISTINCT 사용 시 ORDER BY는 첫 번째 선택 컬럼으로 고정.
         """
         if chunk_size is None:
             chunk_size = chunk_controller.get_chunk('hana')
         if not self.conn:
             self.connect()
         col_str = ', '.join(f'"{c}"' for c in columns) if columns else '*'
+        select_prefix = 'SELECT DISTINCT' if distinct else 'SELECT'
         from_clause = f'"{schema_name}"."{table_name}"' if schema_name else f'"{table_name}"'
 
         where_part = ''
@@ -614,14 +620,19 @@ class HANAConnector:
             where_part = f' WHERE {where_clause}'
 
         # 컬럼 이름을 먼저 가져오기 (0건만 조회)
-        meta_query = f'SELECT {col_str} FROM {from_clause}{where_part} LIMIT 0'
+        meta_query = f'{select_prefix} {col_str} FROM {from_clause}{where_part} LIMIT 0'
         cursor = self.conn.cursor()
         cursor.execute(meta_query)
         col_names = [desc[0] for desc in cursor.description]
         cursor.close()
 
-        # 결정적 페이징을 위한 정렬 키 (PK → 첫 컬럼 fallback)
-        order_key = self._get_order_key(schema_name, table_name)
+        # DISTINCT 시: ORDER BY는 SELECT 목록 첫 컬럼으로 고정 (HANA 제약)
+        # 비DISTINCT 시: PK → 첫 컬럼 fallback
+        if distinct:
+            first_col = (columns[0] if columns else col_names[0])
+            order_key = f'"{first_col}"'
+        else:
+            order_key = self._get_order_key(schema_name, table_name)
 
         # 서버 측 LIMIT/OFFSET 페이징
         total_rows = 0
@@ -629,7 +640,7 @@ class HANAConnector:
 
         while True:
             paged_query = (
-                f'SELECT {col_str} FROM {from_clause}{where_part}'
+                f'{select_prefix} {col_str} FROM {from_clause}{where_part}'
                 f' ORDER BY {order_key} LIMIT {chunk_size} OFFSET {offset}'
             )
 
@@ -1002,7 +1013,7 @@ class MonthlyHanaExtractor:
 # 코호트 ID 필터 헬퍼
 # ---------------------------------------------------------------------------
 _DM_CODES = ('E10', 'E11', 'E12', 'E13', 'E14')
-_SICK_SYM_COLS = ('SICK_SYM1', 'SICK_SYM2', 'SICK_SYM3', 'SICK_SYM4', 'SICK_SYM5')
+_SICK_SYM_COLS = ('SICK_SYM1',)  # 주진단만 — CohortBuilder(step2) SICK_SYM1 기준과 동일
 _COHORT_ID_CHUNK_SIZE = 900  # HANA IN 절 안전 상한
 
 
@@ -1028,8 +1039,13 @@ class CohortIDExtractor:
 
     흐름:
       ① 진입기간(ENROLLMENT_START~END) 모든 YYYYMM 순회
-      ② 각 월: HHDT_POPULATION_MM(연령조건) ∩ T20(E10~E14 상병조건) → 교집합을 set에 누적
+      ② 각 월: HHDT_POPULATION_MM(연령조건) ∩ T20(E10~E14 SICK_SYM1 주진단 조건) → 교집합을 set에 누적
       ③ 전체 누적 set → cohort_ids.parquet 캐시 (resume 지원)
+
+    중복 처리:
+      - HANA 조회 시 SELECT DISTINCT 적용 (전송량 절감)
+      - Python set() 구조로 월 간·청크 간 INDI_DSCM_NO 중복 자동 제거
+      - 캐시 저장: sorted(set) → parquet INDI_DSCM_NO 컬럼 DISTINCT 보장
 
     Args:
         hana_connector: HANAConnector 인스턴스
@@ -1170,6 +1186,7 @@ class CohortIDExtractor:
                             hhdv_table, hhdv_schema,
                             columns=['INDI_DSCM_NO'],
                             where_clause=age_where,
+                            distinct=True,  # 동일 기간 내 동일 환자 중복 제거 (HANA 전송량 절감)
                         ):
                             period_ids.update(chunk_df['INDI_DSCM_NO'].astype(str).tolist())
                             del chunk_df
@@ -1203,6 +1220,7 @@ class CohortIDExtractor:
                     t20_hana_table, t20_schema,
                     columns=['INDI_DSCM_NO'],
                     where_clause=t20_where,
+                    distinct=True,  # 동일 월 내 동일 환자 중복 행 제거 (HANA 전송량 절감)
                 ):
                     month_dm_ids.update(chunk_df['INDI_DSCM_NO'].astype(str).tolist())
                     del chunk_df

@@ -173,7 +173,7 @@ class TestMonthlyHanaExtractor:
 
         df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-        def fake_fetch(table, schema, where_clause=None):
+        def fake_fetch(table, schema, where_clause=None, **kwargs):
             if where_clause and '201301' in where_clause:
                 yield df_sample
 
@@ -192,7 +192,7 @@ class TestMonthlyHanaExtractor:
         """각 월에 MDCARE_STRT_YYYYMM WHERE 절을 사용해 fetch 호출 확인."""
         df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-        def fake_fetch(table, schema, where_clause=None):
+        def fake_fetch(table, schema, where_clause=None, **kwargs):
             if where_clause and '201301' in where_clause:
                 yield df_sample
 
@@ -222,7 +222,7 @@ class TestMonthlyHanaExtractor:
 
         df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-        def fake_fetch(table, schema, where_clause=None):
+        def fake_fetch(table, schema, where_clause=None, **kwargs):
             if where_clause and '201301' in where_clause:
                 yield df_sample
 
@@ -247,7 +247,7 @@ class TestMonthlyHanaExtractor:
         """각 월 및 DuckDB 병합 진행 메시지 emit 확인."""
         df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-        def fake_fetch(table, schema, where_clause=None):
+        def fake_fetch(table, schema, where_clause=None, **kwargs):
             if where_clause and '201301' in where_clause:
                 yield df_sample
 
@@ -269,7 +269,7 @@ class TestMonthlyHanaExtractor:
         """DuckDB merge는 execute로 CREATE TABLE 단일 호출 확인."""
         df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-        def fake_fetch(table, schema, where_clause=None):
+        def fake_fetch(table, schema, where_clause=None, **kwargs):
             if where_clause and '201301' in where_clause:
                 yield df_sample
 
@@ -376,7 +376,7 @@ class TestMonthlyHanaExtractor:
         df_sample = pd.DataFrame({'INDI_DSCM_NO': ['B002'], 'CMN_KEY': ['K002']})
         fetch_calls = []
 
-        def fake_fetch(table, schema, where_clause=None):
+        def fake_fetch(table, schema, where_clause=None, **kwargs):
             fetch_calls.append(where_clause)
             # 201302에 데이터 제공하여 schema_columns가 설정되도록 함
             if where_clause and '201302' in where_clause:
@@ -408,7 +408,7 @@ class TestMonthlyHanaExtractor:
 
         df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-        def fake_fetch(table, schema, where_clause=None):
+        def fake_fetch(table, schema, where_clause=None, **kwargs):
             if where_clause and '201301' in where_clause:
                 yield df_sample
 
@@ -683,7 +683,7 @@ class TestExtractAllMonthsFailFast:
 
             df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-            def fake_fetch(table, schema, where_clause=None):
+            def fake_fetch(table, schema, where_clause=None, **kwargs):
                 # 201301은 0건, 201302부터 데이터
                 if where_clause and '201302' in where_clause:
                     yield df_sample
@@ -719,7 +719,7 @@ class TestExtractAllMonthsFailFast:
 
             df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-            def fake_fetch(table, schema, where_clause=None):
+            def fake_fetch(table, schema, where_clause=None, **kwargs):
                 # 201301만 데이터, 나머지 0건
                 if where_clause and '201301' in where_clause:
                     yield df_sample
@@ -770,7 +770,7 @@ class TestParquetWriterFinally:
 
         df_sample = pd.DataFrame({'INDI_DSCM_NO': ['A001'], 'CMN_KEY': ['K001']})
 
-        def fake_fetch(table, schema, where_clause=None):
+        def fake_fetch(table, schema, where_clause=None, **kwargs):
             if where_clause and '201301' in where_clause:
                 yield df_sample
 
@@ -827,7 +827,7 @@ class TestLoadTableCohortIDsFilter:
         hana = HANAConnector.__new__(HANAConnector)
         hana.conn = MagicMock()
 
-        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None, **kwargs):
             captured_wheres.append(where_clause)
             return iter([])
 
@@ -850,7 +850,7 @@ class TestLoadTableCohortIDsFilter:
         hana = HANAConnector.__new__(HANAConnector)
         hana.conn = MagicMock()
 
-        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None, **kwargs):
             captured_wheres.append(where_clause)
             return iter([])
 
@@ -875,7 +875,7 @@ class TestLoadTableCohortIDsFilter:
         hana = HANAConnector.__new__(HANAConnector)
         hana.conn = MagicMock()
 
-        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None, **kwargs):
             captured_wheres.append(where_clause)
             return iter([])
 
@@ -940,7 +940,7 @@ def _make_mock_hana(hhdv_rows_by_year=None, t20_rows_by_month=None):
     hhdv_rows_by_year = hhdv_rows_by_year or {}
     t20_rows_by_month = t20_rows_by_month or {}
 
-    def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+    def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None, **kwargs):
         """table_name 과 where_clause 로 mock 데이터를 반환하는 제너레이터."""
         if table_name == 'HHDV_DSES_YY':
             # STD_YYYY = 'YYYY' 에서 연도 파싱
@@ -1096,7 +1096,7 @@ class TestCohortIDExtractor:
 
         call_count = {'n': 0}
 
-        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None, **kwargs):
             if table_name == 'HHDV_DSES_YY':
                 call_count['n'] += 1
                 import re as _re
@@ -1284,7 +1284,7 @@ class TestHANAConnectorRetry:
         hana = MagicMock(spec=HANAConnector)
         hana._detect_column_type.return_value = 'NVARCHAR'
 
-        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None):
+        def fake_fetch(table_name, schema, columns=None, where_clause=None, chunk_size=None, **kwargs):
             queried_tables.append(table_name)
             # custom_table 조회 시 ID 1개 반환 (empty → skip 방지)
             if table_name == custom_table:

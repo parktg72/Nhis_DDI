@@ -215,7 +215,7 @@ STUDY_SETTINGS = {
     'HHDV_GAIBJA_TYPES': ('1', '2', '5', '6', '7', '8'),  # 가입자 유형 필터
     'T20_SCHEMA': 'NHISBASE',         # CohortIDExtractor T20 조회 스키마
     # T20 진료내역 필터 (SAS 쿼리 기준)
-    'T20_FORM_CD': ('02', '03', '07', '08', '09', '10', '11', '15'),  # 진료명세서 구분코드
+    'T20_FORM_CD': ('02', '03'),  # 입원(02) + 외래(03)만 — 실제 진료내역 기준으로 좁힘
     'T20_PAY_YN': '1',                # 급여구분 (1=급여)
     # HHDV 단계 스킵 여부: True=HHDT_POPULATION_MM 연령필터 활성화 (40~64세)
     'COHORT_USE_HHDV': True,
