@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 from hana_app.core.config import load_config, save_config, is_hana, is_sas
 from hana_app.core.db import get_connection
 from hana_app.core.hana_etl import HANAExtractor
+from hana_app.core.etl_logger import append_etl_log
 from hana_app.core.sas_reader import SASExtractor
 from hana_app.core.ml_runner import (
     build_patient_features, build_patient_features_from_parquet,
@@ -785,6 +786,7 @@ if run_btn:
     log_container = log_expander.empty()
     log_lines: list[str] = []
     _phase = {"lo": 0.0, "hi": 1.0, "start": _time.time()}
+    _etl_start: float = _time.time()   # ETL 전체 시작 시각 (로그용)
 
     def _set_phase(lo: float, hi: float) -> None:
         _phase["lo"] = lo
@@ -1019,6 +1021,12 @@ if run_btn:
 
             progress_bar.progress(0.35, text="추출 완료")
             st.success(f"✅ 추출 완료: {stats['total_records']:,}건 / {stats['unique_patients']:,}명")
+            append_etl_log(
+                period_from=f"{year_from}/{month_from}",
+                period_to=f"{year_to}/{month_to}",
+                row_count=stats["total_records"],
+                elapsed_sec=_time.time() - _etl_start,
+            )
             sc1, sc2, sc3, sc4, sc5 = st.columns(5)
             sc1.metric("T20 행 수", f"{stats['t20_rows']:,}")
             sc2.metric("T30 행 수", f"{stats['t30_rows']:,}")
@@ -1114,6 +1122,12 @@ if run_btn:
             # records는 session_state에 저장하지 않음 (메모리 절약)
             progress_bar.progress(0.35, text="추출 완료")
             st.success(f"✅ 추출 완료: {stats['total_records']:,}건 / {stats['unique_patients']:,}명")
+            append_etl_log(
+                period_from=f"{year_from}/{month_from}",
+                period_to=f"{year_to}/{month_to}",
+                row_count=stats["total_records"],
+                elapsed_sec=_time.time() - _etl_start,
+            )
             sc1, sc2, sc3, sc4, sc5 = st.columns(5)
             sc1.metric("T20 행 수", f"{stats['t20_rows']:,}")
             sc2.metric("T30 행 수", f"{stats['t30_rows']:,}")
@@ -1318,6 +1332,7 @@ if run_btn:
                 memory_limit_mb=memory_limit_mb,
                 feature_cols=selected_features,
                 guard=_mem_guard,
+                features_df=st.session_state.get("features_df"),
             )
             all_results[mname] = result
             log(f"[{mi+1}/{_n_models}] {mname} 완료 — F1={result['metrics']['f1_macro']:.4f}")
