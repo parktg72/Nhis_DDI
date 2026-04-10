@@ -1360,6 +1360,7 @@ def train_model(
     memory_limit_mb: int = 0,
     feature_cols: list[str] | None = None,
     guard=None,
+    features_df=None,   # ← 추가: 위험도 분포 요약 저장용
 ) -> dict[str, Any]:
     """
     DataFrame → 모델 학습 → 평가 결과 반환.
@@ -1575,6 +1576,17 @@ def train_model(
             if target == "risk_binary":
                 y_proba = model.predict_proba(X_test)[:, 1]
                 metrics["roc_auc"] = float(roc_auc_score(y_test, y_proba))
+                # ROC Curve 포인트 (최대 200점으로 다운샘플)
+                try:
+                    from sklearn.metrics import roc_curve as _roc_curve
+                    _fpr, _tpr, _ = _roc_curve(y_test, y_proba)
+                    _step = max(1, len(_fpr) // 200)
+                    metrics["roc_curve"] = {
+                        "fpr": _fpr[::_step].tolist(),
+                        "tpr": _tpr[::_step].tolist(),
+                    }
+                except Exception:
+                    pass
             else:
                 y_proba = model.predict_proba(X_test)
                 metrics["roc_auc_ovr"] = float(
@@ -1646,6 +1658,7 @@ def train_model(
             "sampling_round": _round + 1,
             "sampling_seed": _round_seed,
             "sampling_size": _sample,
+            "features_df": features_df,
         }
         _save_result(result)
         _round_results.append(result)
@@ -1924,12 +1937,29 @@ def _save_result(result: dict) -> None:
     # 결과 저장 (JSON)
     meta = {
         k: v for k, v in result.items()
-        if k not in ("model", "feature_importance")
+        if k not in ("model", "feature_importance", "features_df")
     }
     meta["model_path"] = str(model_path)
     meta["timestamp"] = ts
     if isinstance(result.get("feature_importance"), pd.DataFrame):
         meta["feature_importance"] = result["feature_importance"].to_dict("records")
+
+    # 위험도 분포 요약 (features_df → 요약 통계만 JSON에 저장)
+    _fdf = result.get("features_df")
+    if _fdf is not None and not _fdf.empty:
+        try:
+            meta["risk_summary"] = _fdf["risk_level"].value_counts().to_dict()
+            meta["drug_count_stats"] = {
+                "mean": round(float(_fdf["drug_count"].mean()), 2),
+                "max": int(_fdf["drug_count"].max()),
+            }
+            meta["ddi_means"] = {
+                c: round(float(_fdf[c].mean()), 4)
+                for c in ["ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor"]
+                if c in _fdf.columns
+            }
+        except Exception:
+            pass
 
     result_path = RESULTS_DIR / f"result_{model_name}_{ts}.json"
     with open(result_path, "w", encoding="utf-8") as f:
