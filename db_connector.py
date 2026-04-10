@@ -1013,7 +1013,7 @@ class MonthlyHanaExtractor:
 # 코호트 ID 필터 헬퍼
 # ---------------------------------------------------------------------------
 _DM_CODES = ('E10', 'E11', 'E12', 'E13', 'E14')
-_SICK_SYM_COLS = ('SICK_SYM1',)  # 주진단만 — CohortBuilder(step2) SICK_SYM1 기준과 동일
+_SICK_SYM_COLS = ('SICK_SYM1', 'SICK_SYM2', 'SICK_SYM3', 'SICK_SYM4', 'SICK_SYM5')
 _COHORT_ID_CHUNK_SIZE = 900  # HANA IN 절 안전 상한
 
 
@@ -1039,7 +1039,7 @@ class CohortIDExtractor:
 
     흐름:
       ① 진입기간(ENROLLMENT_START~END) 모든 YYYYMM 순회
-      ② 각 월: HHDT_POPULATION_MM(연령조건) ∩ T20(E10~E14 SICK_SYM1 주진단 조건) → 교집합을 set에 누적
+      ② 각 월: HHDT_POPULATION_MM(연령조건) ∩ T20(E10~E14 상병조건) → 교집합을 set에 누적
       ③ 전체 누적 set → cohort_ids.parquet 캐시 (resume 지원)
 
     중복 처리:
