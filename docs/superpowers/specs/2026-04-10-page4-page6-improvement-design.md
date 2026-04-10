@@ -138,10 +138,11 @@ if not check_hana_validated(cfg):
 
 ### 3-4. Tab 2: ETL 실행 이력
 
-- `st.session_state.get("etl_log", [])` 기반 표시
-  - ETL 실행 시각, 데이터 기간, 추출 건수, 소요시간
-- 세션 기록 없으면: "3단계 모델 학습 탭에서 ETL을 실행하면 이력이 여기에 기록됩니다" 안내
-- ETL 로그는 Page 3에서 session_state에 append하는 방식으로 연동
+- **영속 로그 파일**: `hana_app/etl_log.jsonl` — 앱 재시작 후에도 이력 유지
+- 레코드 구조: `{"ts": "2026-04-10T09:00:00", "period_from": "2023-01", "period_to": "2023-12", "row_count": 123456, "elapsed_sec": 42.1, "status": "ok"|"error", "error": ""}`
+- Page 3 ETL 완료 시 `etl_log.jsonl`에 JSON 라인 append
+- 표시: 최근 50건, 시각/기간/건수/소요시간/상태 컬럼
+- 세션에 기록 없어도 파일에서 이력 로드하므로 재시작 후에도 표시됨
 
 ### 3-5. Tab 3: 모델 학습 이력
 
@@ -171,7 +172,7 @@ if not check_hana_validated(cfg):
 
 - `_save_result()`: `risk_summary`, `drug_count_stats`, `ddi_means` 저장 추가
 - `run_training()` 반환 result에 `roc_curve` 데이터 포함 (binary 한정)
-- ETL 완료 후 `session_state["etl_log"]`에 실행 이력 append (Page 3 연동)
+- ETL 완료 후 `hana_app/etl_log.jsonl`에 JSON 라인 append (Page 3 연동, 영속)
 
 ---
 
@@ -183,13 +184,16 @@ if not check_hana_validated(cfg):
 | `hana_app/pages/6_📊_모니터링.py` | 전면 재작성 — 상태바 + 4탭 신규 구현 |
 | `hana_app/core/ml_runner.py` | 수정 — risk_summary/roc_curve 저장, etl_log 기록 |
 | `hana_app/pages/_monitoring_helpers.py` | 유지 (Page 6에서는 미사용, 향후 참조용) |
+| `hana_app/core/etl_logger.py` | 신규 — ETL 로그 append/read 헬퍼 |
+| `tests/test_hana_app/test_etl_logger.py` | 신규 — etl_logger 단위 테스트 |
 | `tests/test_hana_app/test_page6_status.py` | 신규 — 상태 요약 로직 단위 테스트 |
 
 ---
 
 ## 6. 구현 순서
 
-1. ml_runner.py 수정 (risk_summary, roc_curve, etl_log)
-2. Page 4 버그 수정 (P4-A~E + ROC탭)
-3. Page 6 전면 재작성
-4. 테스트 작성
+1. `hana_app/core/etl_logger.py` 신규 작성 + 테스트
+2. `hana_app/core/ml_runner.py` 수정 — risk_summary, roc_curve 저장 + etl_log append
+3. `hana_app/pages/4_📊_결과_분석.py` 버그 수정 (P4-A~E + ROC탭)
+4. `hana_app/pages/6_📊_모니터링.py` 전면 재작성 — 상태바 + 4탭
+5. 테스트 작성 (test_etl_logger, test_page6_status)
