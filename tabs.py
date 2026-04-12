@@ -1056,6 +1056,14 @@ class AnalysisTab(QWidget):
         self.chk_int = QCheckBox("상호작용 (유형×유병기간)"); self.chk_int.setChecked(True); ol.addWidget(self.chk_int)
         self.chk_sg = QCheckBox("하위그룹 (성별,연령,합병증,CVD)"); self.chk_sg.setChecked(True); ol.addWidget(self.chk_sg)
         self.chk_cr = QCheckBox("경쟁위험 분석 (Fine-Gray)"); self.chk_cr.setChecked(True); ol.addWidget(self.chk_cr)
+        self.chk_cv = QCheckBox("교차 검증 (Python vs R cmprsk)")
+        self.chk_cv.setChecked(False)
+        self.chk_cv.setToolTip(
+            "Fine-Gray 결과를 R cmprsk::crr()과 비교합니다.\n"
+            "R 미설치 시 CSV + R 스크립트만 생성됩니다.\n"
+            "경쟁위험 분석이 활성화된 경우에만 실행됩니다."
+        )
+        ol.addWidget(self.chk_cv)
         self.chk_sens = QCheckBox("민감도 분석"); self.chk_sens.setChecked(True); ol.addWidget(self.chk_sens)
         ly.addWidget(og)
 
@@ -1164,6 +1172,7 @@ class AnalysisTab(QWidget):
         run_int  = self.chk_int.isChecked()
         run_sg   = self.chk_sg.isChecked()
         run_cr   = self.chk_cr.isChecked()
+        run_cv   = self.chk_cv.isChecked()
         run_sens = self.chk_sens.isChecked()
 
         dm = self.ctx.dm
@@ -1176,6 +1185,7 @@ class AnalysisTab(QWidget):
                 run_interaction=run_int, run_subgroup=run_sg,
                 run_sensitivity=run_sens,
                 run_competing_risks=run_cr,
+                run_cross_validation=run_cv,
             )
 
         mw._set_action_buttons_enabled(False)

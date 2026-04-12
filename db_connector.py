@@ -372,7 +372,9 @@ class HANAConnector:
                     time.sleep(retry_delay)
                 else:
                     logger.error(f"HANA DB 연결 최종 실패: {e}")
-        raise last_exc
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("HANA DB 연결 실패: 재시도 횟수 설정을 확인하세요 (max_retries >= 0).")
 
     def test_connection(self):
         try:
@@ -819,10 +821,12 @@ class HANAConnector:
                 chunk_sql = _build_chunk_select_sql(chunk_df, '_temp_chunk')
 
                 if first_chunk:
+                    _validate_table_name(duckdb_table)
+                    quoted_table = _quote_identifier(duckdb_table)
                     duckdb_storage.drop_table(duckdb_table)
                     duckdb_storage.conn.register('_temp_chunk', chunk_df)
                     try:
-                        duckdb_storage.execute(f"CREATE TABLE {duckdb_table} AS {chunk_sql}")
+                        duckdb_storage.execute(f"CREATE TABLE {quoted_table} AS {chunk_sql}")
                     finally:
                         duckdb_storage.conn.unregister('_temp_chunk')
                     # 첫 청크 값이 작아 좁은 DECIMAL로 추론된 경우 DECIMAL(38,s)로 확장
@@ -831,7 +835,7 @@ class HANAConnector:
                 else:
                     duckdb_storage.conn.register('_temp_chunk', chunk_df)
                     try:
-                        duckdb_storage.execute(f"INSERT INTO {duckdb_table} {chunk_sql}")
+                        duckdb_storage.execute(f"INSERT INTO {quoted_table} {chunk_sql}")
                     finally:
                         duckdb_storage.conn.unregister('_temp_chunk')
 
@@ -1136,7 +1140,14 @@ def _cohort_id_where_parts(cohort_ids):
     parts = []
     for i in range(0, len(ids), _COHORT_ID_CHUNK_SIZE):
         chunk = ids[i:i + _COHORT_ID_CHUNK_SIZE]
-        quoted = ', '.join(f"'{_id}'" for _id in chunk)
+        # 환자 식별자는 반드시 숫자여야 함 — SQL 인젝션 및 데이터 무결성 방지
+        validated = []
+        for _id in chunk:
+            id_str = str(_id)
+            if not re.match(r'^\d+$', id_str):
+                raise ValueError(f"유효하지 않은 INDI_DSCM_NO: {_id!r}")
+            validated.append(id_str)
+        quoted = ', '.join(f"'{_id}'" for _id in validated)
         parts.append(f"INDI_DSCM_NO IN ({quoted})")
     return parts
 
@@ -1294,7 +1305,8 @@ class CohortIDExtractor:
                                 gc.collect()
                         except Exception as e:
                             logger.warning("%s %s 조회 실패: %s", hhdv_table, cache_key, e)
-                        # 월단위는 키 충돌 없으므로 Lock 없이 저장
+                        # 월단위: 각 스레드가 서로 다른 yyyymm 키를 처리하므로
+                        # 동일 키에 대한 동시 접근이 없어 Lock 불필요
                         age_ids_cache[cache_key] = period_ids
                         logger.debug("%s %s: %d명 (연령 %d~%d세 조건)", hhdv_table, cache_key, len(period_ids), min_age, max_age)
                     else:

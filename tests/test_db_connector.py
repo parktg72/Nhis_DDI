@@ -851,7 +851,7 @@ class TestLoadTableCohortIDsFilter:
         mock_storage = MagicMock()
         mock_storage.conn = MagicMock()
 
-        cohort_ids = frozenset(['P001', 'P002', 'P003'])
+        cohort_ids = frozenset(['10001', '10002', '10003'])
         hana.load_table_to_duckdb('JK', 'NHIS', mock_storage, 'JK', cohort_ids=cohort_ids)
 
         assert len(captured_wheres) > 0, "fetch_table_chunked 호출이 없음"
@@ -898,7 +898,7 @@ class TestLoadTableCohortIDsFilter:
         mock_storage = MagicMock()
         mock_storage.conn = MagicMock()
 
-        cohort_ids = frozenset(['P001'])
+        cohort_ids = frozenset(['10001'])
         hana.load_table_to_duckdb(
             'JK', 'NHIS', mock_storage, 'JK',
             where_clause="STD_YYYY = '2013'",
@@ -994,22 +994,27 @@ class TestCohortIDWhereParts:
         assert _cohort_id_where_parts(frozenset()) == []
 
     def test_small_set_single_part(self):
-        ids = frozenset(['A001', 'A002', 'A003'])
+        ids = frozenset(['10001', '10002', '10003'])
         parts = _cohort_id_where_parts(ids)
         assert len(parts) == 1
         assert "INDI_DSCM_NO IN (" in parts[0]
-        assert "'A001'" in parts[0] or "'A002'" in parts[0]
+        assert "'10001'" in parts[0] or "'10002'" in parts[0]
 
     def test_large_set_splits_into_chunks(self):
-        ids = frozenset(f'P{i:06d}' for i in range(_COHORT_ID_CHUNK_SIZE * 2 + 1))
+        ids = frozenset(str(i) for i in range(_COHORT_ID_CHUNK_SIZE * 2 + 1))
         parts = _cohort_id_where_parts(ids)
         assert len(parts) == 3  # 900 + 900 + 1
 
     def test_each_part_valid_sql_fragment(self):
-        ids = frozenset(['X1', 'X2'])
+        ids = frozenset(['20001', '20002'])
         for part in _cohort_id_where_parts(ids):
             assert part.startswith("INDI_DSCM_NO IN (")
             assert part.endswith(")")
+
+    def test_invalid_id_raises(self):
+        """영문자가 포함된 ID는 ValueError를 발생시켜야 한다."""
+        with pytest.raises(ValueError, match="유효하지 않은 INDI_DSCM_NO"):
+            _cohort_id_where_parts(frozenset(['A001']))
 
 
 class TestCohortIDExtractor:
@@ -1275,7 +1280,7 @@ class TestHANAConnectorRetry:
         hana.fetch_table_chunked.side_effect = fake_fetch
 
         extractor = MonthlyHanaExtractor(hana, mock_storage, 'NHIS', tmp_path)
-        cohort_ids = frozenset(['P001', 'P002'])
+        cohort_ids = frozenset(['10001', '10002'])
 
         with patch.dict('config.STUDY_SETTINGS', {
             'STUDY_START_YEAR': 2013, 'STUDY_END_YEAR': 2013,

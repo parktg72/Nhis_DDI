@@ -197,13 +197,6 @@ class StatisticalAnalyzer:
         try:
             base_use = [c for c in exposure_cols + [indicator_col] + covariate_cols
                         if c in df_full.columns]
-            df_b = df_full[base_use + [duration, outcome]].dropna()
-            df_b = df_b[df_b[duration] > 0]
-            if len(df_b) < 30 or df_b[outcome].sum() < 5:
-                return np.nan
-
-            cph_base = CoxPHFitter()
-            cph_base.fit(df_b, duration_col=duration, event_col=outcome)
 
             # 상호작용 항 생성 (exposure × indicator)
             int_data = {}
@@ -219,11 +212,22 @@ class StatisticalAnalyzer:
             int_df = pd.DataFrame(int_data, index=df_full.index)
             int_cols = list(int_data.keys())
             full_use = base_use + int_cols
+
+            # LRT는 동일 샘플에서 중첩 모델을 비교해야 유효
+            # → 두 모델 공통 complete cases를 먼저 추출한 뒤 피팅
+            all_cols = list(dict.fromkeys(full_use + [duration, outcome]))
             df_combined = pd.concat([df_full[base_use + [duration, outcome]], int_df], axis=1)
-            df_f = df_combined[full_use + [duration, outcome]].dropna()
-            df_f = df_f[df_f[duration] > 0]
-            if len(df_f) < 30:
+            df_common = df_combined[all_cols].dropna()
+            df_common = df_common[df_common[duration] > 0]
+
+            if len(df_common) < 30 or df_common[outcome].sum() < 5:
                 return np.nan
+
+            df_b = df_common[base_use + [duration, outcome]]
+            df_f = df_common[full_use + [duration, outcome]]
+
+            cph_base = CoxPHFitter()
+            cph_base.fit(df_b, duration_col=duration, event_col=outcome)
 
             cph_full = CoxPHFitter()
             cph_full.fit(df_f, duration_col=duration, event_col=outcome)
@@ -530,8 +534,12 @@ class StatisticalAnalyzer:
         control = df_ps[df_ps['is_t1dm'] == 0]
         lps_t = np.log(treated['ps'] / (1 - treated['ps']))
         lps_c = np.log(control['ps'] / (1 - control['ps']))
-        # caliper: 0.2 × pooled SD of logit(PS) — treated/control 합산 분산 기준
-        pooled_sd = np.sqrt((lps_t.var() + lps_c.var()) / 2)
+        # caliper: 0.2 × pooled SD of logit(PS) — Austin (2011) 표본크기 가중 공식
+        # pooled_SD = sqrt(((n_t-1)*var_t + (n_c-1)*var_c) / (n_t+n_c-2))
+        n_t, n_c = len(lps_t), len(lps_c)
+        pooled_sd = np.sqrt(
+            ((n_t - 1) * lps_t.var() + (n_c - 1) * lps_c.var()) / (n_t + n_c - 2)
+        ) if (n_t + n_c - 2) > 0 else 0.0
         if pooled_sd == 0 or np.isnan(pooled_sd):
             msg = ("PSM 스킵: pooled_sd = 0 또는 NaN — caliper 가 무효화되어 모든 매칭 거부됩니다 "
                    "(treated/control logit(PS) 분산 부족, 데이터 다양성 확인 필요)")
@@ -719,9 +727,14 @@ class StatisticalAnalyzer:
         df = df_prepared  # 참조만 (copy 안 함)
 
         subgroups = {
-            'sex_male': df['male'] == 1, 'sex_female': df['male'] == 0,
-            'age_40_54': df['age_group'] == '40-54', 'age_55_64': df['age_group'] == '55-64',
+            'sex_male': df['male'] == 1,
+            'sex_female': df['male'] == 0,
         }
+        if 'age_group' in df.columns:
+            subgroups['age_40_54'] = df['age_group'] == '40-54'
+            subgroups['age_55_64'] = df['age_group'] == '55-64'
+        else:
+            logger.warning("age_group 컬럼 없음 — 연령 서브그룹 분석 생략")
         if 'income_q' in df.columns:
             med = df['income_q'].median()
             subgroups['income_low'] = df['income_q'] <= med
@@ -893,7 +906,8 @@ class StatisticalAnalyzer:
         Returns:
             (unique_event_times, cif1, cif2)
         """
-        order = np.argsort(times)
+        # stable sort: 동일 시점 tie 발생 시 원래 순서 유지 → 재현성 보장
+        order = np.argsort(times, kind='stable')
         t_sorted = times[order]
         e_sorted = event_type[order]
         n = len(times)
@@ -906,6 +920,9 @@ class StatisticalAnalyzer:
 
         ptr = 0
         for ut in unique_event_times:
+            # ptr은 한 방향으로만 전진 → 전체 O(n+T) 복잡도
+            # '<' 조건: t==ut인 피험자(사건·검열 모두)는 at-risk에 포함
+            # (검열 대상은 해당 시점 이후 제거 — 표준 Aalen-Johansen 관례)
             while ptr < n and t_sorted[ptr] < ut:
                 ptr += 1
             at_risk = n - ptr
@@ -920,6 +937,46 @@ class StatisticalAnalyzer:
 
         return unique_event_times, np.array(cif1_list), np.array(cif2_list)
 
+    def _prepare_cr_data(
+        self,
+        df_prepared: 'pd.DataFrame',
+        outcome: str,
+        min_rows: int = 30,
+    ) -> 'tuple[pd.DataFrame, np.ndarray] | None':
+        """경쟁위험 분석용 df_cr 및 event_type 배열을 준비한다.
+
+        run_competing_risks() 와 run_cross_validation() 에서 공유 사용.
+
+        Returns:
+            (df_cr, event_type) 또는 데이터 부족·컬럼 누락 시 None
+        """
+        T = 'follow_up_years'
+        if outcome not in df_prepared.columns:
+            return None
+        if 'competing_death_event' not in df_prepared.columns:
+            return None
+
+        need_cols = [T, outcome, 'competing_death_event', 'dementia_event',
+                     'is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin',
+                     'is_t2dm_nomed', 'age_at_index', 'male']
+        need_cols = list(dict.fromkeys(c for c in need_cols if c in df_prepared.columns))
+        df_cr = df_prepared[need_cols].dropna().copy()
+        df_cr = df_cr[df_cr[T] > 0]
+
+        if len(df_cr) < min_rows:
+            return None
+
+        event_type = np.zeros(len(df_cr), dtype=int)
+        event_type[df_cr[outcome].values == 1] = 1
+        competing_mask = df_cr['competing_death_event'].values == 1
+        if outcome in ('ad_event', 'vad_event') and 'dementia_event' in df_cr.columns:
+            other_dementia = ((df_cr['dementia_event'].values == 1) &
+                              (df_cr[outcome].values == 0))
+            competing_mask = competing_mask | other_dementia
+        event_type[(df_cr[outcome].values == 0) & competing_mask] = 2
+
+        return df_cr, event_type
+
     def run_competing_risks(self, cb=None, df_prepared=None):
         """경쟁위험 분석: Aalen-Johansen CIF + IPCW Fine-Gray 근사
 
@@ -929,7 +986,7 @@ class StatisticalAnalyzer:
         - CIF: Aalen-Johansen 추정기로 구현. 동률(ties) 처리는 표준 방식 적용.
         - Fine-Gray: lifelines CoxPHFitter + IPCW 가중치 기반 근사 구현.
           G(t)는 역KM 추정(검열=사건, 실제 사건=검열). 경쟁위험 대상자의 추적시간을
-          max_time으로 연장하고 G(t_max)/G(t_j) 가중치를 적용하는 고정 가중치 방식.
+          max_time으로 연장하고 G(t_j)/G(t_max) 가중치를 적용하는 고정 가중치 방식.
         - 이 구현은 원 Fine-Gray (1999) 모형의 시간변동 가중치를 고정 가중치로
           근사하므로, 논문 제출 전 R cmprsk::crr()와의 교차 검증을 권장합니다.
         - 전체 SHR(subdistribution HR) 결과에 근사 방법론 고지가 포함됩니다.
@@ -961,31 +1018,11 @@ class StatisticalAnalyzer:
                 continue
             if cb: cb(f"경쟁위험 분석: {outcome} 처리 중...")
 
-            need_cols = [T, outcome, 'competing_death_event', 'dementia_event',
-                         'is_t1dm', 'is_t2dm_oha', 'is_t2dm_insulin',
-                         'is_t2dm_nomed', 'age_at_index', 'male']
-            # dict.fromkeys 로 순서 유지하며 중복 제거 (outcome='dementia_event' 일 때 방지)
-            need_cols = list(dict.fromkeys(c for c in need_cols if c in df_prepared.columns))
-            df_cr = df_prepared[need_cols].dropna().copy()
-            df_cr = df_cr[df_cr[T] > 0]
-
-            if len(df_cr) < _min_cr:
-                if cb: cb(f"경쟁위험 분석: {outcome} 스킵 (유효 행 {len(df_cr)} < {_min_cr})")
+            cr_data = self._prepare_cr_data(df_prepared, outcome, min_rows=_min_cr)
+            if cr_data is None:
+                if cb: cb(f"경쟁위험 분석: {outcome} 스킵 (데이터 부족 또는 컬럼 누락)")
                 continue
-
-            # --- 1) 이벤트 유형 분류 ---
-            # dementia_event: 경쟁위험 = 사망/탈퇴만
-            # ad_event: 경쟁위험 = 사망/탈퇴 + non-AD 치매 (dementia=1 but ad=0)
-            # vad_event: 경쟁위험 = 사망/탈퇴 + non-VaD 치매 (dementia=1 but vad=0)
-            event_type = np.zeros(len(df_cr), dtype=int)
-            event_type[df_cr[outcome].values == 1] = 1
-            competing_mask = df_cr['competing_death_event'].values == 1
-            if outcome in ('ad_event', 'vad_event') and 'dementia_event' in df_cr.columns:
-                # 비대상 치매 유형도 경쟁위험으로 분류
-                other_dementia = ((df_cr['dementia_event'].values == 1) &
-                                  (df_cr[outcome].values == 0))
-                competing_mask = competing_mask | other_dementia
-            event_type[(df_cr[outcome].values == 0) & competing_mask] = 2
+            df_cr, event_type = cr_data
 
             # --- 2) 노출군별 CIF 추정 ---
             cif_by_group = {}
@@ -1054,9 +1091,10 @@ class StatisticalAnalyzer:
                     # 벡터화: O(n) 루프 → 단일 predict 호출로 성능 개선
                     g_at_event = kmf_g.predict(comp_times).values
                     g_at_max = float(kmf_g.predict(max_time).iloc[0])
-                    # Fine-Gray IPCW: G(t)/G(t_j) — 시간이 지날수록 기여 감소 (≤ 1)
-                    weights = np.maximum(g_at_max, 1e-10) / np.maximum(g_at_event, 1e-10)
-                    weights = np.clip(weights, 0.01, 1.0)
+                    # Fine-Gray (1999) IPCW: 경쟁위험 대상자 가중치 = G(t_j) / G(t_max)
+                    # G는 감소함수이므로 t_j <= t_max → G(t_j) >= G(t_max) → 가중치 >= 1
+                    weights = np.maximum(g_at_event, 1e-10) / np.maximum(g_at_max, 1e-10)
+                    weights = np.clip(weights, 1.0, 100.0)
 
                     df_fg.loc[df_fg.index[is_competing], T] = max_time
                     df_fg.loc[df_fg.index[is_competing], outcome] = 0
@@ -1083,7 +1121,7 @@ class StatisticalAnalyzer:
                 'cif_by_group': cif_by_group,
                 'fine_gray_summary': fg_summary,
                 'method': 'Aalen-Johansen CIF + IPCW Fine-Gray approximation',
-                'method_note': ('IPCW 고정 가중치 근사(G(t_max)/G(t_j)). '
+                'method_note': ('IPCW 고정 가중치 근사(G(t_j)/G(t_max)). '
                                 '논문 게재 시 R cmprsk::crr()로 교차 검증 필요.'),
                 'n_event': int((event_type == 1).sum()),
                 'n_competing': int((event_type == 2).sum()),
@@ -1113,7 +1151,105 @@ class StatisticalAnalyzer:
         self.results['competing_risks'] = results
         return results
 
-    def run_sensitivity(self, cb=None):
+    def run_cross_validation(self, cb=None, df_prepared=None):
+        """Fine-Gray Python 결과와 R cmprsk::crr() 결과를 교차 검증한다.
+
+        run_competing_risks() 이후에 호출. Python IPCW 근사 결과를 R의 원 Fine-Gray
+        구현과 비교하여 HR 차이(%)와 concordant 여부를 반환한다.
+
+        결과:
+            self.results['cross_validation'] = {
+                outcome: {
+                    'csv_path': str,
+                    'r_script_path': str,
+                    'r_available': bool,
+                    'r_results': dict | None,
+                    'comparison_df': pd.DataFrame,
+                    'validation_status': 'VALIDATED'|'DISCREPANT'|'R_NOT_AVAILABLE'|'NO_COMPARISON_DATA',
+                    'temp_dir': str,  # cleanup_temp_dir()에 전달
+                }
+            }
+        """
+        from cross_validator import CrossValidator
+        if cb: cb("교차 검증 (Python vs R cmprsk::crr) 실행 중...")
+
+        cv = CrossValidator()
+        cv_results = {}
+
+        cr_results = self.results.get('competing_risks', {})
+        if not cr_results:
+            logger.warning("교차 검증 스킵: run_competing_risks() 결과 없음")
+            self.results['cross_validation'] = {'skipped': True, 'reason': '경쟁위험 분석 결과 없음'}
+            return self.results['cross_validation']
+
+        if df_prepared is None:
+            raw, _ = self._load_data(cb=None)
+            df_prepared = self._prepare(raw, cb=None)
+
+        _min_cr = int(STUDY_SETTINGS.get('MIN_VALID_ROWS', 30))
+
+        for outcome in ['dementia_event', 'ad_event', 'vad_event']:
+            oc_data = cr_results.get(outcome, {})
+            if not isinstance(oc_data, dict):
+                continue
+            if cb: cb(f"교차 검증: {outcome} 처리 중...")
+
+            cr_data = self._prepare_cr_data(df_prepared, outcome, min_rows=_min_cr)
+            if cr_data is None:
+                logger.info("교차 검증 %s 스킵: 데이터 부족", outcome)
+                continue
+            df_cr, event_type = cr_data
+
+            # Python Fine-Gray summary 가져오기
+            py_summary = oc_data.get('fine_gray_summary')
+
+            temp_dir = None
+            csv_path = r_script_path = None
+            r_available = False
+            r_results = None
+            comparison_df = pd.DataFrame()
+
+            try:
+                csv_path = cv.export_csv_for_r(df_cr, event_type, outcome)
+                temp_dir = csv_path.parent
+                r_script_path = cv.generate_r_script(csv_path, outcome)
+
+                if cb: cb(f"교차 검증: {outcome} — R 스크립트 생성 완료. R 실행 중...")
+                r_results = cv.run_r_script(r_script_path)
+                r_available = r_results is not None
+
+                comparison_df = cv.compare_results(py_summary, r_results)
+                status = CrossValidator.validation_status(comparison_df, r_available)
+
+                if cb:
+                    if status == 'VALIDATED':
+                        cb(f"교차 검증: {outcome} — VALIDATED (모든 HR 차이 5% 이내)")
+                    elif status == 'DISCREPANT':
+                        n_disc = int((~comparison_df['concordant']).sum())
+                        cb(f"교차 검증: {outcome} — DISCREPANT ({n_disc}개 공변량 차이 초과)")
+                    else:
+                        cb(f"교차 검증: {outcome} — {status}")
+
+            except Exception as e:
+                logger.exception("교차 검증 오류 (%s): %s", outcome, e)
+                status = 'ERROR'
+                if cb: cb(f"[오류] 교차 검증 {outcome}: {e}")
+
+            cv_results[outcome] = {
+                'csv_path':          str(csv_path) if csv_path else None,
+                'r_script_path':     str(r_script_path) if r_script_path else None,
+                'r_available':       r_available,
+                'r_results':         r_results,
+                'comparison_df':     comparison_df,
+                'validation_status': status,
+                'temp_dir':          str(temp_dir) if temp_dir else None,
+            }
+
+        self.results['cross_validation'] = cv_results
+        if cb: cb("교차 검증 완료!")
+        return cv_results
+
+    def run_sensitivity(self, cb=None, df_prepared=None):
         if cb: cb("민감도 분석 중...")
         sens = {}
         try:
@@ -1154,13 +1290,17 @@ class StatisticalAnalyzer:
         }
 
         # A6-1: 추적기간 절단 변형 (1년, 2년, 5년)
+        # df_prepared가 전달된 경우 재사용하여 불필요한 reload + _prepare 3회 복사 방지
         if cb: cb("민감도 분석 — 추적기간 절단 변형 분석 중...")
+        if df_prepared is None:
+            raw, _ = self._load_data(cb=None)
+            _sens_base = self._prepare(raw, cb=None)
+        else:
+            _sens_base = df_prepared
         for cutoff_yr in [1, 2, 5]:
             key = f'followup_cutoff_{cutoff_yr}y'
             try:
-                raw, _ = self._load_data(cb=None)
-                df_cut = self._prepare(raw, cb=None)
-                df_cut = df_cut.copy()
+                df_cut = _sens_base.copy()
                 # 추적기간 절단: follow_up_years > cutoff → 절단 처리
                 cut_mask = df_cut['follow_up_years'] > cutoff_yr
                 df_cut.loc[cut_mask, 'dementia_event'] = 0
@@ -1372,7 +1512,8 @@ class StatisticalAnalyzer:
 
     def run_selected(self, cb=None, run_cox=True, run_psm=True,
                      run_interaction=True, run_subgroup=True, run_sensitivity=True,
-                     run_competing_risks=True, results_dir=None, resume=False):
+                     run_competing_risks=True, run_cross_validation=False,
+                     results_dir=None, resume=False):
         """선택된 분석만 실행 — 체크박스 상태를 그대로 반영.
 
         Args:
@@ -1412,6 +1553,7 @@ class StatisticalAnalyzer:
                          (['interaction'] if run_interaction else []) +
                          (['subgroup'] if run_subgroup else []) +
                          (['competing_risks'] if run_competing_risks else []) +
+                         (['cross_validation'] if run_cross_validation and run_competing_risks else []) +
                          (['sensitivity'] if run_sensitivity else []))
         _total_steps = len(_active_steps)
         _done_steps = [0]  # 가변 카운터 (클로저용 리스트)
@@ -1463,11 +1605,14 @@ class StatisticalAnalyzer:
         if run_competing_risks:
             _safe_run('competing_risks', lambda: self.run_competing_risks(cb=cb, df_prepared=df_prepared))
 
-        del df_prepared
-        gc.collect()
+        if run_cross_validation and run_competing_risks:
+            _safe_run('cross_validation', lambda: self.run_cross_validation(cb=cb, df_prepared=df_prepared))
 
         if run_sensitivity:
-            _safe_run('sensitivity', lambda: self.run_sensitivity(cb=cb))
+            _safe_run('sensitivity', lambda: self.run_sensitivity(cb=cb, df_prepared=df_prepared))
+
+        del df_prepared
+        gc.collect()
 
         if step_errors:
             self.results['step_errors'] = step_errors

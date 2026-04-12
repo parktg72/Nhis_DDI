@@ -4,6 +4,7 @@ cohort_builder.py - 코호트 구축 모듈
 """
 
 import logging
+import re
 import time
 import duckdb
 from config import (
@@ -162,10 +163,22 @@ class CohortBuilder:
         """)
         return self.dm.storage.get_row_count('dm_claims')
 
+    @staticmethod
+    def _validate_medical_codes(codes, label):
+        """의료 코드 allowlist 검증 — 영숫자와 하이픈만 허용 (SQL 인젝션 방지)"""
+        _valid = re.compile(r'^[A-Za-z0-9\-]+$')
+        for code in codes:
+            if not _valid.match(str(code)):
+                raise ValueError(f"유효하지 않은 {label} 코드: {code!r}")
+
     def step3_dm_medications(self, cb=None):
         """당뇨 약물 처방 식별"""
         if cb: cb("Step 3: 당뇨 약물 처방 식별 중...")
-        oha = "'" + "','".join(self._flat_oha_codes()) + "'"
+        oha_codes = self._flat_oha_codes()
+        self._validate_medical_codes(oha_codes, 'OHA')
+        self._validate_medical_codes(INSULIN_CODES, 'INSULIN_CODES')
+        self._validate_medical_codes(INSULIN_EFMDC, 'INSULIN_EFMDC')
+        oha = "'" + "','".join(oha_codes) + "'"
         ins = "'" + "','".join(INSULIN_CODES) + "'"
         ief = "'" + "','".join(INSULIN_EFMDC) + "'"
 

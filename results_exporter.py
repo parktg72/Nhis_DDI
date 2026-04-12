@@ -330,6 +330,90 @@ class ResultsExporter:
         self._atomic_excel_write(path, _write)
         return str(path)
 
+    def export_cross_validation(self, cv_results, filename='cross_validation.xlsx',
+                               sampling_info=None):
+        """교차 검증 결과를 Excel로 내보낸다.
+
+        시트 구성:
+          - Summary: outcome별 validation_status, R 가용 여부, 파일 경로
+          - {outcome}_Comparison: Python vs R HR/CI/p-value 비교 테이블
+          - R_Script_Guide: R 미설치 환경에서의 수동 실행 안내문
+        """
+        if not cv_results or cv_results.get('skipped'):
+            logger.info("교차 검증 결과 없음 — 내보내기 스킵")
+            return None
+
+        path = self.output_dir / filename
+
+        def _write(tmp_path):
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                # ── Summary 시트 ─────────────────────────────────────────
+                summary_rows = []
+                for outcome, data in cv_results.items():
+                    if not isinstance(data, dict):
+                        continue
+                    cmp_df = data.get('comparison_df')
+                    n_disc = 0
+                    if cmp_df is not None and not cmp_df.empty and 'concordant' in cmp_df.columns:
+                        n_disc = int((~cmp_df['concordant']).sum())
+                    summary_rows.append({
+                        'Outcome':            outcome,
+                        'ValidationStatus':   data.get('validation_status', 'UNKNOWN'),
+                        'R_Available':        data.get('r_available', False),
+                        'N_Discrepant':       n_disc,
+                        'CSV_Path':           data.get('csv_path', ''),
+                        'R_Script_Path':      data.get('r_script_path', ''),
+                        'TempDir':            data.get('temp_dir', ''),
+                    })
+                if summary_rows:
+                    df_sum = pd.DataFrame(summary_rows)
+                    self._write_df_with_sampling_header(writer, df_sum, 'Summary', sampling_info)
+
+                # ── Comparison 시트 (outcome별) ───────────────────────────
+                for outcome, data in cv_results.items():
+                    if not isinstance(data, dict):
+                        continue
+                    cmp_df = data.get('comparison_df')
+                    if cmp_df is None or cmp_df.empty:
+                        continue
+                    sheet = f"{outcome[:20]}_Comparison"
+                    self._write_df_with_sampling_header(writer, cmp_df, sheet, sampling_info)
+
+                # ── R_Script_Guide 시트 ───────────────────────────────────
+                guide_lines = [
+                    ('R 교차 검증 수동 실행 안내', ''),
+                    ('', ''),
+                    ('1. R 및 패키지 설치 확인',
+                     "R 콘솔: install.packages(c('cmprsk', 'jsonlite'))"),
+                    ('2. 아래 스크립트를 R에서 실행', ''),
+                ]
+                for outcome, data in cv_results.items():
+                    if not isinstance(data, dict):
+                        continue
+                    r_path = data.get('r_script_path', '')
+                    if r_path:
+                        guide_lines.append(
+                            (f'  {outcome}',
+                             f"Rscript --vanilla \"{r_path}\"")
+                        )
+                guide_lines += [
+                    ('', ''),
+                    ('3. 결과 확인',
+                     '동일 디렉토리에 cv_result_*.json 파일이 생성됩니다.'),
+                    ('주의', 'CSV 파일에는 환자 식별번호가 포함되지 않습니다.'),
+                    ('주의', '분석 완료 후 임시 파일을 삭제하세요 (TempDir 참조).'),
+                ]
+                df_guide = pd.DataFrame(guide_lines, columns=['항목', '내용'])
+                df_guide.to_excel(writer, sheet_name='R_Script_Guide', index=False)
+
+        try:
+            self._atomic_excel_write(path, _write)
+            logger.info("교차 검증 결과 내보내기: %s", path)
+            return str(path)
+        except Exception as e:
+            logger.error("교차 검증 Excel 내보내기 실패: %s", e)
+            return None
+
     def export_all(self, results, prefix='', sampling_info=None):
         exported = []
         if 'table1' in results:
@@ -365,6 +449,11 @@ class ResultsExporter:
                 exported.append(path)
         if 'sensitivity' in results:
             path = self.export_sensitivity_results(results['sensitivity'], f'{prefix}sensitivity.xlsx', sampling_info)
+            if path:
+                exported.append(path)
+        if 'cross_validation' in results:
+            path = self.export_cross_validation(results['cross_validation'],
+                                                f'{prefix}cross_validation.xlsx', sampling_info)
             if path:
                 exported.append(path)
         return exported
