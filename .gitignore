@@ -39,6 +39,10 @@ mlruns/
 # 가상환경
 venv/
 .venv_hana/
+.venv_macos/
+
+# 로컬 설정 파일
+hana_app/hana_config.json
 
 # 미완성 앱 / 비코드 파일 (리뷰 도구 파일명 인코딩 호환성)
 hana/
