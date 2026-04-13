@@ -1,15 +1,15 @@
 """
 모니터링 대시보드 — Streamlit 6번 페이지
 
-4-tab 구성:
-  Tab 1: 실시간 예측 현황 (metrics_live.jsonl)
-  Tab 2: 드리프트 감지 (drift_{partition}.json)
-  Tab 3: 알림 이력 (alerts_{partition}.json)
-  Tab 4: 시스템 상태
+구성:
+  상태 요약 바: HANA 연결 / ETL 이력 / 모델 상태 / 저장소 — 항상 표시
+  Tab 1: 🔌 HANA 연결 상태
+  Tab 2: 📋 ETL 실행 이력
+  Tab 3: 🤖 모델 학습 이력
+  Tab 4: 💾 시스템 상태
 """
 from __future__ import annotations
 
-import datetime
 import sys
 from pathlib import Path
 
@@ -17,184 +17,251 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
 
-from hana_app.pages._monitoring_helpers import (
-    compute_disagree_rate,
-    get_recent_partitions,
-    load_alerts,
-    load_drift_report,
-    load_recent_metrics,
-    psi_status_label,
-)
-from config.settings import (
-    METRICS_JSONL_PATH,
-    MONITORING_DIR,
-    DRIFT_REFERENCE_PATH,
-    SERVING_URL,
-)
-
-# ─────────────────────────────────────────────────────────────────────────────
+from hana_app.core.config import load_config, is_hana
+from hana_app.core.db import get_connection
+from hana_app.core.etl_logger import load_etl_log
+from hana_app.core.ml_runner import list_saved_results, RESULTS_DIR, MODELS_DIR
 
 st.set_page_config(page_title="모니터링 대시보드", layout="wide")
 st.title("📊 모니터링 대시보드")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 상태 계산 (탭과 독립적으로 항상 수행)
+# ─────────────────────────────────────────────────────────────────────────────
+cfg = load_config()
+
+# HANA 연결 상태
+_hana_mode = is_hana(cfg)
+if _hana_mode:
+    _conn = get_connection(st.session_state)
+    _hana_connected = _conn.is_connected()
+    _hana_validated = cfg.get("validated", False)
+else:
+    _hana_connected = None   # SAS 모드 — 해당 없음
+    _hana_validated = True
+
+# ETL 이력
+_etl_records = load_etl_log(n=1)
+_etl_ok = len(_etl_records) > 0
+
+# 모델 이력
+_saved_results = list_saved_results()
+_model_ok = len(_saved_results) > 0
+
+# 저장소 상태
+_storage_ok = RESULTS_DIR.exists() and MODELS_DIR.exists()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 상태 요약 바
+# ─────────────────────────────────────────────────────────────────────────────
+st.markdown("### 시스템 상태 요약")
+sb1, sb2, sb3, sb4 = st.columns(4)
+
+if _hana_mode:
+    if _hana_connected and _hana_validated:
+        sb1.success("🟢 HANA 연결됨")
+    elif _hana_connected and not _hana_validated:
+        sb1.warning("🟡 연결됨 (미검증)")
+    else:
+        sb1.error("🔴 HANA 연결 끊김")
+else:
+    sb1.info("⚪ SAS 모드")
+
+if _etl_ok:
+    _last_etl = _etl_records[0]
+    sb2.success(f"🟢 ETL 완료 ({_last_etl['ts'][:10]})")
+else:
+    sb2.warning("🟡 ETL 이력 없음")
+
+if _model_ok:
+    _latest = _saved_results[0]
+    sb3.success(f"🟢 모델 {len(_saved_results)}개 ({_latest.get('timestamp','?')[:8]})")
+else:
+    sb3.error("🔴 모델 없음")
+
+if _storage_ok:
+    sb4.success("🟢 저장소 정상")
+else:
+    sb4.error("🔴 저장소 경로 없음")
+
+st.markdown("---")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 탭
+# ─────────────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 실시간 예측 현황",
-    "🌊 드리프트 감지",
-    "⚠️ 알림 이력",
-    "🔧 시스템 상태",
+    "🔌 HANA 연결 상태",
+    "📋 ETL 실행 이력",
+    "🤖 모델 학습 이력",
+    "💾 시스템 상태",
 ])
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Tab 1: 실시간 예측 현황
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ─── Tab 1: HANA 연결 상태 ───────────────────────────────────────────────────
 with tab1:
-    st.subheader("실시간 예측 현황 (최근 24시간)")
-
-    records = load_recent_metrics(METRICS_JSONL_PATH, hours=24)
-
-    if not records:
-        st.info("아직 예측 데이터가 없습니다. API를 통해 예측을 실행하면 여기에 표시됩니다.")
+    if not _hana_mode:
+        st.info("SAS 파일 모드에서는 HANA 연결 상태가 필요하지 않습니다.")
     else:
-        df = pd.DataFrame(records)
+        conn_cfg = cfg.get("connection", {})
+        c1, c2, c3 = st.columns(3)
+        c1.metric("호스트", conn_cfg.get("host", "—") or "—")
+        c2.metric("포트", str(conn_cfg.get("port", "—")))
+        c3.metric("사용자", conn_cfg.get("user", "—") or "—")
 
-        col1, col2, col3, col4 = st.columns(4)
-        total = len(df)
-        disagree_rate = compute_disagree_rate(records)
+        st.markdown("#### 검증 상태")
+        v1, v2, v3 = st.columns(3)
+        v1.metric("검증 완료", "✅ 예" if cfg.get("validated") else "❌ 아니오")
+        v2.metric("검증 시각", cfg.get("validated_at", "—") or "—")
+        v3.metric("검증 호스트", cfg.get("validated_host", "—") or "—")
 
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-            n_days = (df["timestamp"].max() - df["timestamp"].min()).days + 1
-            period_label = f"지난 {n_days}일" if n_days < 30 else "최근 30일"
-        else:
-            period_label = "최근 24시간"
+        st.markdown("#### 실시간 연결 확인")
+        if st.button("🔄 연결 상태 확인", key="btn_check_conn"):
+            with st.spinner("연결 확인 중..."):
+                alive = _conn.is_connected()
+            if alive:
+                st.success("✅ HANA DB 연결 정상")
+            else:
+                st.error("❌ 연결 끊김")
 
-        col1.metric("총 예측 건수", f"{total:,}", help=period_label)
-        col2.metric("Rule/ML 불일치율", f"{disagree_rate:.1%}", help="rule_level ≠ ml_level 비율")
-        if "risk_level" in df.columns:
-            red_count = (df["risk_level"] == "RED").sum()
-            col3.metric("고위험(RED) 비율", f"{red_count/total:.1%}" if total else "0.0%")
-        if "latency_ms" in df.columns:
-            col4.metric("평균 응답시간", f"{df['latency_ms'].mean():.1f}ms")
+        hana_creds = st.session_state.get("hana_creds")
+        if hana_creds and st.button("🔌 재연결", key="btn_reconnect"):
+            with st.spinner("재연결 시도 중..."):
+                try:
+                    _conn.ensure_connected(hana_creds, session_state=st.session_state)
+                    st.success("✅ 재연결 성공")
+                except Exception as e:
+                    st.error(f"❌ 재연결 실패: {e}")
+        elif not hana_creds:
+            st.caption("재연결하려면 1번 페이지에서 먼저 연결하세요.")
 
-        if "risk_level" in df.columns:
-            st.subheader("위험도 분포")
-            dist = df["risk_level"].value_counts().reset_index()
-            dist.columns = ["risk_level", "count"]
-            st.bar_chart(dist.set_index("risk_level"))
-
-        if "timestamp" in df.columns:
-            st.subheader("시간대별 예측 추이 (1시간 집계)")
-            df_hourly = df.set_index("timestamp").resample("1h").size().reset_index()
-            df_hourly.columns = ["timestamp", "count"]
-            st.line_chart(df_hourly.set_index("timestamp"))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tab 2: 드리프트 감지
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ─── Tab 2: ETL 실행 이력 ────────────────────────────────────────────────────
 with tab2:
-    st.subheader("드리프트 감지 (PSI)")
-
-    partitions = get_recent_partitions(MONITORING_DIR, prefix="drift_", n=7)
-    if not partitions:
-        st.info("아직 드리프트 데이터가 없습니다. 배치 DAG를 실행하면 여기에 표시됩니다.")
+    etl_records = load_etl_log(n=50)
+    if not etl_records:
+        st.info(
+            "ETL 실행 이력이 없습니다.\n\n"
+            "3단계 모델 학습 탭에서 ETL을 실행하면 이력이 자동으로 기록됩니다.\n"
+            "이력은 앱을 재시작해도 유지됩니다."
+        )
     else:
-        selected_partition = st.selectbox("파티션 선택", partitions, index=0)
-        report = load_drift_report(MONITORING_DIR, selected_partition)
-        if report is None:
-            st.info(f"파티션 {selected_partition}의 드리프트 데이터가 없습니다.")
-        else:
-            summary = report.get("summary", {})
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("분석 피처 수", summary.get("total_features", "N/A"))
-            col2.metric("🟢 Stable", summary.get("stable", 0))
-            col3.metric("🟡 Warning", summary.get("warning", 0))
-            col4.metric("🔴 Drift", summary.get("drift", 0))
+        st.caption(f"총 {len(etl_records)}건 (최근 50건 표시, 최신순)")
+        etl_df = pd.DataFrame(etl_records)
+        etl_df = etl_df.rename(columns={
+            "ts": "실행 시각", "period_from": "시작 기간", "period_to": "종료 기간",
+            "row_count": "추출 건수", "elapsed_sec": "소요(초)", "status": "상태", "error": "오류",
+        })
+        etl_df["추출 건수"] = etl_df["추출 건수"].apply(lambda x: f"{x:,}")
+        st.dataframe(etl_df, use_container_width=True, hide_index=True)
 
-            if report.get("trigger_retrain"):
-                st.error("⚡ 긴급 재학습 트리거 — 드리프트 피처 2개 이상 감지")
-
-            features = report.get("features", [])
-            if features:
-                feat_df = pd.DataFrame(features)
-                feat_df["상태"] = feat_df["psi"].apply(psi_status_label)
-                feat_df = feat_df.rename(columns={"feature": "피처", "psi": "PSI", "status": "status"})
-                st.dataframe(
-                    feat_df[["피처", "PSI", "상태"]].sort_values("PSI", ascending=False),
-                    use_container_width=True,
-                )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tab 3: 알림 이력
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ─── Tab 3: 모델 학습 이력 ────────────────────────────────────────────────────
 with tab3:
-    st.subheader("알림 이력 (최근 7일)")
-
-    alert_partitions = get_recent_partitions(MONITORING_DIR, prefix="alerts_", n=7)
-    alerts = load_alerts(MONITORING_DIR, alert_partitions)
-
-    if not alerts:
-        st.success("✅ 정상 — 최근 7일 내 발생한 알림이 없습니다.")
+    if not _saved_results:
+        st.info("저장된 모델 결과가 없습니다. 3단계 모델 학습을 먼저 실행하세요.")
     else:
-        alert_df = pd.DataFrame(alerts)
-        severity_icon = {"CRITICAL": "🔴", "WARNING": "🟡", "INFO": "🔵"}
-        if "severity" in alert_df.columns:
-            alert_df["severity"] = alert_df["severity"].apply(
-                lambda s: f"{severity_icon.get(s, '')} {s}"
+        rows = []
+        for r in _saved_results:
+            m = r.get("metrics", {})
+            rows.append({
+                "시각": r.get("timestamp", "?"),
+                "모델": r.get("model_name", "?"),
+                "타겟": r.get("target", "?"),
+                "Accuracy": round(m.get("accuracy", 0), 4),
+                "F1": round(m.get("f1_macro", 0), 4),
+                "AUC": round(m.get("roc_auc", m.get("roc_auc_ovr", 0)), 4),
+                "학습 수": m.get("train_size", 0),
+                "_file": r.get("_file", ""),
+            })
+        hist_df = pd.DataFrame(rows)
+
+        # 성능 추이 차트
+        if len(hist_df) > 1:
+            fig = go.Figure()
+            for metric in ["Accuracy", "F1", "AUC"]:
+                fig.add_trace(go.Scatter(
+                    x=hist_df["시각"], y=hist_df[metric],
+                    mode="lines+markers", name=metric,
+                ))
+            fig.update_layout(
+                title="모델 성능 추이",
+                xaxis_title="학습 시각", yaxis_title="Score",
+                height=350,
             )
-        display_cols = [c for c in ("generated_at", "alert_type", "severity", "message") if c in alert_df.columns]
+            st.plotly_chart(fig, use_container_width=True)
+
+        # 결과 테이블 (최신 강조)
+        display_df = hist_df.drop(columns=["_file"])
         st.dataframe(
-            alert_df[display_cols].sort_values("generated_at", ascending=False)
-            if "generated_at" in alert_df.columns
-            else alert_df[display_cols],
+            display_df.style.apply(
+                lambda row: ["background-color: #e8f5e9" if row.name == 0 else "" for _ in row],
+                axis=1,
+            ),
             use_container_width=True,
+            hide_index=True,
         )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Tab 4: 시스템 상태
-# ─────────────────────────────────────────────────────────────────────────────
+        # 삭제
+        st.markdown("#### 결과 삭제")
+        del_options = {
+            f"{r['시각']} — {r['모델']}": r["_file"]
+            for r in rows if r["_file"]
+        }
+        if del_options:
+            del_label = st.selectbox("삭제할 결과 선택", list(del_options.keys()), key="del_result_sel")
+            if st.button("🗑️ 선택 결과 삭제", key="btn_del_result"):
+                del_path = Path(del_options[del_label])
+                if del_path.exists():
+                    del_path.unlink()
+                    st.success(f"삭제 완료: {del_path.name}")
+                    st.rerun()
+                else:
+                    st.error("파일을 찾을 수 없습니다.")
 
+# ─── Tab 4: 시스템 상태 ──────────────────────────────────────────────────────
 with tab4:
-    st.subheader("시스템 상태")
+    st.markdown("#### 저장소 현황")
+    s1, s2 = st.columns(2)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Serving API**")
-        try:
-            import requests
-            resp = requests.get(f"{SERVING_URL}/health", timeout=3)
-            if resp.status_code == 200:
-                st.success(f"✅ 정상 ({SERVING_URL})")
-                health_data = resp.json()
-                st.json(health_data)
-            else:
-                st.error(f"❌ 응답 오류 (HTTP {resp.status_code})")
-        except Exception as e:
-            st.warning(f"⚠️ 연결 실패: {e}")
+    def _dir_info(d: Path) -> tuple[int, float]:
+        """(파일 수, 총 MB)"""
+        if not d.exists():
+            return 0, 0.0
+        files = list(d.iterdir())
+        total = sum(f.stat().st_size for f in files if f.is_file())
+        return len(files), total / (1024 * 1024)
 
-    with col2:
-        st.markdown("**모니터링 파일 상태**")
-        if METRICS_JSONL_PATH.exists():
-            stat = METRICS_JSONL_PATH.stat()
-            st.write(f"📄 metrics_live.jsonl: {stat.st_size / 1024:.1f} KB")
-            mtime = datetime.datetime.fromtimestamp(stat.st_mtime)
-            st.write(f"   마지막 수정: {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
-        else:
-            st.warning("metrics_live.jsonl 없음")
+    with s1:
+        st.markdown(f"**📁 results/** `{RESULTS_DIR}`")
+        n_r, mb_r = _dir_info(RESULTS_DIR)
+        st.write(f"파일 {n_r}개 / {mb_r:.1f} MB")
+        if n_r:
+            r_files = sorted(RESULTS_DIR.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True)
+            r_df = pd.DataFrame([
+                {"파일명": f.name, "크기(KB)": round(f.stat().st_size / 1024, 1)}
+                for f in r_files if f.is_file()
+            ])
+            st.dataframe(r_df, use_container_width=True, hide_index=True)
 
-        if DRIFT_REFERENCE_PATH.exists():
-            stat = DRIFT_REFERENCE_PATH.stat()
-            mtime = datetime.datetime.fromtimestamp(stat.st_mtime)
-            age_days = (datetime.datetime.now() - mtime).days
-            label = f"✅ drift_reference.pkl ({age_days}일 전)"
-            if age_days > 180:
-                st.warning(f"⚠️ {label} — 180일 이상 경과, 재학습 권고")
-            else:
-                st.success(label)
-        else:
-            st.error("❌ drift_reference.pkl 없음 — 학습 파이프라인 실행 필요")
+    with s2:
+        st.markdown(f"**📁 models/** `{MODELS_DIR}`")
+        n_m, mb_m = _dir_info(MODELS_DIR)
+        st.write(f"파일 {n_m}개 / {mb_m:.1f} MB")
+        if n_m:
+            m_files = sorted(MODELS_DIR.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True)
+            m_df = pd.DataFrame([
+                {"파일명": f.name, "크기(MB)": round(f.stat().st_size / (1024 * 1024), 1)}
+                for f in m_files if f.is_file()
+            ])
+            st.dataframe(m_df, use_container_width=True, hide_index=True)
+
+    total_mb = mb_r + mb_m
+    st.metric("총 디스크 사용량", f"{total_mb:.1f} MB")
+
+    st.markdown("#### 설정 파일")
+    from hana_app.core.config import CONFIG_FILE
+    if CONFIG_FILE.exists():
+        st.success(f"✅ {CONFIG_FILE.name} 존재 ({CONFIG_FILE.stat().st_size / 1024:.1f} KB)")
+    else:
+        st.warning(f"⚠️ {CONFIG_FILE.name} 없음 — 1번 페이지에서 설정 후 저장하세요.")
