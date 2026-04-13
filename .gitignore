@@ -9,10 +9,11 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# 대용량 패키지 (오프라인 설치용 wheel)
+# 대용량 패키지 (오프라인 설치용 wheel — 버전별 하위 폴더만 제외)
 packages_linux/
 packages_mac/
-packages_win/
+packages_win/py*/
+packages_win/spark/
 
 # 원천 데이터 및 모델 (용량/보안)
 data/
@@ -55,3 +56,13 @@ python/
 desktop_app.py
 web-user-guide.md
 .worktrees/
+
+# 설치 스크립트 및 요구사항 파일 추적 허용
+!install_all.bat
+!install_312.bat
+!download_all.bat
+!hana_app/run.bat
+!packages_win/install.bat
+!packages_win/download.bat
+!hana_app/requirements.txt
+!packages_win/requirements.txt
