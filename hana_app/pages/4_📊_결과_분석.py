@@ -17,9 +17,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hana_app.core.ml_runner import list_saved_results, load_model, RISK_LABEL_MAP
+from hana_app.core.config import load_config, is_hana
+from hana_app.core.page_guards import check_hana_validated, get_validation_error
 
 st.set_page_config(page_title="결과 분석", page_icon="📊", layout="wide")
 st.title("📊 학습 결과 분석")
+
+_cfg = load_config()
+if is_hana(_cfg) and not check_hana_validated(_cfg):
+    st.warning(get_validation_error(_cfg))
+    st.stop()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 결과 선택
@@ -76,10 +83,11 @@ st.markdown("---")
 # ─────────────────────────────────────────────────────────────────────────────
 # 탭 구성
 # ─────────────────────────────────────────────────────────────────────────────
-tab_fi, tab_cm, tab_cv, tab_dist, tab_report, tab_compare = st.tabs([
+tab_fi, tab_cm, tab_cv, tab_roc, tab_dist, tab_report, tab_compare = st.tabs([
     "📈 피처 중요도",
     "🔲 혼동 행렬",
     "📉 교차검증",
+    "📉 ROC Curve",
     "🧮 위험도 분포",
     "📋 분류 보고서",
     "⚖️ 모델 비교",
@@ -88,8 +96,6 @@ tab_fi, tab_cm, tab_cv, tab_dist, tab_report, tab_compare = st.tabs([
 # ── 탭1: 피처 중요도 ─────────────────────────────────────────────────────────
 with tab_fi:
     fi_data = result.get("feature_importance")
-    if fi_data is None and source == "저장된 결과":
-        fi_data = result.get("feature_importance")  # JSON에서 이미 로드
 
     if fi_data:
         if isinstance(fi_data, list):
@@ -218,67 +224,113 @@ with tab_cv:
     else:
         st.info("교차검증 결과가 없습니다.")
 
+# ── ROC Curve 탭 ──────────────────────────────────────────────────────────────
+with tab_roc:
+    roc_data = metrics.get("roc_curve")
+    if roc_data and "fpr" in roc_data and "tpr" in roc_data:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=roc_data["fpr"],
+            y=roc_data["tpr"],
+            mode="lines",
+            name=f"ROC (AUC={metrics.get('roc_auc', 0):.4f})",
+            line={"color": "steelblue", "width": 2},
+        ))
+        fig.add_trace(go.Scatter(
+            x=[0, 1], y=[0, 1],
+            mode="lines",
+            name="Random",
+            line={"color": "gray", "dash": "dash"},
+        ))
+        fig.update_layout(
+            title="ROC Curve",
+            xaxis_title="False Positive Rate",
+            yaxis_title="True Positive Rate",
+            height=450,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    elif metrics.get("roc_auc_ovr"):
+        st.info("ROC Curve는 이진 분류(risk_binary)에서만 표시됩니다. 다중 분류의 AUC(OvR)는 핵심 지표 탭을 확인하세요.")
+    else:
+        st.info("ROC Curve 데이터가 없습니다. 이번 개선 이전에 저장된 결과에는 roc_curve가 포함되지 않습니다.")
+
 # ── 탭4: 위험도 분포 ─────────────────────────────────────────────────────────
 with tab_dist:
     df = st.session_state.get("features_df")
-    if df is not None:
-        col_d1, col_d2 = st.columns(2)
+    risk_summary = result.get("risk_summary")
+    drug_stats = result.get("drug_count_stats")
+    ddi_means = result.get("ddi_means")
 
+    color_map = {"Red": "#e74c3c", "Yellow": "#f39c12", "Green": "#27ae60", "Normal": "#95a5a6"}
+
+    if df is not None:
+        # 현재 세션 데이터 — 원본 DataFrame 사용
+        col_d1, col_d2 = st.columns(2)
         with col_d1:
             risk_dist = df["risk_level"].value_counts().reset_index()
             risk_dist.columns = ["위험도", "환자수"]
-            color_map = {"Red": "#e74c3c", "Yellow": "#f39c12", "Green": "#27ae60", "Normal": "#95a5a6"}
-            fig = px.pie(
-                risk_dist,
-                names="위험도",
-                values="환자수",
-                color="위험도",
-                color_discrete_map=color_map,
-                title="위험도 분포",
-            )
+            fig = px.pie(risk_dist, names="위험도", values="환자수",
+                         color="위험도", color_discrete_map=color_map, title="위험도 분포")
             st.plotly_chart(fig, use_container_width=True)
-
         with col_d2:
-            fig = px.bar(
-                risk_dist.sort_values("위험도"),
-                x="위험도",
-                y="환자수",
-                color="위험도",
-                color_discrete_map=color_map,
-                title="위험도별 환자 수",
-                text="환자수",
-            )
+            fig = px.bar(risk_dist.sort_values("위험도"), x="위험도", y="환자수",
+                         color="위험도", color_discrete_map=color_map,
+                         title="위험도별 환자 수", text="환자수")
             fig.update_traces(texttemplate="%{text:,}", textposition="outside")
             st.plotly_chart(fig, use_container_width=True)
 
-        # 약물 수 분포
         st.subheader("약물 수 분포")
-        fig = px.histogram(
-            df,
-            x="drug_count",
-            color="risk_level",
-            color_discrete_map=color_map,
-            nbins=30,
-            barmode="overlay",
-            title="다재약물 환자의 약물 수 분포",
-            labels={"drug_count": "약물 수", "risk_level": "위험도"},
-        )
+        fig = px.histogram(df, x="drug_count", color="risk_level",
+                           color_discrete_map=color_map, nbins=30, barmode="overlay",
+                           title="다재약물 환자의 약물 수 분포",
+                           labels={"drug_count": "약물 수", "risk_level": "위험도"})
         st.plotly_chart(fig, use_container_width=True)
 
-        # DDI 분포
         st.subheader("DDI 심각도 분포")
         ddi_cols = ["ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor"]
         ddi_labels = ["금기", "Major", "Moderate", "Minor"]
-        ddi_means = [df[c].mean() for c in ddi_cols]
+        ddi_means_live = [df[c].mean() for c in ddi_cols]
         fig = go.Figure(go.Bar(
-            x=ddi_labels,
-            y=ddi_means,
+            x=ddi_labels, y=ddi_means_live,
             marker_color=["#e74c3c", "#e67e22", "#f1c40f", "#3498db"],
-            text=[f"{v:.2f}" for v in ddi_means],
-            textposition="outside",
+            text=[f"{v:.2f}" for v in ddi_means_live], textposition="outside",
         ))
         fig.update_layout(title="DDI 심각도별 평균 쌍 수", yaxis_title="평균 DDI 쌍 수")
         st.plotly_chart(fig, use_container_width=True)
+
+    elif risk_summary:
+        # 저장된 결과 — 요약 통계로 차트 재구성
+        st.caption("저장된 결과에서 요약 통계를 불러와 표시합니다.")
+        risk_dist = pd.DataFrame(
+            [{"위험도": k, "환자수": v} for k, v in risk_summary.items()]
+        )
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            fig = px.pie(risk_dist, names="위험도", values="환자수",
+                         color="위험도", color_discrete_map=color_map, title="위험도 분포 (저장 요약)")
+            st.plotly_chart(fig, use_container_width=True)
+        with col_d2:
+            fig = px.bar(risk_dist, x="위험도", y="환자수",
+                         color="위험도", color_discrete_map=color_map,
+                         title="위험도별 환자 수", text="환자수")
+            fig.update_traces(texttemplate="%{text:,}", textposition="outside")
+            st.plotly_chart(fig, use_container_width=True)
+
+        if ddi_means:
+            st.subheader("DDI 심각도 평균 (저장 요약)")
+            labels_map = {
+                "ddi_contraindicated": "금기", "ddi_major": "Major",
+                "ddi_moderate": "Moderate", "ddi_minor": "Minor",
+            }
+            ddi_labels = [labels_map[k] for k in ddi_means]
+            ddi_vals = list(ddi_means.values())
+            fig = go.Figure(go.Bar(
+                x=ddi_labels, y=ddi_vals,
+                marker_color=["#e74c3c", "#e67e22", "#f1c40f", "#3498db"],
+                text=[f"{v:.2f}" for v in ddi_vals], textposition="outside",
+            ))
+            fig.update_layout(title="DDI 심각도별 평균 쌍 수", yaxis_title="평균 DDI 쌍 수")
+            st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("피처 데이터가 없습니다. 3단계 모델학습을 먼저 실행하세요.")
 
