@@ -30,6 +30,13 @@ if exist "%PROJECT_ROOT%\.venv_hana\Scripts\python.exe" (
     echo 가상환경 사용: .venv312
 ) else (
     echo 시스템 Python 사용 ^(가상환경 미감지^)
+    REM 시스템 Python이 3.12인지 확인
+    for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set SYS_VER=%%v
+    echo !SYS_VER! | findstr /C:"3.12" >nul 2>&1
+    if errorlevel 1 (
+        echo [경고] Python 3.12 권장. 현재 버전: !SYS_VER!
+        echo        install_312.bat venv 를 먼저 실행하세요.
+    )
 )
 
 echo ==============================================

@@ -27,6 +27,13 @@ if "features_df" not in st.session_state:
     st.session_state.features_df = None
 if "last_result" not in st.session_state:
     st.session_state.last_result = None
+# 페이지 간 공유 키 (page1 설정 → page3/6 사용)
+if "hana_creds" not in st.session_state:
+    st.session_state.hana_creds = None
+if "conn_host" not in st.session_state:
+    st.session_state.conn_host = ""
+if "sas_ready" not in st.session_state:
+    st.session_state.sas_ready = False
 
 # ── 홈 화면 ──────────────────────────────────────────────────────────────────
 st.title("💊 NHIS 다재약물 DDI 위험도 분류 시스템")
