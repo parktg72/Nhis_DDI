@@ -6,7 +6,7 @@ REM 폐쇄망 Windows PC에서 실행
 REM
 REM 사용법:
 REM   install_312.bat          (가상환경 없이 시스템 Python 3.12 사용)
-REM   install_312.bat venv     (.venv312 생성 후 설치)
+REM   install_312.bat venv     (.venv_hana 생성 후 설치)
 REM ============================================================
 
 setlocal EnableDelayedExpansion
@@ -29,7 +29,7 @@ set PYTHON_BIN=
 
 REM 1순위: PATH 또는 활성화된 venv의 python 이 3.12인지 확인
 for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set PY_VER_CHECK=%%v
-echo !PY_VER_CHECK! | findstr /C:"3.12" >/dev/null 2>&1
+echo !PY_VER_CHECK! | findstr /C:"3.12" >nul 2>&1
 if not errorlevel 1 (
     set PYTHON_BIN=python
     echo [확인] python 사용: !PY_VER_CHECK!
@@ -37,7 +37,7 @@ if not errorlevel 1 (
 )
 
 REM 2순위: py 런처
-py -3.12 --version >/dev/null 2>&1
+py -3.12 --version >nul 2>&1
 if not errorlevel 1 (
     set PYTHON_BIN=py -3.12
     echo [확인] py 런처: py -3.12
@@ -95,7 +95,7 @@ set FIND_LINKS=--find-links="%WIN_PKG_DIR%" --find-links="%HANA_PKG_DIR%"
 
 REM ── 가상환경 ─────────────────────────────────────────────────
 if /I "%1"=="venv" (
-    set VENV_PATH=%PROJECT_ROOT%.venv312
+    set VENV_PATH=%PROJECT_ROOT%.venv_hana
     if not exist "!VENV_PATH!\" (
         echo 가상환경 생성 중: !VENV_PATH!
         %PYTHON_BIN% -m venv "!VENV_PATH!"
@@ -113,7 +113,7 @@ if /I "%1"=="venv" (
 
 REM ── 1단계: pip 업그레이드 ────────────────────────────────────
 echo [1/5] pip 업그레이드...
-%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade pip 2>/dev/null || echo       pip 업그레이드 건너뜀
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade pip 2>nul || echo       pip 업그레이드 건너뜀
 
 REM ── 2단계: 핵심 패키지 ───────────────────────────────────────
 echo.
@@ -137,6 +137,13 @@ echo.
 echo [4/5] 전체 패키지 설치 (requirements.txt)...
 %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%WIN_DIR%\requirements.txt"
 %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%HANA_DIR%\requirements.txt"
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%PROJECT_ROOT%hana_app\requirements.txt"
+
+REM pydotplus (tar.gz 소스 빌드) — --no-build-isolation 필요
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --no-build-isolation pydotplus 2>nul || echo [경고] pydotplus 설치 건너뜀 (hana-ml 선택 의존성)
+
+REM keyring (비밀번호 Keychain 저장)
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% keyring 2>nul || echo [경고] keyring 미설치 -- DB 비밀번호를 매번 입력해야 합니다
 
 REM ── 5단계: 검증 ──────────────────────────────────────────────
 echo.
@@ -150,19 +157,19 @@ echo [Python 버전]
 
 echo.
 echo [HANA 연결]
-%PYTHON_BIN% -c "import hdbcli; print('  hdbcli', hdbcli.__version__, 'OK')" 2>/dev/null || (echo   [실패] hdbcli & set FAIL=1)
-%PYTHON_BIN% -c "import hana_ml; print('  hana-ml', hana_ml.__version__, 'OK')" 2>/dev/null || (echo   [실패] hana-ml & set FAIL=1)
+%PYTHON_BIN% -c "import hdbcli; print('  hdbcli', hdbcli.__version__, 'OK')" 2>nul || (echo   [실패] hdbcli & set FAIL=1)
+%PYTHON_BIN% -c "import hana_ml; print('  hana-ml', hana_ml.__version__, 'OK')" 2>nul || (echo   [실패] hana-ml & set FAIL=1)
 
 echo [데이터 처리]
-%PYTHON_BIN% -c "import pandas, numpy, pyarrow, scipy; print('  pandas/numpy/pyarrow/scipy OK')" 2>/dev/null || (echo   [실패] 데이터 패키지 & set FAIL=1)
-%PYTHON_BIN% -c "import statsmodels; print('  statsmodels OK')" 2>/dev/null || (echo   [실패] statsmodels & set FAIL=1)
+%PYTHON_BIN% -c "import pandas, numpy, pyarrow, scipy; print('  pandas/numpy/pyarrow/scipy OK')" 2>nul || (echo   [실패] 데이터 패키지 & set FAIL=1)
+%PYTHON_BIN% -c "import statsmodels; print('  statsmodels OK')" 2>nul || (echo   [실패] statsmodels & set FAIL=1)
 
 echo [머신러닝]
-%PYTHON_BIN% -c "import sklearn, xgboost, lightgbm, shap; print('  ML 패키지 OK')" 2>/dev/null || (echo   [실패] ML 패키지 & set FAIL=1)
+%PYTHON_BIN% -c "import sklearn, xgboost, lightgbm, shap; print('  ML 패키지 OK')" 2>nul || (echo   [실패] ML 패키지 & set FAIL=1)
 
 echo [웹앱]
-%PYTHON_BIN% -c "import streamlit; print('  Streamlit', streamlit.__version__, 'OK')" 2>/dev/null || (echo   [실패] Streamlit & set FAIL=1)
-%PYTHON_BIN% -c "import fastapi, uvicorn; print('  FastAPI/uvicorn OK')" 2>/dev/null || (echo   [실패] FastAPI & set FAIL=1)
+%PYTHON_BIN% -c "import streamlit; print('  Streamlit', streamlit.__version__, 'OK')" 2>nul || (echo   [실패] Streamlit & set FAIL=1)
+%PYTHON_BIN% -c "import fastapi, uvicorn; print('  FastAPI/uvicorn OK')" 2>nul || (echo   [실패] FastAPI & set FAIL=1)
 
 echo.
 echo ================================================

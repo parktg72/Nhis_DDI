@@ -58,7 +58,8 @@ for %%V in (%PY_VERSIONS%) do (
         -d "!OUT_DIR!" ^
         "setuptools>=65.0.0" ^
         "wheel>=0.40.0" ^
-        "openpyxl>=3.1.0"
+        "openpyxl>=3.1.0" ^
+        "keyring>=24.0.0"
 
     echo 완료: !OUT_DIR!
     echo.

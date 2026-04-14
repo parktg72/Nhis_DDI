@@ -20,11 +20,16 @@ set APP_FILE=%SCRIPT_DIR%app.py
 if not "%1"=="" set PORT=%1
 
 REM Python 바이너리 결정 (가상환경 자동 감지)
-set VENV_PATH=%PROJECT_ROOT%\.venv_hana
+REM 우선순위: .venv_hana > .venv312 > 시스템 python
 set PYTHON_BIN=python
-if exist "!VENV_PATH!\Scripts\python.exe" (
-    set PYTHON_BIN=!VENV_PATH!\Scripts\python.exe
-    echo 가상환경 사용: !VENV_PATH!
+if exist "%PROJECT_ROOT%\.venv_hana\Scripts\python.exe" (
+    set PYTHON_BIN=%PROJECT_ROOT%\.venv_hana\Scripts\python.exe
+    echo 가상환경 사용: .venv_hana
+) else if exist "%PROJECT_ROOT%\.venv312\Scripts\python.exe" (
+    set PYTHON_BIN=%PROJECT_ROOT%\.venv312\Scripts\python.exe
+    echo 가상환경 사용: .venv312
+) else (
+    echo 시스템 Python 사용 ^(가상환경 미감지^)
 )
 
 echo ==============================================
@@ -38,7 +43,7 @@ REM Streamlit 설치 확인
 %PYTHON_BIN% -c "import streamlit" 2>nul
 if errorlevel 1 (
     echo [오류] streamlit이 설치되지 않았습니다.
-    echo hana\install.bat 를 먼저 실행하세요.
+    echo install_312.bat venv 를 먼저 실행하세요.
     pause
     exit /b 1
 )
@@ -46,8 +51,8 @@ if errorlevel 1 (
 REM hdbcli 설치 확인
 %PYTHON_BIN% -c "import hdbcli" 2>nul
 if errorlevel 1 (
-    echo [경고] hdbcli가 설치되지 않았습니다. DB 연결 기능이 제한됩니다.
-    echo hana\install.bat 를 실행하여 hdbcli를 설치하세요.
+    echo [경고] hdbcli가 설치되지 않았습니다. HANA DB 연결 기능이 제한됩니다.
+    echo install_312.bat venv 를 실행하여 hdbcli를 설치하세요.
 )
 
 %PYTHON_BIN% -m streamlit run "%APP_FILE%" ^

@@ -1,0 +1,44 @@
+# ============================================================
+# Git 줄끝(Line Ending) 설정
+# Windows 배포용 — bat/txt는 CRLF, Python/Shell은 LF 유지
+# ============================================================
+
+# 기본: 텍스트 파일은 저장소에 LF로 보관
+* text=auto
+
+# ── Windows 전용 파일: CRLF 강제 ──────────────────────────
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+requirements.txt text eol=crlf
+*.txt           text eol=crlf
+
+# ── Unix/Python 전용 파일: LF 강제 ────────────────────────
+*.py            text eol=lf
+*.sh            text eol=lf
+*.md            text eol=lf
+*.json          text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.toml          text eol=lf
+*.cfg           text eol=lf
+*.ini           text eol=lf
+Dockerfile      text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# ── 바이너리: 변환 금지 ────────────────────────────────────
+*.whl           binary
+*.gz            binary
+*.zip           binary
+*.tar           binary
+*.pkl           binary
+*.joblib        binary
+*.parquet       binary
+*.sas7bdat      binary
+*.xpt           binary
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.pdf           binary
