@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 from hana_app.core.config import (
     DATA_SOURCE_HANA, DATA_SOURCE_SAS,
     DEFAULT_TABLE_COLS,
+    _keyring_available,
     get_password, is_hana, is_sas,
     load_config, save_config, set_password,
 )
@@ -70,6 +71,11 @@ tab_hana, tab_sas, tab_tbl, tab_col, tab_validate = st.tabs([
 # ─────────────────────────────────────────────────────────────────────────────
 with tab_hana:
     st.subheader("HANA DB 접속 정보")
+    if not _keyring_available():
+        st.warning(
+            "⚠️ keyring 미설치: 비밀번호가 설정 파일에 인코딩 저장됩니다. "
+            "보안 강화가 필요하면 `pip install keyring` 설치를 권장합니다."
+        )
     st.caption("입력한 정보는 hana_config.json에 저장됩니다 (패스워드 난독화).")
 
     col1, col2 = st.columns(2)
