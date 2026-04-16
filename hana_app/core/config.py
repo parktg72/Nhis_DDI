@@ -214,13 +214,15 @@ def load_config() -> dict[str, Any]:
                     data["columns"][tbl_key] = col_map
         elif default_cols and "columns" not in data:
             data["columns"] = default_cols
-        # 구버전 base64 비밀번호 마이그레이션 → Keychain으로 이전 후 JSON에서 제거
-        legacy_enc = data.get("connection", {}).pop("password_enc", None)
-        if legacy_enc:
+        # 구버전 base64 비밀번호 마이그레이션 → Keychain 가용 시에만 이전
+        legacy_enc = data.get("connection", {}).get("password_enc", "")
+        if legacy_enc and _keyring_available():
             try:
                 import base64
                 plain = base64.b64decode(legacy_enc.encode()).decode()
-                set_password(data, plain)
+                import keyring
+                keyring.set_password(_KEYRING_SERVICE, _keyring_user(data), plain)
+                data["connection"].pop("password_enc", None)
                 save_config(data)  # password_enc 없는 상태로 재저장
                 logger.info("구버전 base64 비밀번호를 Keychain으로 마이그레이션 완료")
             except Exception as e:
@@ -235,28 +237,54 @@ def save_config(cfg: dict[str, Any]) -> None:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
+def _keyring_available() -> bool:
+    """keyring 패키지 사용 가능 여부."""
+    try:
+        import keyring
+        keyring.get_password(_KEYRING_SERVICE, "__probe__")
+        return True
+    except Exception:
+        return False
+
+
 def get_password(cfg: dict[str, Any]) -> str:
-    """OS Keychain에서 비밀번호 조회. keyring 미설치 시 빈 문자열 반환."""
+    """비밀번호 조회: OS Keychain 우선, 폴백으로 config의 base64 인코딩."""
+    # 1) keyring 시도
     try:
         import keyring
         pw = keyring.get_password(_KEYRING_SERVICE, _keyring_user(cfg))
-        return pw or ""
+        if pw:
+            return pw
     except Exception as e:
-        logger.warning("Keychain 조회 실패 (keyring 미설치 또는 권한 오류): %s", e)
-        return ""
+        logger.warning("Keychain 조회 실패: %s", e)
+
+    # 2) base64 폴백 (폐쇄망 등 keyring 미설치 환경)
+    import base64
+    enc = cfg.get("connection", {}).get("password_enc", "")
+    if enc:
+        try:
+            return base64.b64decode(enc.encode()).decode()
+        except Exception as e:
+            logger.warning("base64 비밀번호 복호화 실패: %s", e)
+    return ""
 
 
 def set_password(cfg: dict[str, Any], password: str) -> None:
-    """비밀번호를 OS Keychain에 저장. JSON에는 기록하지 않음."""
+    """비밀번호 저장: OS Keychain 우선, 폴백으로 config에 base64 인코딩."""
+    # 1) keyring 시도
     try:
         import keyring
         keyring.set_password(_KEYRING_SERVICE, _keyring_user(cfg), password)
+        # keyring 성공 시 config에서 base64 잔여분 제거
+        cfg.get("connection", {}).pop("password_enc", None)
+        return
     except Exception as e:
-        logger.error("Keychain 저장 실패: %s", e)
-        raise RuntimeError(
-            "비밀번호를 안전하게 저장할 수 없습니다. "
-            "`pip install keyring` 설치 후 재시도하세요."
-        ) from e
+        logger.warning("Keychain 저장 실패, base64 폴백 사용: %s", e)
+
+    # 2) base64 폴백 (폐쇄망 환경)
+    import base64
+    cfg["connection"]["password_enc"] = base64.b64encode(password.encode()).decode()
+    logger.info("비밀번호를 설정 파일에 base64 인코딩으로 저장 (keyring 미설치)")
 
 
 def is_hana(cfg: dict[str, Any]) -> bool:
