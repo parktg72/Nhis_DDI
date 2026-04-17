@@ -71,8 +71,15 @@ def _is_our_streamlit(timeout: float = 2.0) -> bool:
         return False
 
 
-def _wait_ready(port: int, timeout: int = 90) -> bool:
+def _wait_ready(port: int, timeout: int = 90, proc: subprocess.Popen | None = None) -> bool:
+    """포트가 열릴 때까지 0.5초 간격 폴링.
+
+    proc 이 전달되면 서브프로세스 조기 종료(poll() != None) 감지 시 즉시
+    False 반환 — 크래시 시 90초 허송 방지.
+    """
     for _ in range(timeout * 2):
+        if proc is not None and proc.poll() is not None:
+            return False
         if _port_open(port):
             return True
         time.sleep(0.5)
@@ -140,17 +147,22 @@ def main() -> None:
     if not already_running:
         print("Starting Streamlit server...")
         proc = _start_streamlit()
-        if not _wait_ready(PORT, timeout=90):
-            print(f"[ERROR] Server failed to start within 90 seconds.", file=sys.stderr)
+        if not _wait_ready(PORT, timeout=90, proc=proc):
+            if proc and proc.poll() is not None:
+                print(f"[ERROR] Streamlit 프로세스가 조기 종료됨 (exit={proc.returncode}).", file=sys.stderr)
+            else:
+                print("[ERROR] Server failed to start within 90 seconds.", file=sys.stderr)
             if LOG_FILE:
-                print(f"[INFO]  로그 마지막 20줄:", file=sys.stderr)
+                print("[INFO]  로그 마지막 20줄:", file=sys.stderr)
                 try:
-                    tail = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]
+                    with LOG_FILE.open("r", encoding="utf-8", errors="replace") as f:
+                        from collections import deque
+                        tail = deque(f, maxlen=20)
                     for line in tail:
-                        print(f"  {line}", file=sys.stderr)
+                        print(f"  {line.rstrip()}", file=sys.stderr)
                 except OSError:
                     pass
-            if proc:
+            if proc and proc.poll() is None:
                 proc.terminate()
             sys.exit(1)
         print("Server ready.")
