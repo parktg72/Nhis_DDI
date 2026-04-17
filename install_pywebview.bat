@@ -1,5 +1,9 @@
 @echo off
-REM Install pywebview from offline packages (py312)
+REM ============================================================
+REM pywebview 단독 오프라인 설치 (선택사항)
+REM 표준 경로: install_312.bat venv (pywebview 포함)
+REM 이 스크립트는 레거시/진단용이며 install_312.bat 과 집합을 일치시킨다.
+REM ============================================================
 setlocal
 
 set ROOT=%~dp0
@@ -23,7 +27,7 @@ if not exist "%PKG_DIR%\pywebview-6.1-py3-none-any.whl" (
     exit /b 1
 )
 
-"%PYTHON_BIN%" -m pip install pywebview --no-index --find-links="%PKG_DIR%"
+"%PYTHON_BIN%" -m pip install pywebview proxy_tools --no-index --find-links="%PKG_DIR%"
 
 if errorlevel 1 (
     echo.
