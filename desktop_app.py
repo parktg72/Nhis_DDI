@@ -8,6 +8,7 @@ pywebview 미설치 시 명확한 에러로 종료 (exit 2). 브라우저 fallba
 from __future__ import annotations
 
 import atexit
+import importlib.util
 import os
 import socket
 import subprocess
@@ -128,7 +129,25 @@ def _run_webview(proc: subprocess.Popen | None) -> None:
     webview.start()
 
 
+def _check_dependencies() -> None:
+    """런타임 의존성 사전 확인 — 누락 시 명확한 에러로 조기 종료.
+
+    find_spec() 을 사용해 실제 import 없이 확인 (subprocess 스폰 없음).
+    run_desktop.bat 에서 제거된 사전점검 체크를 대체한다.
+    """
+    missing = [
+        name for name in ("streamlit", "webview")
+        if importlib.util.find_spec(name) is None
+    ]
+    if missing:
+        print(f"[ERROR] 필수 패키지 누락: {', '.join(missing)}", file=sys.stderr)
+        print("[INFO]  install_312.bat venv 를 다시 실행하세요.", file=sys.stderr)
+        sys.exit(2)
+
+
 def main() -> None:
+    _check_dependencies()
+
     if not APP_FILE.exists():
         print(f"[ERROR] App file not found: {APP_FILE}", file=sys.stderr)
         sys.exit(1)

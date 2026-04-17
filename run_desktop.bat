@@ -2,51 +2,24 @@
 chcp 65001 >nul
 setlocal
 
-set ROOT=%~dp0
+REM 최소 배치: 직접 Python 실행과 동등한 경로.
+REM 사전 subprocess 체크(import streamlit/webview)를 제거 — 사내 엔드포인트
+REM 보안이 짧은 Python 서브프로세스 스폰 + 출력 리다이렉트 패턴을 차단하여
+REM "인터넷 보안 설정으로 인해 하나 이상의 파일을 복사 할 수 없습니다" 팝업
+REM 을 띄우던 원인. 의존성 검증은 desktop_app.py 내부로 이동.
+
 set PYTHON_BIN=
-
-if exist "%ROOT%.venv_hana\Scripts\python.exe" set PYTHON_BIN=%ROOT%.venv_hana\Scripts\python.exe
-if not defined PYTHON_BIN if exist "%ROOT%.venv\Scripts\python.exe" set PYTHON_BIN=%ROOT%.venv\Scripts\python.exe
-if not defined PYTHON_BIN if exist "%ROOT%venv\Scripts\python.exe"  set PYTHON_BIN=%ROOT%venv\Scripts\python.exe
-
-if not defined PYTHON_BIN (
-    for /f "tokens=*" %%i in ('where python 2^>nul') do (
-        if not defined PYTHON_BIN set PYTHON_BIN=%%i
-    )
-)
+if exist "%~dp0.venv_hana\Scripts\python.exe" set PYTHON_BIN=%~dp0.venv_hana\Scripts\python.exe
+if not defined PYTHON_BIN if exist "%~dp0.venv\Scripts\python.exe" set PYTHON_BIN=%~dp0.venv\Scripts\python.exe
+if not defined PYTHON_BIN if exist "%~dp0venv\Scripts\python.exe" set PYTHON_BIN=%~dp0venv\Scripts\python.exe
 
 if not defined PYTHON_BIN (
-    echo [ERROR] Python not found. Run install_312.bat venv first.
+    echo [ERROR] Python venv not found. Run install_312.bat venv first.
     pause
     exit /b 1
 )
 
-REM 사전점검: streamlit
-"%PYTHON_BIN%" -c "import streamlit" >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] streamlit not installed. Run install_312.bat venv first.
-    pause
-    exit /b 1
-)
-
-REM 사전점검: pywebview
-"%PYTHON_BIN%" -c "import webview" >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] pywebview not installed. Run install_312.bat venv first (or install_pywebview.bat).
-    pause
-    exit /b 1
-)
-
-echo Python : %PYTHON_BIN%
-echo Script : %ROOT%desktop_app.py
-echo.
-echo Starting app...
-
-"%PYTHON_BIN%" "%ROOT%desktop_app.py"
-if errorlevel 1 (
-    echo.
-    echo [FAILED] desktop_app.py exited with error. See above for details.
-    pause
-)
+"%PYTHON_BIN%" "%~dp0desktop_app.py"
+if errorlevel 1 pause
 
 endlocal
