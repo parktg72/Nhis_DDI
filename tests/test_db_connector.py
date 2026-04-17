@@ -23,6 +23,7 @@ from db_connector import (
     CohortIDExtractor,
     _COHORT_ID_CHUNK_SIZE,
 )
+import db_connector as _db_connector
 
 
 class TestValidateTableName:
@@ -1348,6 +1349,53 @@ class TestDuckDBStorageExecuteParams:
         storage.connect()
         result = storage.execute("SELECT 42 AS n", params=None)
         assert result.fetchone()[0] == 42
+
+
+class TestDuckDBStorageSchemaMismatchBackup:
+    """DuckDBStorage.connect(): 스키마 불일치 시 unlink 대신 `.corrupt_<ts>` 로 rename 백업."""
+
+    def test_schema_mismatch_renames_instead_of_unlinking(self, tmp_path, monkeypatch):
+        """수 시간 걸리는 코호트 DuckDB 파일이 스키마 불일치 한 번에 삭제되면 안 된다.
+
+        사용자 데이터 보존을 위해 `.corrupt_<timestamp>` 로 rename 백업 후
+        빈 파일로 재연결해야 한다.
+        """
+        db_path = tmp_path / "nhis_analysis.duckdb"
+        # 기존 데이터를 흉내내는 dummy 바이트 — 후에 백업 파일에서 검증
+        sentinel = b"ORIGINAL_DUCKDB_PAYLOAD"
+        db_path.write_bytes(sentinel)
+        wal_path = tmp_path / "nhis_analysis.duckdb.wal"
+        wal_path.write_bytes(b"WAL_DATA")
+
+        call_count = {"n": 0}
+        real_connect = _db_connector.duckdb.connect
+
+        def _fake_connect(path, *a, **kw):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("Trying to read a database file with schema does not match")
+            return real_connect(path, *a, **kw)
+
+        monkeypatch.setattr(_db_connector.duckdb, "connect", _fake_connect)
+
+        storage = DuckDBStorage(str(db_path))
+        storage.connect()
+
+        # 기존 파일은 unlink 되지 않고 rename 됨
+        backups = list(tmp_path.glob("nhis_analysis.duckdb.corrupt_*"))
+        assert len(backups) == 1, f"백업 파일이 정확히 1개여야 함: {backups}"
+        assert backups[0].read_bytes() == sentinel, "백업 파일에 원본 데이터가 보존되어야 함"
+
+        # WAL도 rename 백업
+        wal_backups = list(tmp_path.glob("nhis_analysis.duckdb.wal.corrupt_*"))
+        assert len(wal_backups) == 1
+        assert wal_backups[0].read_bytes() == b"WAL_DATA"
+
+        # 재연결로 새로운 빈 DuckDB 파일이 생성됨
+        assert db_path.exists()
+        assert db_path.read_bytes() != sentinel
+
+        storage.close()
 
 
 class TestCohortIDExtractorEmptyResult:

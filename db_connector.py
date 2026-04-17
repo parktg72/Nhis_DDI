@@ -263,7 +263,42 @@ class DuckDBStorage:
                     "  2. 작업 관리자에서 python.exe 프로세스가 남아 있으면 종료하세요.\n"
                     f"  3. 그래도 안 되면 '{self.db_path}' 파일을 삭제 후 다시 추출하세요."
                 ) from e
-            raise
+            if 'schema does not match' in err_str or 'schema used to create' in err_str:
+                # 스키마 불일치: 기존 DuckDB/WAL 파일을 절대 삭제하지 않고
+                # `.corrupt_<timestamp>` 로 rename 백업 후 빈 파일로 재연결.
+                # 코호트 추출은 수 시간 걸리는 작업이므로 사용자 데이터 보존이 최우선.
+                import time as _time
+                ts = _time.strftime('%Y%m%d_%H%M%S')
+                db_file = Path(self.db_path)
+                wal_file = Path(str(self.db_path) + '.wal')
+                backup_db = db_file.with_name(f"{db_file.name}.corrupt_{ts}")
+                backup_wal = wal_file.with_name(f"{wal_file.name}.corrupt_{ts}")
+                try:
+                    if db_file.exists():
+                        db_file.rename(backup_db)
+                    if wal_file.exists():
+                        wal_file.rename(backup_wal)
+                except Exception as rn_e:
+                    raise RuntimeError(
+                        f"DuckDB 스키마 불일치 감지 — 기존 파일 백업 실패: {self.db_path}\n"
+                        f"원인: {rn_e}\n"
+                        "해결 방법: 파일 권한 확인 후 수동으로 백업/이동하세요."
+                    ) from rn_e
+                logger.warning(
+                    "DuckDB 스키마 불일치 감지 — 기존 파일을 %s 로 백업하고 빈 파일로 재연결합니다. "
+                    "이전 데이터가 필요하면 백업 파일에서 복구하세요.",
+                    backup_db,
+                )
+                try:
+                    self.conn = duckdb.connect(self.db_path)
+                except Exception as retry_e:
+                    raise RuntimeError(
+                        f"DuckDB 파일 백업 후 재연결 실패: {self.db_path}\n"
+                        f"백업: {backup_db}\n"
+                        f"원인: {retry_e}"
+                    ) from retry_e
+            else:
+                raise
         mem_limit = DUCKDB_SETTINGS['MEMORY_LIMIT']
         threads = DUCKDB_SETTINGS['THREADS']
         if not re.match(r'^\d+(\.\d+)?(GB|MB|KB|B)$', str(mem_limit), re.IGNORECASE):
