@@ -1,7 +1,9 @@
 """
 NHIS DDI Risk Classification System - Desktop App Launcher
 pywebview: Streamlit server runs in background, displayed in native window
-Fallback: opens browser if pywebview is not installed
+pywebview 미설치 시 명확한 에러로 종료 (exit 2). 브라우저 fallback 없음 —
+인트라넷 브라우저 3시간 자동 종료로부터 세션을 보호하기 위한 설계.
+로그: %LOCALAPPDATA%\\hana_desktop\\logs\\desktop.log
 """
 from __future__ import annotations
 
