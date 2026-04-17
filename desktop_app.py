@@ -69,7 +69,7 @@ def _is_our_streamlit(timeout: float = 2.0) -> bool:
         return False
 
 
-def _wait_ready(port: int, timeout: int = 60) -> bool:
+def _wait_ready(port: int, timeout: int = 90) -> bool:
     for _ in range(timeout * 2):
         if _port_open(port):
             return True
@@ -85,14 +85,15 @@ def _start_streamlit() -> subprocess.Popen:
         [
             PYTHON_BIN, "-m", "streamlit", "run", str(APP_FILE),
             f"--server.port={PORT}",
+            "--server.address=localhost",
             "--server.headless=true",
             "--browser.gatherUsageStats=false",
             "--theme.base=light",
             "--theme.primaryColor=#1f77b4",
         ],
         creationflags=flags,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
     )
 
 
@@ -102,6 +103,10 @@ def _run_webview(proc: subprocess.Popen | None) -> None:
     def on_closed():
         if proc and proc.poll() is None:
             proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
     window = webview.create_window(
         TITLE,
@@ -114,31 +119,35 @@ def _run_webview(proc: subprocess.Popen | None) -> None:
     webview.start()
 
 
-def _run_browser(proc: subprocess.Popen | None) -> None:
-    import webbrowser
-    print("[WARNING] pywebview not installed. Opening browser instead.")
-    print(f"[INFO]    Run:  pip install pywebview")
-    webbrowser.open(URL)
-    if proc:
-        try:
-            proc.wait()
-        except KeyboardInterrupt:
-            proc.terminate()
-
-
 def main() -> None:
     if not APP_FILE.exists():
-        print(f"[ERROR] App file not found: {APP_FILE}")
+        print(f"[ERROR] App file not found: {APP_FILE}", file=sys.stderr)
         sys.exit(1)
 
-    already_running = _port_open(PORT)
-    proc = None
+    # 포트 점유 시 내 Streamlit 인지 확인
+    already_running = False
+    if _port_open(PORT):
+        if not _is_our_streamlit():
+            print(f"[ERROR] 포트 {PORT}가 Streamlit 이외의 프로세스에 점유됨.", file=sys.stderr)
+            print(f"[INFO]  종료 후 재시도하거나 PORT 충돌 원인을 확인하세요.", file=sys.stderr)
+            sys.exit(3)
+        already_running = True
+        print(f"[INFO] 기존 Streamlit 재사용 (localhost:{PORT})")
 
+    proc = None
     if not already_running:
         print("Starting Streamlit server...")
         proc = _start_streamlit()
-        if not _wait_ready(PORT, timeout=60):
-            print("[ERROR] Server failed to start within 60 seconds.")
+        if not _wait_ready(PORT, timeout=90):
+            print(f"[ERROR] Server failed to start within 90 seconds.", file=sys.stderr)
+            if LOG_FILE:
+                print(f"[INFO]  로그 마지막 20줄:", file=sys.stderr)
+                try:
+                    tail = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]
+                    for line in tail:
+                        print(f"  {line}", file=sys.stderr)
+                except OSError:
+                    pass
             if proc:
                 proc.terminate()
             sys.exit(1)
@@ -147,10 +156,20 @@ def main() -> None:
     try:
         _run_webview(proc)
     except ImportError:
-        _run_browser(proc)
+        print("[ERROR] pywebview 미설치.", file=sys.stderr)
+        print("[INFO]  install_312.bat venv 를 다시 실행하거나 install_pywebview.bat 를 실행하세요.", file=sys.stderr)
+        if LOG_FILE:
+            print(f"[INFO]  로그: {LOG_FILE}", file=sys.stderr)
+        if proc and proc.poll() is None:
+            proc.terminate()
+        sys.exit(2)
     finally:
         if proc and proc.poll() is None:
             proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 if __name__ == "__main__":
