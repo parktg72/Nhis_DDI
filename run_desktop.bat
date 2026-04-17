@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 
 set ROOT=%~dp0
@@ -15,14 +16,23 @@ if not defined PYTHON_BIN (
 )
 
 if not defined PYTHON_BIN (
-    echo [ERROR] Python not found. Run install_all.bat first.
+    echo [ERROR] Python not found. Run install_312.bat venv first.
     pause
     exit /b 1
 )
 
+REM 사전점검: streamlit
 "%PYTHON_BIN%" -c "import streamlit" >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] streamlit not installed. Run install_all.bat first.
+    echo [ERROR] streamlit not installed. Run install_312.bat venv first.
+    pause
+    exit /b 1
+)
+
+REM 사전점검: pywebview
+"%PYTHON_BIN%" -c "import webview" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] pywebview not installed. Run install_312.bat venv first (or install_pywebview.bat).
     pause
     exit /b 1
 )
@@ -33,5 +43,10 @@ echo.
 echo Starting app...
 
 "%PYTHON_BIN%" "%ROOT%desktop_app.py"
+if errorlevel 1 (
+    echo.
+    echo [FAILED] desktop_app.py exited with error. See above for details.
+    pause
+)
 
 endlocal
