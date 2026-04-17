@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -45,11 +46,13 @@ def _is_our_streamlit(timeout: float = 2.0) -> bool:
     """8502 포트 점유자가 진짜 우리 Streamlit 인지 /_stcore/health 로 확인.
 
     임의 프로세스가 8502 를 쓰고 있을 때 잘못 연결되는 것을 방지한다.
+    Streamlit 은 정확히 'ok' 200 을 반환하므로 strip+equality 로 엄격 비교
+    (부분 문자열 매칭은 'not ok'/'tokyo' 같은 오탐 가능).
     """
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=timeout) as r:
-            return r.status == 200 and b"ok" in r.read().lower()
-    except Exception:
+            return r.status == 200 and r.read().strip().lower() == b"ok"
+    except (urllib.error.URLError, socket.timeout, ConnectionError, OSError):
         return False
 
 

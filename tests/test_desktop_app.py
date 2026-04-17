@@ -102,6 +102,15 @@ def test_is_our_streamlit_ok_response(mock_health_server, monkeypatch):
 def test_is_our_streamlit_wrong_response(mock_health_server, monkeypatch):
     """/_stcore/health 가 'ok' 가 아닌 응답 → False (다른 프로세스)."""
     port = mock_health_server(body=b"hello from nginx", code=200)
+    monkeypatch.setattr(da, "PORT", port)
+    monkeypatch.setattr(da, "HEALTH_URL", f"http://localhost:{port}/_stcore/health")
+    assert da._is_our_streamlit(timeout=1.0) is False
+
+
+def test_is_our_streamlit_partial_match_rejected(mock_health_server, monkeypatch):
+    """'not ok' 같은 부분 문자열 응답은 False (엄격 비교 회귀 방지)."""
+    port = mock_health_server(body=b"not ok", code=200)
+    monkeypatch.setattr(da, "PORT", port)
     monkeypatch.setattr(da, "HEALTH_URL", f"http://localhost:{port}/_stcore/health")
     assert da._is_our_streamlit(timeout=1.0) is False
 
@@ -112,5 +121,6 @@ def test_is_our_streamlit_no_response(monkeypatch):
     with socket.socket() as s:
         s.bind(("localhost", 0))
         port = s.getsockname()[1]
+    monkeypatch.setattr(da, "PORT", port)
     monkeypatch.setattr(da, "HEALTH_URL", f"http://localhost:{port}/_stcore/health")
     assert da._is_our_streamlit(timeout=0.5) is False
