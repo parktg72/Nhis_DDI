@@ -42,6 +42,9 @@ venv/
 .venv_hana/
 .venv_macos/
 
+# 데스크탑 앱 로그 (macOS 개발 환경 fallback 경로 — 윈도우는 %LOCALAPPDATA%)
+hana_desktop/
+
 # 로컬 설정 파일
 hana_app/hana_config.json
 
