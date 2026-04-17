@@ -34,6 +34,19 @@ def _resolve_python() -> str:
 PYTHON_BIN = _resolve_python()
 
 
+# 모듈 레벨 로그 핸들 (ImportError 분기에서도 안전하게 참조되도록 최상위에 둔다)
+LOG_DIR = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "hana_desktop" / "logs"
+try:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_FILE: Path | None = LOG_DIR / "desktop.log"
+    log_fh = LOG_FILE.open("a", encoding="utf-8", errors="replace")
+    atexit.register(log_fh.close)
+except OSError as e:
+    print(f"[WARN] 로그 파일 생성 실패({e}) — stderr 로 대체", file=sys.stderr)
+    LOG_FILE = None
+    log_fh = sys.stderr
+
+
 def _port_open(port: int, timeout: float = 0.5) -> bool:
     try:
         with socket.create_connection(("localhost", port), timeout=timeout):

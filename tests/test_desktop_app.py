@@ -124,3 +124,34 @@ def test_is_our_streamlit_no_response(monkeypatch):
     monkeypatch.setattr(da, "PORT", port)
     monkeypatch.setattr(da, "HEALTH_URL", f"http://localhost:{port}/_stcore/health")
     assert da._is_our_streamlit(timeout=0.5) is False
+
+
+def test_log_dir_uses_localappdata(tmp_path, monkeypatch):
+    """LOCALAPPDATA 환경변수가 있으면 그 아래에 hana_desktop/logs 배치."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    # 모듈 재로드하여 최상단 LOG_DIR 재계산
+    import importlib
+    importlib.reload(da)
+    assert da.LOG_DIR == tmp_path / "hana_desktop" / "logs"
+
+
+def test_log_dir_falls_back_to_root(tmp_path, monkeypatch):
+    """LOCALAPPDATA 가 없으면 ROOT 기준으로 경로 계산 (에러 나지 않음)."""
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setattr(da, "ROOT", tmp_path)
+    import importlib
+    importlib.reload(da)
+    assert da.LOG_DIR.parent.name == "hana_desktop"
+
+
+def test_log_file_open_failure_falls_back_to_stderr(monkeypatch, capsys):
+    """로그 디렉터리 생성 실패 시 LOG_FILE=None, log_fh=stderr, 경고 출력."""
+    def bad_mkdir(*args, **kwargs):
+        raise OSError("permission denied (test)")
+    monkeypatch.setattr(Path, "mkdir", bad_mkdir)
+    import importlib
+    importlib.reload(da)
+    assert da.LOG_FILE is None
+    assert da.log_fh is sys.stderr
+    captured = capsys.readouterr()
+    assert "로그 파일 생성 실패" in captured.err
