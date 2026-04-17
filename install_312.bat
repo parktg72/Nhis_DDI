@@ -96,8 +96,20 @@ set FIND_LINKS=--find-links="%WIN_PKG_DIR%" --find-links="%HANA_PKG_DIR%"
 REM ── 가상환경 ─────────────────────────────────────────────────
 if /I "%1"=="venv" (
     set VENV_PATH=%PROJECT_ROOT%.venv_hana
-    if not exist "!VENV_PATH!\" (
+
+    REM 기존 venv 유효성 검증 (다른 PC에서 복사된 깨진 venv 감지)
+    if exist "!VENV_PATH!\Scripts\python.exe" (
+        "!VENV_PATH!\Scripts\python.exe" --version >nul 2>&1
+        if errorlevel 1 (
+            echo [경고] 기존 가상환경이 손상되었거나 다른 PC에서 복사되었습니다.
+            echo        !VENV_PATH! 를 삭제하고 재생성합니다.
+            rmdir /S /Q "!VENV_PATH!"
+        )
+    )
+
+    if not exist "!VENV_PATH!\Scripts\python.exe" (
         echo 가상환경 생성 중: !VENV_PATH!
+        if exist "!VENV_PATH!\" rmdir /S /Q "!VENV_PATH!"
         %PYTHON_BIN% -m venv "!VENV_PATH!"
         if errorlevel 1 (
             echo [오류] 가상환경 생성 실패
@@ -129,15 +141,47 @@ if errorlevel 1 (
 REM ── 3단계: HANA 연결 ─────────────────────────────────────────
 echo.
 echo [3/5] SAP HANA 연결 패키지...
-%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% hdbcli hana-ml
+
+REM setuptools/wheel 먼저 (pydotplus 소스 빌드 필요)
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade setuptools wheel 2>nul || echo       setuptools 건너뜀
+
+REM hana-ml 의존성을 먼저 설치 (jinja2, plotly 등)
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% ^
+    jinja2 plotly Deprecated schedule prettytable shapely 2>nul || echo       hana-ml 의존성 일부 건너뜀
+
+REM hdbcli + hana-ml 설치 (--no-deps: 의존성은 위에서 처리)
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% hdbcli
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --no-deps hana-ml
 if errorlevel 1 echo [경고] HANA 패키지 실패 (HANA 미사용 시 무시 가능)
 
-REM ── 4단계: requirements 전체 ─────────────────────────────────
+REM ── 4단계: 웹앱 핵심 패키지 (명시적 설치) ───────────────────
 echo.
-echo [4/5] 전체 패키지 설치 (requirements.txt)...
-%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%WIN_DIR%\requirements.txt"
-%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%HANA_DIR%\requirements.txt"
-%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%PROJECT_ROOT%hana_app\requirements.txt"
+echo [4/5] Streamlit 웹앱 핵심 패키지 설치...
+REM requirements.txt 배치 실패와 무관하게 streamlit 을 보장하기 위해 별도 명시 설치
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% ^
+    streamlit altair watchdog matplotlib statsmodels duckdb
+if errorlevel 1 (
+    echo [오류] Streamlit 설치 실패
+    echo        packages_win\py312 에 streamlit wheel 이 있는지 확인하세요.
+    pause
+    exit /b 1
+)
+
+REM ── 4.2단계: 데스크탑 앱 (pywebview) ─────────────────────────
+echo.
+echo [4.2/5] 데스크탑 앱 (pywebview) 설치...
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% pywebview proxy_tools
+if errorlevel 1 echo [경고] pywebview 설치 실패 — run_desktop.bat 미지원 (hana_app\run.bat 은 정상)
+
+REM ── 4.1단계: 나머지 requirements 전체 ───────────────────────
+echo.
+echo [4/5] 나머지 requirements.txt 설치...
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%WIN_DIR%\requirements.txt" 2>nul ^
+    || echo [경고] packages_win\requirements.txt 일부 실패 — 위 핵심 패키지는 이미 설치됨
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%HANA_DIR%\requirements.txt" 2>nul ^
+    || echo [경고] hana\requirements.txt 일부 실패 (jupyter 등 선택 패키지 포함)
+%PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%PROJECT_ROOT%hana_app\requirements.txt" 2>nul ^
+    || echo [경고] hana_app\requirements.txt 일부 실패
 
 REM pydotplus (tar.gz 소스 빌드) — --no-build-isolation 필요
 %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --no-build-isolation pydotplus 2>nul || echo [경고] pydotplus 설치 건너뜀 (hana-ml 선택 의존성)
@@ -170,6 +214,10 @@ echo [머신러닝]
 echo [웹앱]
 %PYTHON_BIN% -c "import streamlit; print('  Streamlit', streamlit.__version__, 'OK')" 2>nul || (echo   [실패] Streamlit & set FAIL=1)
 %PYTHON_BIN% -c "import fastapi, uvicorn; print('  FastAPI/uvicorn OK')" 2>nul || (echo   [실패] FastAPI & set FAIL=1)
+
+echo [데스크탑]
+%PYTHON_BIN% -c "import webview" 2>nul && echo   pywebview OK || (echo   [실패] pywebview & set FAIL=1)
+if not exist "%ProgramFiles(x86)%\Microsoft\EdgeWebView\Application" echo   [경고] Edge WebView2 Runtime 미감지 (run_desktop.bat 실패 가능)
 
 echo.
 echo ================================================
