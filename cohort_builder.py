@@ -74,8 +74,8 @@ class CohortBuilder:
                 msg = f"[경고] JK 테이블 BYEAR/STD_YYYY NULL 값 {n_null:,}건 — 해당 행은 자동 제외됩니다."
                 logger.warning(msg)
                 if cb: cb(msg)
-        except Exception:
-            pass  # 점검 실패는 무시 (주요 로직에 영향 없음)
+        except Exception as _qe:
+            logger.debug("JK NULL 품질 점검 건너뜀: %s", _qe)
         ee = int(self.settings.get('ENROLLMENT_END', 2016))
         washout = int(self.settings.get('WASHOUT_YEARS', 1))
 
@@ -435,13 +435,22 @@ class CohortBuilder:
         # 민감도 분석 시 AGE65_CENSOR_MONTH='0701'로 설정하면 평균 편향 최소화 (약 ±6개월)
         # 사망일자: DEATH 테이블(DTH_ASSMD_DT) 우선, 없으면 JK.HHDT_DEATH fallback
         has_death_table = self.dm.storage.table_exists('DEATH')
+        if not has_death_table and self.settings.get('JK_SOURCE') == 'hana_monthly':
+            msg = (
+                "[경고] JK_SOURCE=hana_monthly이지만 DEATH 테이블이 없습니다. "
+                "HHDT_DEATH=NULL이므로 death_date가 모두 NULL로 처리되어 사망 censoring이 비활성화됩니다. "
+                "정확한 분석을 위해 DEATH 테이블을 별도 로드하세요."
+            )
+            logger.warning(msg)
+            if cb:
+                cb(msg)
 
         if has_death_table:
             last_eligible_sql = f"""
             last_eligible AS (
                 -- DEATH 테이블 연동: DTH_ASSMD_DT 우선, JK.HHDT_DEATH fallback
                 SELECT jk.INDI_DSCM_NO,
-                       MAX(CAST(jk.SURV_YR AS VARCHAR)) || '1231' AS withdrawal_date,
+                       MAX(CAST(jk.SURV_YR AS INTEGER)) || '1231' AS withdrawal_date,
                        COALESCE(NULLIF(MAX(d.DTH_ASSMD_DT), ''), MAX(jk.HHDT_DEATH)) AS death_date
                 FROM JK jk
                 LEFT JOIN DEATH d ON jk.INDI_DSCM_NO = d.INDI_DSCM_NO
@@ -453,7 +462,7 @@ class CohortBuilder:
             last_eligible_sql = f"""
             last_eligible AS (
                 SELECT INDI_DSCM_NO,
-                       MAX(CAST(SURV_YR AS VARCHAR)) || '1231' AS withdrawal_date,
+                       MAX(CAST(SURV_YR AS INTEGER)) || '1231' AS withdrawal_date,
                        MAX(HHDT_DEATH) AS death_date
                 FROM JK
                 WHERE CAST(STD_YYYY AS INTEGER) <= {ey}
@@ -473,7 +482,7 @@ class CohortBuilder:
                        le.death_date,
                        LEAST(
                            COALESCE(oa.event_date, '{ey}1231'),
-                           CAST((CAST(sc.BYEAR AS INT) + {yod}) || '0101' AS VARCHAR),
+                           CAST((CAST(sc.BYEAR AS INT) + {yod}) || '{self.settings.get("AGE65_CENSOR_MONTH", "0101")}' AS VARCHAR),
                            '{ey}1231',
                            COALESCE(le.death_date, le.withdrawal_date, '{ey}1231')
                        ) AS censor_date
