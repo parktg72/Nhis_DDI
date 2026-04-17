@@ -394,6 +394,55 @@ del hana_app\hana_config.json
 
 ---
 
+## 데스크탑 모드 (run_desktop.bat)
+
+### 언제 사용하나
+
+회사 인트라넷 정책이 **3시간 미사용 시 브라우저를 자동 종료**하여 웹앱 분석 세션이 끊기는 경우. 데스크탑 모드는 pywebview 임베디드 창에서 동작하므로 브라우저 자동 종료 대상이 아니다.
+
+### 실행
+
+1. 프로젝트 루트에서 `run_desktop.bat` 더블클릭
+2. 자동으로 `.venv_hana` 감지 → Streamlit 서버 8502 포트 기동 → pywebview 창 표시
+3. 웹 모드(`hana_app\run.bat`, 포트 8501)와 **동시 실행 가능** (포트가 다르므로 충돌 없음)
+
+### 종료
+
+창 X 버튼 클릭 → Streamlit 서브프로세스 자동 종료 (terminate + wait 5s + kill).
+
+### 로그 위치
+
+`%LOCALAPPDATA%\hana_desktop\logs\desktop.log`
+
+예: `C:\Users\<사용자>\AppData\Local\hana_desktop\logs\desktop.log`
+
+서버 기동 실패 시 이 로그의 마지막 20줄이 콘솔에 자동 출력된다.
+
+### exit code
+
+| 코드 | 의미 |
+| --- | --- |
+| 0 | 정상 종료 |
+| 1 | Streamlit 서버 기동 실패 (로그 tail 확인) |
+| 2 | pywebview 미설치 — `install_312.bat venv` 재실행 필요 |
+| 3 | 8502 포트에 Streamlit 이외의 프로세스 점유 중 |
+
+### 8502 포트 점유 시
+
+- **내 Streamlit 이 이미 떠 있는 경우**: `/_stcore/health` 헬스체크 통과 → 기존 서버 재사용 (자동).
+- **다른 프로세스가 점유**: exit 3. `netstat -ano | findstr :8502` 로 PID 확인 후 해당 프로세스 종료.
+
+### 설치 / 재설치
+
+- 최초 설치 또는 Python 재설치 후: `install_312.bat venv` 한 번 실행 (모든 의존성 일괄 설치).
+- pywebview 만 별도: `install_pywebview.bat` (레거시/진단용).
+
+### WebView2 Runtime
+
+pywebview 는 Windows 에서 **Edge WebView2 Runtime** 을 필요로 한다. `install_312.bat venv` 마지막 검증 단계에서 `%ProgramFiles(x86)%\Microsoft\EdgeWebView\Application` 존재를 확인하여 없을 경우 경고를 표시. 사내 표준 이미지에 포함되어 있지 않다면 설치 담당자에게 문의.
+
+---
+
 ## 부록 — 빠른 시작 체크리스트
 
 ```
