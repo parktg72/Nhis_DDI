@@ -431,10 +431,12 @@ class TestStep4ClassifyGroups:
 
     def test_t2dm_insulin_classification(self, dm):
         """인슐린 처방이 있는 T2DM 환자는 T2DM_INSULIN로 분류된다."""
-        # P0002에 인슐린 처방 추가 (index_date 이후 1년 이내)
+        # Phase 2: rx_date를 기저선 기간 내(index_date 이전)로 수정
+        # P0002 index_date = '20140101', 약물 집계 상한 = MIN(20150101, 20140101) = 20140101
+        # 따라서 20140101 당일 또는 이전 처방만 포함됨
         dm.conn.execute("""
             INSERT INTO T30 VALUES
-            ('P0002', '20140201', 'C004', '', '', '39620', '30')
+            ('P0002', '20140101', 'C004', '', '', '39620', '30')
         """)
         with patch('cohort_builder.mem_manager'):
             cb = CohortBuilder(dm)
@@ -451,10 +453,12 @@ class TestStep4ClassifyGroups:
 
     def test_t2dm_oha_classification(self, dm):
         """OHA 처방만 있는 T2DM 환자는 T2DM_OHA로 분류된다."""
-        # P0002에 OHA 처방 추가 (metformin, index_date 이후 1년 이내)
+        # Phase 2: rx_date를 기저선 기간 내(index_date 이전)로 수정
+        # P0002 index_date = '20140101', 약물 집계 상한 = MIN(20150101, 20140101) = 20140101
+        # 따라서 20140101 당일 또는 이전 처방만 포함됨
         dm.conn.execute("""
             INSERT INTO T30 VALUES
-            ('P0002', '20140201', 'C004', '148801ABC', '', '', '30')
+            ('P0002', '20140101', 'C004', '148801ABC', '', '', '30')
         """)
         with patch('cohort_builder.mem_manager'):
             cb = CohortBuilder(dm)
@@ -521,19 +525,18 @@ class TestStep4ClassifyGroups:
             "T2DM_INSULIN=0 일 때 warnings 반환값에 포함 필요"
 
     def test_lookback_years_respected(self, dm):
-        """LOOKBACK_YEARS 설정이 처방 집계 윈도우에 반영된다 (C-1).
+        """Phase 2 이후 약물 집계 기간이 [first_dm_date, MIN(first_dm_date+LOOKBACK, index_date)]로 제한됨.
 
-        P0002의 index_date=20140101 기준:
-        - LOOKBACK_YEARS=1 (365일): 20150102 처방은 윈도우 밖 → T2DM_NOMED
-        - LOOKBACK_YEARS=2 (730일): 20150102 처방은 윈도우 안 → T2DM_OHA
+        DM 환자의 경우 index_date = first_dm_date이므로, 기저선 기간은 진단일 당일을 포함.
+        P0002의 first_dm_date=20140101 기준으로 진단일 당일 또는 이전 처방만 포함.
         """
-        # index_date(20140101) + 366일 = 20150102: 1년 윈도우 바깥, 2년 윈도우 안
+        # 처방을 first_dm_date(20140101) 당일로 설정
         dm.conn.execute("""
             INSERT INTO T30 VALUES
-            ('P0002', '20150102', 'C004', '148801ABC', '', '', '30')
+            ('P0002', '20140101', 'C004', '148801ABC', '', '', '30')
         """)
 
-        # LOOKBACK_YEARS=1 → 처방 미포함 → T2DM_NOMED
+        # LOOKBACK_YEARS 값과 무관하게 first_dm_date 당일 처방은 포함됨
         with patch('cohort_builder.mem_manager'), \
              patch.dict('cohort_builder.STUDY_SETTINGS', {'LOOKBACK_YEARS': 1}):
             cb1 = CohortBuilder(dm)
@@ -544,20 +547,127 @@ class TestStep4ClassifyGroups:
         group1 = dm.query(
             "SELECT exposure_group FROM exposure_groups WHERE INDI_DSCM_NO='P0002'"
         ).iloc[0]['exposure_group']
-        assert group1 == 'T2DM_NOMED', f"LOOKBACK_YEARS=1 이면 366일 후 처방 미포함 기대, 실제: {group1}"
+        assert group1 == 'T2DM_OHA', f"진단일 당일 처방은 포함되어야 함, 실제: {group1}"
 
-        # LOOKBACK_YEARS=2 → 처방 포함 → T2DM_OHA
-        with patch('cohort_builder.mem_manager'), \
-             patch.dict('cohort_builder.STUDY_SETTINGS', {'LOOKBACK_YEARS': 2}):
-            cb2 = CohortBuilder(dm)
-            cb2.step1_base_population()
-            cb2.step2_dm_claims()
-            cb2.step3_dm_medications()
-            cb2.step4_classify_groups()
-        group2 = dm.query(
+
+# ===========================================================================
+# Phase 2: 약물 분류 정확도 — insulin_start_date + med_switch
+# ===========================================================================
+
+class TestMedPatternWindow:
+    """Phase 2: med_pattern 기저선 윈도우 변경 — [first_dm_date, MIN(first_dm_date+LOOKBACK, index_date)]"""
+
+    def test_rx_before_diagnosis_excluded(self, dm):
+        """진단 이전 처방은 기저선 기간에 제외된다."""
+        # P0002 first_dm_date=20140101, 처방=20131201 (진단 1개월 전) → 제외
+        dm.conn.execute("""
+            INSERT INTO T30 VALUES
+            ('P0002', '20131201', 'C004', '148801ABC', '', '', '30')
+        """)
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        group = dm.query(
             "SELECT exposure_group FROM exposure_groups WHERE INDI_DSCM_NO='P0002'"
         ).iloc[0]['exposure_group']
-        assert group2 == 'T2DM_OHA', f"LOOKBACK_YEARS=2 이면 366일 후 처방 포함 기대, 실제: {group2}"
+        assert group == 'T2DM_NOMED', f"진단 이전 처방은 제외되어야 함, 실제: {group}"
+
+    def test_insulin_start_date_captured(self, dm):
+        """med_pattern에서 인슐린 첫 처방일(insulin_start_date)이 캡처된다."""
+        # P0002에 인슐린 처방 20140101 추가 (진단일 당일)
+        dm.conn.execute("""
+            INSERT INTO T30 VALUES
+            ('P0002', '20140101', 'C004', '', '', '39620', '30')
+        """)
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        insulin_start = dm.query(
+            "SELECT insulin_start_date FROM exposure_groups WHERE INDI_DSCM_NO='P0002'"
+        ).iloc[0]['insulin_start_date']
+        assert insulin_start == '20140101', f"insulin_start_date 값 오류, 실제: {insulin_start}"
+
+    def test_insulin_start_date_null_for_non_dm(self, dm):
+        """NON_DM 환자의 insulin_start_date는 NULL이다."""
+        # P0001 (NON_DM)
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        insulin_start = dm.query(
+            "SELECT insulin_start_date FROM exposure_groups WHERE INDI_DSCM_NO='P0001'"
+        ).iloc[0]['insulin_start_date']
+        assert insulin_start is None, f"NON_DM의 insulin_start_date는 NULL이어야 함, 실제: {insulin_start}"
+
+
+class TestMedSwitch:
+    """Phase 2: med_switch 테이블 — index_date 이후 OHA→INSULIN 전환 추적"""
+
+    def test_switch_detected_for_t2dm_oha(self, dm):
+        """T2DM_OHA 환자가 index_date 이후 인슐린을 받으면 insulin_switch_date 기록된다."""
+        # P0002: first_dm_date=20140101, OHA 기저선(20140101) + INSULIN 추적기간(20140601)
+        dm.conn.execute("""
+            INSERT INTO T30 VALUES
+            ('P0002', '20140101', 'C004', '148801ABC', '', '', '30'),
+            ('P0002', '20140601', 'C004', '', '', '39620', '30')
+        """)
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        switch_date = dm.query(
+            "SELECT insulin_switch_date FROM med_switch WHERE INDI_DSCM_NO='P0002'"
+        )
+        assert not switch_date.empty and switch_date.iloc[0]['insulin_switch_date'] == '20140601', \
+            f"OHA→INSULIN 전환이 기록되어야 함, 실제: {switch_date.to_string()}"
+
+    def test_no_switch_for_t2dm_insulin(self, dm):
+        """T2DM_INSULIN 그룹은 med_switch 대상에서 제외된다."""
+        # P0002: 기저선에 인슐린(20140101) → T2DM_INSULIN 분류
+        # med_switch에는 포함되지 않음 (WHERE exposure_group IN ('T2DM_OHA', 'T2DM_NOMED'))
+        dm.conn.execute("""
+            INSERT INTO T30 VALUES
+            ('P0002', '20140101', 'C004', '', '', '39620', '30'),
+            ('P0002', '20140601', 'C004', '', '', '39620', '30')
+        """)
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        switch_in_med_switch = dm.query(
+            "SELECT * FROM med_switch WHERE INDI_DSCM_NO='P0002'"
+        )
+        assert switch_in_med_switch.empty, \
+            f"T2DM_INSULIN은 med_switch에 포함되면 안 됨, 실제: {switch_in_med_switch.to_string()}"
+
+    def test_switch_table_exists_after_step4(self, dm):
+        """step4 완료 후 med_switch 테이블이 존재한다."""
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        assert cb.dm.storage.table_exists('med_switch'), \
+            "med_switch 테이블이 생성되어야 함"
 
 
 # ===========================================================================
@@ -841,6 +951,7 @@ class TestBuildCohortFull:
             'dementia_event', 'ad_event', 'vad_event',
             'death_event', 'competing_death_event',
             'follow_up_days', 'follow_up_years',
+            'insulin_start_date',  # Phase 2: 기저선 기간 내 첫 인슐린 처방일
         }
         assert required.issubset(set(df.columns))
 

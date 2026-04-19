@@ -239,6 +239,10 @@ STUDY_SETTINGS = {
     'JK_DSES_SCHEMA': 'NHISBDA',      # 연별 소득/재산 스키마
     'JK_POPULATION_TABLE': 'HHDT_POPULATION_MM',  # HANA 월별 자격 테이블
     'JK_POPULATION_SCHEMA': 'NHISBDA',             # 월별 자격 스키마
+    # ── 결측값 처리 전략 ────────────────────────────────────────────────────────
+    'MISSING_DATA_STRATEGY': 'complete_case',  # 'complete_case' | 'multiple_imputation'
+                                               # Phase 1: 기본값=complete_case (리스트방식삭제)
+                                               # Phase 2: multiple_imputation로 전환 고려
 }
 
 DUCKDB_SETTINGS = {
@@ -304,6 +308,11 @@ def _validate_study_settings():
         for jk_key in ('JK_DSES_TABLE', 'JK_DSES_SCHEMA', 'JK_POPULATION_TABLE', 'JK_POPULATION_SCHEMA'):
             if not s.get(jk_key):
                 errors.append(f"{jk_key} — JK_SOURCE='hana_monthly'일 때 비어 있으면 안 됩니다")
+
+    # 결측값 처리 전략 검증
+    missing_strategy = s.get('MISSING_DATA_STRATEGY', 'complete_case')
+    if missing_strategy not in ('complete_case', 'multiple_imputation'):
+        errors.append(f"MISSING_DATA_STRATEGY={missing_strategy!r} — 'complete_case' 또는 'multiple_imputation' 이어야 합니다")
 
     if errors:
         raise ValueError("STUDY_SETTINGS 오류:\n  " + "\n  ".join(errors))

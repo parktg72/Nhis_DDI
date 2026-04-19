@@ -264,21 +264,26 @@ class CohortBuilder:
             SELECT INDI_DSCM_NO FROM dm_patients GROUP BY INDI_DSCM_NO HAVING COUNT(DISTINCT dm_type) > 1
         """)
 
-        # med_pattern: index_date 이후 LOOKBACK_YEARS 이내 처방만 집계
-        # (전체 이력 집계 시 OHA→인슐린 전환 환자가 index_date부터 T2DM_INSULIN으로 오분류됨)
+        # med_pattern: Phase 2 변경 — immortal time bias 차단
+        # 약물 집계 기간을 [first_dm_date, MIN(first_dm_date+LOOKBACK_YEARS, index_date)]로 제한
+        # Phase 2 추가: insulin_start_date 컬럼 (기저선 기간 내 첫 인슐린 처방일)
         _lookback_days = int(self.settings.get('LOOKBACK_YEARS', 1)) * 365
         self.dm.execute(f"""
             CREATE OR REPLACE TABLE med_pattern AS
             SELECT m.INDI_DSCM_NO,
                    MAX(CASE WHEN m.med_type='INSULIN' THEN 1 ELSE 0 END) AS has_insulin,
-                   MAX(CASE WHEN m.med_type='OHA'     THEN 1 ELSE 0 END) AS has_oha
+                   MAX(CASE WHEN m.med_type='OHA'     THEN 1 ELSE 0 END) AS has_oha,
+                   MIN(CASE WHEN m.med_type='INSULIN' THEN m.rx_date END) AS insulin_start_date
             FROM dm_medications m
             INNER JOIN dm_patients dp ON m.INDI_DSCM_NO = dp.INDI_DSCM_NO
             WHERE m.rx_date >= dp.first_dm_date
-              AND m.rx_date <= REPLACE(CAST(
+              AND m.rx_date <= LEAST(
+                  REPLACE(CAST(
                       (CAST(SUBSTR(dp.first_dm_date,1,4)||'-'||SUBSTR(dp.first_dm_date,5,2)||'-'||SUBSTR(dp.first_dm_date,7,2) AS DATE)
                       + INTERVAL '{_lookback_days}' DAY)::DATE
-                  AS VARCHAR), '-', '')
+                  AS VARCHAR), '-', ''),
+                  dp.first_dm_date  -- immortal time bias 차단: index_date 이전으로 상한 제한
+              )
             GROUP BY m.INDI_DSCM_NO
         """)
 
@@ -307,7 +312,9 @@ class CohortBuilder:
                        t1.first_dm_date,
                        t2.first_dm_date,
                        CAST(bp.first_year AS VARCHAR) || '0101'
-                   ), 1, 4) AS INT) AS index_year
+                   ), 1, 4) AS INT) AS index_year,
+                   -- Phase 2: 기저선 기간 내 첫 인슐린 처방일 (DM 환자만 해당, NON_DM은 NULL)
+                   mp.insulin_start_date
             FROM base_population bp
             LEFT JOIN dm_patients t1 ON bp.INDI_DSCM_NO=t1.INDI_DSCM_NO AND t1.dm_type='T1DM'
             LEFT JOIN dm_patients t2 ON bp.INDI_DSCM_NO=t2.INDI_DSCM_NO AND t2.dm_type='T2DM'
@@ -327,6 +334,28 @@ class CohortBuilder:
                 logger.warning(f"Step 4: {msg}")
                 if cb: cb(msg)
                 warnings.append(msg)
+
+        # Phase 2: med_switch 테이블 생성 (OHA→INSULIN 추적기간 전환)
+        try:
+            self.dm.execute("""
+                CREATE OR REPLACE TABLE med_switch AS
+                SELECT eg.INDI_DSCM_NO,
+                       MIN(m.rx_date) AS insulin_switch_date
+                FROM exposure_groups eg
+                INNER JOIN dm_medications m
+                    ON eg.INDI_DSCM_NO = m.INDI_DSCM_NO
+                    AND m.med_type = 'INSULIN'
+                    AND m.rx_date > eg.index_date
+                WHERE eg.exposure_group IN ('T2DM_OHA', 'T2DM_NOMED')
+                GROUP BY eg.INDI_DSCM_NO
+                HAVING MIN(m.rx_date) IS NOT NULL
+            """)
+            n_switch = self.dm.storage.get_row_count('med_switch')
+            logger.info(f"Step 4-ext: med_switch 테이블 생성 완료 ({n_switch}명 OHA→INSULIN 전환)")
+            if cb: cb(f"✓ med_switch 생성: {n_switch}명 전환 추적")
+        except Exception as e:
+            logger.warning(f"Step 4-ext: med_switch 생성 실패: {e}")
+            if cb: cb(f"[경고] med_switch 생성 실패 (서브그룹 분석 미지원): {e}")
 
         return result, warnings
 

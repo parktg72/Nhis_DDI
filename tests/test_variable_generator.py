@@ -595,9 +595,10 @@ class TestMergeAllVariables:
 # ---------------------------------------------------------------------------
 class TestGenerateAll:
     def test_generate_all_returns_count(self, dm, vg):
-        """generate_all → final_analysis 생성 후 행 수 반환"""
+        """generate_all → final_analysis 생성 후 행 수 반환 (complete-case: 3→2명)"""
         n = vg.generate_all()
-        assert n == 3
+        # Phase 1: complete_case 분석으로 결측값 있는 1명 제외 (3→2명)
+        assert n == 2
 
     def test_generate_all_creates_final_table(self, dm, vg):
         """generate_all 후 final_analysis 테이블 존재"""
@@ -608,7 +609,8 @@ class TestGenerateAll:
         """콜백 함수가 호출되는지 확인"""
         cb = MagicMock()
         vg.generate_all(cb=cb)
-        assert cb.call_count >= 7  # at least once per generate_ step + 완료
+        # 9 generate steps + 2 missing_data steps + 완료 = at least 9
+        assert cb.call_count >= 9
 
     def test_generate_all_cleanup_called(self, dm, vg):
         """mem_manager.cleanup_after_step이 각 단계마다 호출되는지 확인"""
@@ -616,7 +618,8 @@ class TestGenerateAll:
         cleanup = vg._mock_mem.cleanup_after_step
         called_steps = [call.args[0] for call in cleanup.call_args_list]
         for step in ['demographics', 'health_behaviors', 'comorbidities',
-                      'complications', 'duration', 'cci', 'merge']:
+                      'complications', 'duration', 'cci', 'merge',
+                      'missing_data_assessment', 'missing_data_strategy']:
             assert step in called_steps, f"cleanup_after_step('{step}') not called"
 
     def test_generate_all_t40_filtered_cleaned(self, dm, vg):
@@ -625,7 +628,7 @@ class TestGenerateAll:
         assert not dm._table_exists('_t40_pre_index')
 
     def test_generate_all_idempotent(self, dm, vg):
-        """두 번 실행해도 동일한 결과"""
+        """두 번 실행해도 동일한 결과 (2명 완전사례분석)"""
         n1 = vg.generate_all()
         n2 = vg.generate_all()
-        assert n1 == n2 == 3
+        assert n1 == n2 == 2

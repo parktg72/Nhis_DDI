@@ -7,6 +7,8 @@ import logging
 from config import DM_COMPLICATION_CODES, COMORBIDITY_CODES, CCI_CODES, STUDY_SETTINGS
 from memory_manager import mem_manager
 from utils import icd_like
+import pandas as pd
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +16,49 @@ logger = logging.getLogger(__name__)
 class VariableGenerator:
     def __init__(self, data_manager):
         self.dm = data_manager
+
+    def assess_missing_data(self, cb=None):
+        """분석 전 결측값 현황 진단. final_analysis 생성 후 호출."""
+        if cb: cb("결측값 현황 진단 중...")
+        try:
+            # fetch_arrow가 없으면 (테스트 환경) 스킵
+            if not hasattr(self.dm, 'fetch_arrow'):
+                logger.debug("fetch_arrow 미지원 (테스트 환경). 진단 스킵")
+                return None
+
+            result = self.dm.fetch_arrow("""
+                SELECT
+                    COUNT(*) AS total_rows,
+                    SUM(CASE WHEN bmi IS NULL THEN 1 ELSE 0 END) AS missing_bmi,
+                    SUM(CASE WHEN income_quintile IS NULL THEN 1 ELSE 0 END) AS missing_income,
+                    SUM(CASE WHEN smoking_status IS NULL THEN 1 ELSE 0 END) AS missing_smoking,
+                    SUM(CASE WHEN sbp IS NULL THEN 1 ELSE 0 END) AS missing_sbp,
+                    SUM(CASE WHEN fbs IS NULL THEN 1 ELSE 0 END) AS missing_fbs,
+                    SUM(CASE WHEN total_chol IS NULL THEN 1 ELSE 0 END) AS missing_chol,
+                    SUM(CASE WHEN drinking_status IS NULL THEN 1 ELSE 0 END) AS missing_drinking
+                FROM final_analysis
+            """)
+            if result.num_rows == 0:
+                logger.warning("final_analysis 테이블에 데이터 없음")
+                return None
+
+            row = result.to_pylist()[0]
+            total = row['total_rows']
+            missing_pct = {}
+            for key, val in row.items():
+                if key != 'total_rows' and val is not None:
+                    missing_pct[key] = (val / total * 100) if total > 0 else 0
+
+            log_msg = f"\n결측값 현황 ({total}명 분석 대상):\n"
+            for key, pct in sorted(missing_pct.items()):
+                log_msg += f"  - {key}: {missing_pct[key]:.1f}%\n"
+            logger.info(log_msg)
+            if cb: cb(f"✓ 결측값 진단 완료\n{log_msg}")
+            return missing_pct
+        except Exception as e:
+            logger.warning(f"결측값 진단 실패: {e}")
+            if cb: cb(f"[경고] 결측값 진단 실패: {e}")
+            return None
 
     def generate_demographics(self, cb=None):
         if cb: cb("인구학적 변수 생성 중...")
@@ -213,6 +258,47 @@ class VariableGenerator:
             FROM cci_detail
         """)
 
+    def apply_missing_data_strategy(self, cb=None):
+        """결측값 처리 전략 적용. Phase 1: listwise deletion (complete_case) 구현."""
+        strategy = STUDY_SETTINGS.get('MISSING_DATA_STRATEGY', 'complete_case')
+        if cb: cb(f"결측값 처리 중 (방식: {strategy})...")
+
+        if strategy == 'complete_case':
+            # ★ 핵심 분석 변수에 결측값 있는 행 제거 (listwise deletion)
+            # 보건검진(bmi), 문진(smoking_status), 소득(income_quintile) 중 하나라도 NULL → 제외
+            # 임상 결과 변수는 결측 허용 (추후 다중대체 시 처리 가정)
+            critical_vars = [
+                'bmi',              # 보건검진 핵심
+                'income_quintile',  # 사회경제적 변수 핵심
+                'smoking_status',   # 문진 기본 변수
+            ]
+            null_conditions = ' OR '.join(f"{v} IS NULL" for v in critical_vars)
+
+            before_count = self.dm.storage.get_row_count('final_analysis')
+
+            self.dm.execute(f"""
+                CREATE OR REPLACE TABLE final_analysis AS
+                SELECT * FROM final_analysis
+                WHERE NOT ({null_conditions})
+            """)
+
+            after_count = self.dm.storage.get_row_count('final_analysis')
+            excluded = before_count - after_count
+            pct_excluded = (excluded / before_count * 100) if before_count > 0 else 0
+
+            logger.info(f"Complete-case 분석: {before_count} → {after_count} 행 ({excluded} 행={pct_excluded:.1f}% 제외)")
+            if cb: cb(f"✓ Complete-case 분석: {excluded}명 제외 ({pct_excluded:.1f}%), {after_count}명 분석 대상")
+
+        elif strategy == 'multiple_imputation':
+            # Phase 2: 다중대체 구현 예정
+            logger.warning("Multiple imputation은 Phase 2 구현 예정. 현재는 complete_case로 처리합니다")
+            if cb: cb("[주의] Multiple imputation 미구현. complete_case로 대체 처리")
+            # 재귀 호출로 complete_case 적용
+            STUDY_SETTINGS['MISSING_DATA_STRATEGY'] = 'complete_case'
+            self.apply_missing_data_strategy(cb)
+        else:
+            raise ValueError(f"미지원 결측값 처리 방식: {strategy}")
+
     def merge_all_variables(self, cb=None):
         if cb: cb("변수 통합 중...")
         self.dm.execute("""
@@ -281,6 +367,12 @@ class VariableGenerator:
 
         n = self.merge_all_variables(cb)
         mem_manager.cleanup_after_step('merge')
+
+        # Phase 1: 결측값 현황 진단 및 처리 적용
+        _safe_step('missing_data_assessment', lambda: self.assess_missing_data(cb))
+        _safe_step('missing_data_strategy', lambda: self.apply_missing_data_strategy(cb))
+        n = self.dm.storage.get_row_count('final_analysis')
+
         if cb:
             if step_errors:
                 cb(f"변수 생성 완료 (일부 실패: {', '.join(step_errors)})")
