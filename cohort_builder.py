@@ -216,7 +216,31 @@ class CohortBuilder:
         """)
         return self.dm.storage.get_row_count('dm_medications')
 
-    def step4_classify_groups(self, cb=None):
+    def _create_med_pattern(self, lookback_days: int, table_suffix: str = ""):
+        """약물 패턴 테이블 생성 (헬퍼 메서드).
+
+        Args:
+            lookback_days: 기저선 기간 (진단일로부터 며칠까지 포함)
+            table_suffix: 테이블명 접미사 (민감도 분석용, 예: "_60day")
+        """
+        table_name = f"med_pattern{table_suffix}"
+        self.dm.execute(f"""
+            CREATE OR REPLACE TABLE {table_name} AS
+            SELECT m.INDI_DSCM_NO,
+                   MAX(CASE WHEN m.med_type='INSULIN' THEN 1 ELSE 0 END) AS has_insulin,
+                   MAX(CASE WHEN m.med_type='OHA'     THEN 1 ELSE 0 END) AS has_oha,
+                   MIN(CASE WHEN m.med_type='INSULIN' THEN m.rx_date END) AS insulin_start_date
+            FROM dm_medications m
+            INNER JOIN dm_patients dp ON m.INDI_DSCM_NO = dp.INDI_DSCM_NO
+            WHERE m.rx_date >= dp.first_dm_date
+              AND m.rx_date <= REPLACE(CAST(
+                  (CAST(SUBSTR(dp.first_dm_date,1,4)||'-'||SUBSTR(dp.first_dm_date,5,2)||'-'||SUBSTR(dp.first_dm_date,7,2) AS DATE)
+                  + INTERVAL '{lookback_days}' DAY)::DATE
+              AS VARCHAR), '-', '')
+            GROUP BY m.INDI_DSCM_NO
+        """)
+
+    def step4_classify_groups(self, cb=None, lookback_days: int = 90):
         """노출군 분류: 외래2회+/입원1회+, T1+T2 동시보유 제외"""
         if cb: cb("Step 4: 노출군 분류 중...")
         mo = int(self.settings.get('MIN_DM_CLAIMS_OUTPATIENT', 2))
@@ -265,24 +289,10 @@ class CohortBuilder:
         """)
 
         # med_pattern: Phase 2 개정 — 초기 약물 치료 기간 정의
-        # 약물 집계 기간: [first_dm_date, first_dm_date + 90일]
+        # 약물 집계 기간: [first_dm_date, first_dm_date + lookback_days]
         # 근거: 한국 당뇨병 진료지침 및 ADA 기준 (초진 후 3개월 내 재평가)
-        # 90일은 초기 약물 시작 후 치료 반응 평가 시점으로 임상적 근거 있음
-        self.dm.execute("""
-            CREATE OR REPLACE TABLE med_pattern AS
-            SELECT m.INDI_DSCM_NO,
-                   MAX(CASE WHEN m.med_type='INSULIN' THEN 1 ELSE 0 END) AS has_insulin,
-                   MAX(CASE WHEN m.med_type='OHA'     THEN 1 ELSE 0 END) AS has_oha,
-                   MIN(CASE WHEN m.med_type='INSULIN' THEN m.rx_date END) AS insulin_start_date
-            FROM dm_medications m
-            INNER JOIN dm_patients dp ON m.INDI_DSCM_NO = dp.INDI_DSCM_NO
-            WHERE m.rx_date >= dp.first_dm_date
-              AND m.rx_date <= REPLACE(CAST(
-                  (CAST(SUBSTR(dp.first_dm_date,1,4)||'-'||SUBSTR(dp.first_dm_date,5,2)||'-'||SUBSTR(dp.first_dm_date,7,2) AS DATE)
-                  + INTERVAL '90' DAY)::DATE
-              AS VARCHAR), '-', '')
-            GROUP BY m.INDI_DSCM_NO
-        """)
+        # 기본값: 90일 (임상적 근거 있음), 민감도 분석: 60일/180일로 비교
+        self._create_med_pattern(lookback_days)
 
         self.dm.execute("""
             CREATE OR REPLACE TABLE exposure_groups AS
@@ -698,4 +708,86 @@ class CohortBuilder:
                 results['warnings'] = results.get('warnings', []) + integrity_w
 
         if cb: cb("코호트 구축 완료!")
+        return results
+
+    def sensitivity_analysis(self, lookback_days_list: list = None):
+        """약물 집계 기간별 민감도 분석 (60일, 90일, 180일 비교).
+
+        각 기간별로 약물 분류를 재실행하고 코호트 크기, 약물 분포를 비교.
+
+        Returns:
+            dict: 각 기간별 약물 분류 결과
+              {
+                '60days': {'T2DM_INSULIN': n, 'T2DM_OHA': n, 'T2DM_NOMED': n, ...},
+                '90days': {...},
+                '180days': {...}
+              }
+        """
+        if lookback_days_list is None:
+            lookback_days_list = [60, 90, 180]
+
+        logger.info(f"민감도 분석: 약물 집계 기간 {lookback_days_list}일 비교 시작")
+        results = {}
+
+        for days in lookback_days_list:
+            try:
+                # 각 기간별로 med_pattern 생성
+                suffix = f"_{days}day"
+                self._create_med_pattern(days, suffix)
+
+                # exposure_groups 재생성 (해당 med_pattern 사용)
+                med_pattern_table = f"med_pattern{suffix}"
+                self.dm.execute(f"""
+                    CREATE OR REPLACE TABLE exposure_groups{suffix} AS
+                    SELECT bp.INDI_DSCM_NO, bp.SEX_TYPE, bp.BYEAR,
+                           CASE
+                             WHEN t1.INDI_DSCM_NO IS NOT NULL THEN 'T1DM'
+                             WHEN t2.INDI_DSCM_NO IS NOT NULL AND mp.has_insulin=1 THEN 'T2DM_INSULIN'
+                             WHEN t2.INDI_DSCM_NO IS NOT NULL AND mp.has_oha=1 THEN 'T2DM_OHA'
+                             WHEN t2.INDI_DSCM_NO IS NOT NULL THEN 'T2DM_NOMED'
+                             ELSE 'NON_DM'
+                           END AS exposure_group
+                    FROM base_population bp
+                    LEFT JOIN dm_patients t1 ON bp.INDI_DSCM_NO=t1.INDI_DSCM_NO AND t1.dm_type='T1DM'
+                    LEFT JOIN dm_patients t2 ON bp.INDI_DSCM_NO=t2.INDI_DSCM_NO AND t2.dm_type='T2DM'
+                    LEFT JOIN {med_pattern_table} mp ON bp.INDI_DSCM_NO=mp.INDI_DSCM_NO
+                    WHERE NOT EXISTS (SELECT 1 FROM dual_dm dd WHERE dd.INDI_DSCM_NO = bp.INDI_DSCM_NO)
+                """)
+
+                # 각 기간별 분포 조회
+                dist_df = self.dm.query(f"""
+                    SELECT exposure_group, COUNT(*) AS n
+                    FROM exposure_groups{suffix}
+                    GROUP BY exposure_group
+                    ORDER BY exposure_group
+                """)
+
+                # 결과 저장
+                group_dict = dict(zip(dist_df['exposure_group'], dist_df['n']))
+                results[f'{days}days'] = group_dict
+
+                logger.info(f"{days}일 윈도우: T2DM_INSULIN={group_dict.get('T2DM_INSULIN', 0)}, "
+                           f"T2DM_OHA={group_dict.get('T2DM_OHA', 0)}, "
+                           f"T2DM_NOMED={group_dict.get('T2DM_NOMED', 0)}")
+
+            except Exception as e:
+                logger.error(f"민감도 분석 실패 ({days}일): {e}")
+                results[f'{days}days'] = None
+
+        # 결과 비교 표 출력
+        logger.info("\n민감도 분석 결과:")
+        logger.info("=" * 70)
+        groups = set()
+        for day_results in results.values():
+            if day_results:
+                groups.update(day_results.keys())
+
+        for group in sorted(groups):
+            row = f"{group:15}"
+            for days in lookback_days_list:
+                count = results[f'{days}days'].get(group, 0) if results[f'{days}days'] else 0
+                row += f" | {days}일: {count:6,}"
+            logger.info(row)
+        logger.info("=" * 70)
+
         return results

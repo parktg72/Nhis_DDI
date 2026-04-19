@@ -1078,6 +1078,70 @@ class TestIndexYear:
 # ===========================================================================
 # I7: INPATIENT_FORM_CD config 외부화 검증
 # ===========================================================================
+class TestSensitivityAnalysis:
+    """민감도 분석: 약물 집계 기간별(60일, 90일, 180일) 코호트 크기 비교."""
+
+    def test_sensitivity_analysis_returns_dict(self, dm):
+        """민감도 분석이 기간별 약물 분류 결과를 반환한다."""
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+            # 민감도 분석 실행
+            results = cb.sensitivity_analysis(lookback_days_list=[60, 90, 180])
+
+        assert isinstance(results, dict), "결과가 dict여야 함"
+        assert '60days' in results, "60days 키 필요"
+        assert '90days' in results, "90days 키 필요"
+        assert '180days' in results, "180days 키 필요"
+
+    def test_sensitivity_analysis_includes_exposure_groups(self, dm):
+        """각 기간별 결과에 주요 그룹(T2DM_*)이 포함된다."""
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+            results = cb.sensitivity_analysis(lookback_days_list=[60, 90])
+
+        for days in ['60days', '90days']:
+            assert results[days] is not None, f"{days} 결과가 None이면 안 됨"
+            # 적어도 하나의 그룹이 있어야 함
+            assert len(results[days]) > 0, f"{days} 결과가 비어있으면 안 됨"
+
+    def test_sensitivity_analysis_shows_window_effect(self, dm):
+        """더 긴 윈도우(180일)에서 T2DM 그룹이 같거나 커야 한다."""
+        # P0002에 약물 추가: 60일째(포함), 90일째(포함), 120일째(180일만 포함)
+        dm.conn.execute("""
+            INSERT INTO T30 VALUES
+            ('P0002', '20140101', 'C004', '148801ABC', '', '', '30'),
+            ('P0002', '20140401', 'C004', '148801ABC', '', '', '30'),
+            ('P0002', '20140501', 'C004', '148801ABC', '', '', '30')
+        """)
+
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+            results = cb.sensitivity_analysis(lookback_days_list=[60, 90, 180])
+
+        # 180일 윈도우에서 T2DM_OHA 개수 >= 90일 윈도우
+        oha_60 = results['60days'].get('T2DM_OHA', 0)
+        oha_90 = results['90days'].get('T2DM_OHA', 0)
+        oha_180 = results['180days'].get('T2DM_OHA', 0)
+
+        assert oha_90 >= oha_60, f"90일 >= 60일: {oha_90} >= {oha_60}"
+        assert oha_180 >= oha_90, f"180일 >= 90일: {oha_180} >= {oha_90}"
+
+
 class TestInpatientFormCd:
     """INPATIENT_FORM_CD가 config에서 읽혀 step4에서 사용되어야 한다."""
 
