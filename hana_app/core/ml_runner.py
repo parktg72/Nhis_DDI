@@ -1551,10 +1551,20 @@ def train_model(
         _test_size = len(X_test)
         _y_classes = sorted(y_test.unique() if hasattr(y_test, 'unique') else np.unique(y_test))
 
-        # 최종 학습
+        # 최종 학습 — XGBoost 4분류는 sample_weight 로 클래스 가중치 전달
+        # (XGBClassifier 는 class_weights 파라미터 무시하므로 fit() 에 직접)
         if progress_pct_cb:
             progress_pct_cb(0.6)
-        model.fit(X_train, y_train)
+        if model_name == "xgboost":
+            _xgb_sw = _xgb_multiclass_sample_weight(
+                target, y_train, cost_sensitive, cost_fp, cost_fn,
+            )
+            if _xgb_sw is not None:
+                model.fit(X_train, y_train, sample_weight=_xgb_sw)
+            else:
+                model.fit(X_train, y_train)
+        else:
+            model.fit(X_train, y_train)
         # fit 완료 후 학습 데이터 해제 (CV도 끝남)
         del X_train, y_train
         _gc.collect()
@@ -1720,6 +1730,33 @@ def train_model(
         )
 
     return best_result
+
+
+def _xgb_multiclass_sample_weight(target: str, y_train, cost_sensitive: bool,
+                                   cost_fp: float, cost_fn: float):
+    """XGBoost 4분류 학습용 sample_weight 배열.
+
+    XGBoost 는 multiclass 에서 class_weights 파라미터를 무시하므로
+    (실측 확인: "Parameters: { \"class_weights\" } are not used." 경고),
+    sample_weight 를 fit() 에 직접 전달해야 가중치가 적용된다.
+
+    Returns
+    -------
+    numpy.ndarray | None
+        XGBoost 4분류에서만 가중치 배열, 그 외 None.
+    """
+    n_classes = 2 if target == "risk_binary" else 4
+    if n_classes <= 2:
+        return None
+
+    from sklearn.utils.class_weight import compute_sample_weight
+
+    if cost_sensitive:
+        # RISK_LABEL_MAP: Normal=0, Green=1, Yellow=2, Red=3
+        # 저위험(Normal/Green)→cost_fp 계열, 고위험(Yellow/Red)→cost_fn 계열
+        weights_by_class = {0: cost_fp, 1: cost_fp * 1.5, 2: cost_fn * 0.7, 3: cost_fn}
+        return compute_sample_weight(weights_by_class, y_train)
+    return compute_sample_weight("balanced", y_train)
 
 
 def _build_model(model_name: str, target: str, params: dict | None,
