@@ -1397,6 +1397,28 @@ def train_model(
     )
     from sklearn.preprocessing import label_binarize
     from hana_app.core.memory_guard import get_guard
+
+    # ── 입력 validation — UI 오입력 조기 차단 ──────────────────────
+    _valid_models = {"xgboost", "lightgbm", "random_forest", "logistic", "catboost"}
+    if model_name not in _valid_models:
+        raise ValueError(
+            f"model_name must be one of {sorted(_valid_models)}, got {model_name!r}"
+        )
+    if target not in ("risk_binary", "risk_label"):
+        raise ValueError(
+            f"target must be 'risk_binary' or 'risk_label', got {target!r}"
+        )
+    if not 0.0 < test_size < 1.0:
+        raise ValueError(f"test_size must be in (0, 1), got {test_size}")
+    if cv_folds < 2:
+        raise ValueError(f"cv_folds must be >= 2, got {cv_folds}")
+    if sampling_size < 0:
+        raise ValueError(f"sampling_size must be >= 0, got {sampling_size}")
+    if sampling_rounds < 1:
+        raise ValueError(f"sampling_rounds must be >= 1, got {sampling_rounds}")
+    if cost_fp <= 0 or cost_fn <= 0:
+        raise ValueError(f"cost_fp and cost_fn must be > 0, got fp={cost_fp}, fn={cost_fn}")
+
     _guard = get_guard(guard)
 
     mem_limit = memory_limit_mb if memory_limit_mb > 0 else PROCESS_MEMORY_LIMIT_MB
