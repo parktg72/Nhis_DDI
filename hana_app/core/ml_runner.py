@@ -644,15 +644,18 @@ def stratified_sample_from_parquet(
         # 3. 클래스별 SAMPLE 쿼리 실행 (디스크 기반)
         parts = []
         for _, row in dist.iterrows():
-            cls_val = row[target_col]
+            # numpy scalar → Python native (DuckDB 파라미터 바인딩용)
+            raw_val = row[target_col]
+            cls_val = raw_val.item() if hasattr(raw_val, "item") else raw_val
             n = int(row["sample_n"])
             if n <= 0:
                 continue
             # DuckDB USING SAMPLE은 비율만 지원 → ORDER BY + LIMIT 사용
+            # `||` : DuckDB 표준 문자열 결합 (`+` 은 버전에 따라 동작 다름)
             _cls_df = con.execute(f"""
                 SELECT * FROM {_src_expr}
                 WHERE {target_col} = ?
-                ORDER BY hash(patient_id + CAST({seed} AS VARCHAR))
+                ORDER BY hash(CAST(patient_id AS VARCHAR) || CAST({seed} AS VARCHAR))
                 LIMIT {n}
             """, [cls_val]).df()
             parts.append(_cls_df)
