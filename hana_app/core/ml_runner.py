@@ -1392,6 +1392,7 @@ def train_model(
         roc_auc_score,
         accuracy_score,
         f1_score,
+        average_precision_score,
         confusion_matrix,
     )
     from sklearn.preprocessing import label_binarize
@@ -1573,10 +1574,12 @@ def train_model(
             progress_pct_cb(0.8)
         y_pred = model.predict(X_test)
 
-        # 평가
+        # 평가 — 불균형 데이터(공단 pilot 3,540:1 수준)에선 accuracy 는 오도하므로
+        # F1-macro (동일 가중치), F1-weighted (지지도 가중치), PR-AUC 를 병기.
         metrics: dict[str, Any] = {
             "accuracy": float(accuracy_score(y_test, y_pred)),
             "f1_macro": float(f1_score(y_test, y_pred, average="macro")),
+            "f1_weighted": float(f1_score(y_test, y_pred, average="weighted")),
             "cv_mean": float(cv_scores.mean()),
             "cv_std": float(cv_scores.std()),
             "cv_scores": cv_scores.tolist(),
@@ -1584,11 +1587,13 @@ def train_model(
             "test_size": _test_size,
         }
 
-        # AUC
+        # AUC + PR-AUC — 극단 불균형(예: 3,540:1)에선 ROC-AUC 보다 PR-AUC 가
+        # 소수 클래스 식별 능력을 더 민감하게 반영.
         try:
             if target == "risk_binary":
                 y_proba = model.predict_proba(X_test)[:, 1]
                 metrics["roc_auc"] = float(roc_auc_score(y_test, y_proba))
+                metrics["pr_auc"] = float(average_precision_score(y_test, y_proba))
                 # ROC Curve 포인트 (최대 200점으로 다운샘플)
                 try:
                     from sklearn.metrics import roc_curve as _roc_curve
@@ -1602,13 +1607,15 @@ def train_model(
                     pass
             else:
                 y_proba = model.predict_proba(X_test)
+                _y_bin = label_binarize(y_test, classes=_y_classes)
                 metrics["roc_auc_ovr"] = float(
                     roc_auc_score(
-                        label_binarize(y_test, classes=_y_classes),
-                        y_proba,
-                        multi_class="ovr",
-                        average="macro",
+                        _y_bin, y_proba, multi_class="ovr", average="macro",
                     )
+                )
+                # PR-AUC One-vs-Rest (macro) — 소수 클래스(Green) 민감도 측정
+                metrics["pr_auc_ovr"] = float(
+                    average_precision_score(_y_bin, y_proba, average="macro")
                 )
         except Exception:
             pass
