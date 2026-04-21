@@ -45,15 +45,36 @@ def test_sample_weight_balanced_for_multiclass():
     assert green_weight > yellow_weight * 50  # 최소 50배 이상
 
 
-def test_sample_weight_cost_sensitive_for_multiclass():
-    """4분류 + cost_sensitive=True → {0: fp, 1: fp*1.5, 2: fn*0.7, 3: fn}."""
-    y = np.array([0, 1, 2, 3])
+def test_sample_weight_cost_sensitive_is_balanced_times_cost_ratio():
+    """4분류 + cost_sensitive=True → balanced × cost_ratio 곱.
+
+    고정 비율만 쓰는 구설계(UX 함정: 3,540:1 불균형에 1.5배만 적용)를 회피.
+    balanced 가 기반에 깔려 있어 극단 불균형에서도 소수 클래스 학습됨.
+    """
+    y = np.array([0, 1, 2, 3])  # 각 클래스 1건씩 → balanced = [1,1,1,1]
     sw = _xgb_multiclass_sample_weight(
         target="risk_label", y_train=y,
         cost_sensitive=True, cost_fp=1.0, cost_fn=10.0,
     )
-    # 각 클래스에 정확히 지정된 비용 반영
+    # 4건 균등이면 balanced = 1.0 → sw = cost_ratio 그대로
+    # cost_ratio : {0:1.0, 1:1.5, 2:10*0.7=7.0, 3:10.0}
     np.testing.assert_allclose(sw, [1.0, 1.5, 7.0, 10.0])
+
+
+def test_sample_weight_cost_sensitive_amplifies_on_imbalance():
+    """극단 불균형 + cost_sensitive=True 에선 balanced 효과가 유지되어야 함."""
+    # Yellow=2 가 1000개, Green=1 이 1개 (1000:1 불균형)
+    y = np.concatenate([np.full(1000, 2), np.full(1, 1)])
+    sw = _xgb_multiclass_sample_weight(
+        target="risk_label", y_train=y,
+        cost_sensitive=True, cost_fp=1.0, cost_fn=10.0,
+    )
+    green_sw = sw[y == 1][0]
+    yellow_sw = sw[y == 2][0]
+    # Green 가중치가 Yellow 보다 크게 높아야 함 (극단 불균형 처리됨)
+    # 구설계(고정 비율)면 green=1.5, yellow=7.0 → green < yellow 가 되어 실패
+    # 신설계: balanced=[0.5,500] * cost_ratio=[7.0, 1.5] → green≈750, yellow≈3.5
+    assert green_sw > yellow_sw * 50
 
 
 def test_sample_weight_xgboost_fit_accepts_it():

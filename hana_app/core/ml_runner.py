@@ -1563,14 +1563,42 @@ def train_model(
             cost_sensitive=cost_sensitive, cost_fp=cost_fp, cost_fn=cost_fn,
         )
 
-        # 교차검증
+        # 교차검증 — XGBoost 4분류에선 sample_weight 반영 수동 CV (cross_val_score
+        # 는 sample_weight 를 받지 못해 CV 점수와 최종 저장 모델 사이에 괴리 발생)
         if progress_cb:
             progress_cb(f"{_round_label}{model_name} {cv_folds}-fold CV 실행 중...")
         if progress_pct_cb:
             progress_pct_cb(0.1)
 
         scoring = "roc_auc" if target == "risk_binary" else "f1_macro"
-        cv_scores = cross_val_score(model, X_train, y_train, cv=cv_folds, scoring=scoring, n_jobs=_n_jobs)
+        _xgb_sw_cv = None
+        if model_name == "xgboost":
+            _xgb_sw_cv = _xgb_multiclass_sample_weight(
+                target, y_train, cost_sensitive, cost_fp, cost_fn,
+            )
+        if _xgb_sw_cv is not None:
+            # 수동 StratifiedKFold + sample_weight — CV 점수가 저장 모델과 일치
+            from sklearn.model_selection import StratifiedKFold
+            _skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+            _cv_fold_scores: list[float] = []
+            for _tr_idx, _val_idx in _skf.split(X_train, y_train):
+                _m = _build_model(
+                    model_name, target, params, use_gpu=_use_gpu, n_jobs=_n_jobs,
+                    cost_sensitive=cost_sensitive, cost_fp=cost_fp, cost_fn=cost_fn,
+                )
+                _X_tr = X_train.iloc[_tr_idx] if hasattr(X_train, "iloc") else X_train[_tr_idx]
+                _y_tr = y_train.iloc[_tr_idx] if hasattr(y_train, "iloc") else y_train[_tr_idx]
+                _X_val = X_train.iloc[_val_idx] if hasattr(X_train, "iloc") else X_train[_val_idx]
+                _y_val = y_train.iloc[_val_idx] if hasattr(y_train, "iloc") else y_train[_val_idx]
+                _m.fit(_X_tr, _y_tr, sample_weight=_xgb_sw_cv[_tr_idx])
+                _cv_fold_scores.append(
+                    f1_score(_y_val, _m.predict(_X_val), average="macro")
+                )
+                del _m, _X_tr, _y_tr, _X_val, _y_val
+                _gc.collect()
+            cv_scores = np.array(_cv_fold_scores)
+        else:
+            cv_scores = cross_val_score(model, X_train, y_train, cv=cv_folds, scoring=scoring, n_jobs=_n_jobs)
 
         if progress_cb:
             progress_cb(f"{_round_label}CV 완료: {scoring} = {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
@@ -1638,14 +1666,23 @@ def train_model(
             else:
                 y_proba = model.predict_proba(X_test)
                 _y_bin = label_binarize(y_test, classes=_y_classes)
+                # macro — 모든 클래스 동일 가중치 (실존하지 않는 클래스도 균등 영향)
                 metrics["roc_auc_ovr"] = float(
                     roc_auc_score(
                         _y_bin, y_proba, multi_class="ovr", average="macro",
                     )
                 )
-                # PR-AUC One-vs-Rest (macro) — 소수 클래스(Green) 민감도 측정
                 metrics["pr_auc_ovr"] = float(
                     average_precision_score(_y_bin, y_proba, average="macro")
+                )
+                # weighted — 지지도 가중 (Normal ≈ 0 인 이 파일럿에 더 정직)
+                metrics["roc_auc_ovr_weighted"] = float(
+                    roc_auc_score(
+                        _y_bin, y_proba, multi_class="ovr", average="weighted",
+                    )
+                )
+                metrics["pr_auc_ovr_weighted"] = float(
+                    average_precision_score(_y_bin, y_proba, average="weighted")
                 )
         except Exception:
             pass
@@ -1777,6 +1814,14 @@ def _xgb_multiclass_sample_weight(target: str, y_train, cost_sensitive: bool,
     (실측 확인: "Parameters: { \"class_weights\" } are not used." 경고),
     sample_weight 를 fit() 에 직접 전달해야 가중치가 적용된다.
 
+    cost_sensitive=True 일 때:
+      balanced (클래스 불균형 역수) × cost_ratio (임상 비용 비율) 의 곱.
+      극단 불균형(예: 3,540:1) 데이터에서도 balanced 가 기반에 깔려 있어
+      고정 비율만 쓰는 설계의 UX 함정(소수 클래스 미학습) 회피.
+
+    cost_sensitive=False 일 때:
+      balanced 단독. 극단 불균형 데이터 기본 권장 설정.
+
     Returns
     -------
     numpy.ndarray | None
@@ -1788,12 +1833,25 @@ def _xgb_multiclass_sample_weight(target: str, y_train, cost_sensitive: bool,
 
     from sklearn.utils.class_weight import compute_sample_weight
 
-    if cost_sensitive:
-        # RISK_LABEL_MAP: Normal=0, Green=1, Yellow=2, Red=3
-        # 저위험(Normal/Green)→cost_fp 계열, 고위험(Yellow/Red)→cost_fn 계열
-        weights_by_class = {0: cost_fp, 1: cost_fp * 1.5, 2: cost_fn * 0.7, 3: cost_fn}
-        return compute_sample_weight(weights_by_class, y_train)
-    return compute_sample_weight("balanced", y_train)
+    balanced = compute_sample_weight("balanced", y_train)
+    if not cost_sensitive:
+        return balanced
+
+    # RISK_LABEL_MAP: Normal=0, Green=1, Yellow=2, Red=3
+    # cost_ratio : 저위험 기준(cost_fp) 대비 각 클래스의 임상 비용 배수
+    _ratio_fn = cost_fn / max(cost_fp, 0.01)
+    cost_ratio_by_class = {
+        0: 1.0,              # Normal: 기준
+        1: 1.5,              # Green : FP 허용 여지 있음, 약간 높음
+        2: _ratio_fn * 0.7,  # Yellow: FN 비용의 70%
+        3: _ratio_fn,        # Red   : FN 최고 비용
+    }
+    y_arr = np.asarray(y_train)
+    cost_mult = np.array(
+        [cost_ratio_by_class.get(int(c), 1.0) for c in y_arr],
+        dtype=float,
+    )
+    return balanced * cost_mult
 
 
 def _build_model(model_name: str, target: str, params: dict | None,

@@ -17,16 +17,20 @@ if str(ROOT) not in sys.path:
 from hana_app.core.ml_runner import stratified_sample_from_parquet
 
 
+N_YELLOW = 500
+N_GREEN = 5
+TOTAL_ROWS = N_YELLOW + N_GREEN
+
+
 @pytest.fixture
 def imbalanced_parquet(tmp_path):
     """극단 불균형 파일럿 데이터 (Yellow 500, Green 5) — numpy.int64 라벨."""
     import numpy as np
-    n_yellow, n_green = 500, 5
     df = pd.DataFrame({
-        "patient_id": [f"P{i:06d}" for i in range(n_yellow + n_green)],
+        "patient_id": [f"P{i:06d}" for i in range(TOTAL_ROWS)],
         # risk_label 은 RISK_LABEL_MAP 값 (int) — pandas/numpy.int64 로 저장됨
-        "risk_label": np.array([2] * n_yellow + [1] * n_green, dtype=np.int64),
-        "feat1": np.random.default_rng(42).random(n_yellow + n_green),
+        "risk_label": np.array([2] * N_YELLOW + [1] * N_GREEN, dtype=np.int64),
+        "feat1": np.random.default_rng(42).random(TOTAL_ROWS),
     })
     # sanity check — 실제 프로덕션 데이터와 동일하게 numpy.int64 로 저장됨
     assert df["risk_label"].dtype == np.int64
@@ -65,8 +69,8 @@ def test_stratified_sample_small_population_returns_all(imbalanced_parquet):
     result = stratified_sample_from_parquet(
         parquet_paths=imbalanced_parquet,
         target_col="risk_label",
-        sample_size=10_000,  # 총 505 < 10000
+        sample_size=TOTAL_ROWS * 20,  # 총 개수 < sample_size
         seed=42,
         memory_limit_mb=512,
     )
-    assert len(result) == 505
+    assert len(result) == TOTAL_ROWS
