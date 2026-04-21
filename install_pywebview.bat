@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM ============================================================
 REM pywebview 단독 오프라인 설치 (선택사항)
 REM 표준 경로: install_312.bat venv (pywebview 포함)
