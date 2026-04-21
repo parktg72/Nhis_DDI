@@ -1319,7 +1319,12 @@ def _load_age_map() -> dict[str, int]:
             try:
                 df = pd.read_parquet(fpath, columns=["patient_id", "age"])
                 df = df.dropna(subset=["age"])
-                return dict(zip(df["patient_id"].astype(str), df["age"].astype(int)))
+                # Python native int 로 변환 — numpy.int64 가 DuckDB 등
+                # 하위 시스템 파라미터 바인딩에서 호환 문제를 일으키는 사례가 있음.
+                return {
+                    str(pid): int(age)
+                    for pid, age in zip(df["patient_id"], df["age"])
+                }
             except Exception as e:
                 logger.warning("나이 매핑 로드 실패 (%s): %s", fpath.name, e)
     return {}
