@@ -1404,7 +1404,10 @@ def train_model(
     from hana_app.core.memory_guard import get_guard
 
     # ── 입력 validation — UI 오입력 조기 차단 ──────────────────────
-    _valid_models = {"xgboost", "lightgbm", "random_forest", "logistic", "catboost"}
+    _valid_models = {
+        "xgboost", "lightgbm", "random_forest", "logistic", "catboost",
+        "stacking", "tabnet", "gnn", "temporal_transformer",
+    }
     if model_name not in _valid_models:
         raise ValueError(
             f"model_name must be one of {sorted(_valid_models)}, got {model_name!r}"
