@@ -317,3 +317,47 @@ def _stage2_sample_weight(y_train, cost_sensitive=False, cost_ratio_by_class=Non
 ---
 
 **이 스펙이 확정되면:** `writing-plans` 스킬로 태스크 단위 구현 계획 작성 → 서브에이전트 드리븐 실행.
+
+---
+
+## 구현 완료 노트 (2026-04-17 ~ 2026-04-24)
+
+Task 0~10 subagent-driven-development 로 완료. 브랜치: `feature/yellow-subtype-hierarchical`.
+
+**ETL (Tasks 0-3):**
+- `scripts/etl/clinical_rules.py` — `collect_red_triggers`, `collect_yellow_triggers`, `CLINICAL_STANDARDS_VERSION = "v1.0"` (규칙 중앙화)
+- `scripts/etl/prescription_aggregator.py` — `_assign_risk_level` trigger-set 기반 리팩터 + `_assign_yellow_subtype` 신규
+- `scripts/etl/models.py` — `PatientFeatures.yellow_subtype` 필드
+- `scripts/etl/feature_writer.py`, `hana_app/core/ml_runner.py` — parquet/row 직렬화에 yellow_subtype 추가
+- `scripts/train/dataset.py` — NON_FEATURE_COLS + meta_cols 에 yellow_subtype 추가 (크래시 방지 + 서브그룹 분석 조인 키)
+- `scripts/features/selector.py` — META_COLS 에 yellow_subtype (silent drop 방지)
+
+**ML (Tasks 4-9):**
+- `hana_app/core/hierarchical_runner.py` — Stage 1/2 통합 모듈:
+  - `YELLOW_SUBTYPE_LABELS`, `STAGE2_LABELS`, `ACTION_BY_LABEL`
+  - `build_stage2_label`, `encode_stage2_labels`, `decode_stage2_labels`
+  - `_stage2_sample_weight` (class_names 파라미터로 local→global 재매핑 안전)
+  - `stratified_sample_stage2` (prefilter + 6-class 층화)
+  - `select_thresholds_from_pr` (2단 임계값 + 1e-6 nudge 불변식 보장)
+  - `train_hierarchical` (Stage 1 Red 이진 + Stage 2 6-class + 메타/SHA-256)
+  - `_dispatch_result`, `predict_risk` (2단 분기 + Red 의심 태그)
+
+**테스트 커버리지:** 29 hierarchical_runner + 7 sample_weight + 6 stratified_stage2 + 13 yellow_subtype + 18 clinical_rules + 11 prescription_aggregator 회귀 → 80+ 테스트, 전부 통과.
+
+**주요 설계 결정 (구현 중 보강):**
+1. Task 4: `LabelEncoder.fit()` 이 알파벳 정렬을 강제하는 버그 회피 — `classes_` 직접 할당
+2. Task 6: `tempfile.mkdtemp` → `TemporaryDirectory` 로 변경 (temp 누수 방지)
+3. Task 6: `_lbl` → `build_stage2_label` 로 치환 (null yellow_subtype 명시적 오류)
+4. Task 7: `select_thresholds_from_pr` 에 5가지 precondition + 1e-6 nudge 내재화
+5. Task 8: Stage 2 학습 데이터에 누락된 클래스가 있을 때 XGBoost contiguous 요구 위반 회피 — local→global remapping 도입
+6. Task 8: `_stage2_sample_weight` 가 class_names 파라미터로 재매핑 안전 (cost_ratio silent misapplication 버그 수정)
+7. Task 9: `assert` → `ValueError` (Python -O 모드 stripping 방어)
+8. Task 3: `NON_FEATURE_COLS` 와 `META_COLS` 누락으로 인한 파이프라인 크래시/silent drop 수정
+
+**구현 범위 제외 (후속 PR):**
+- 서빙 (`serving/predictor.py`) 통합 — `predict_risk()` 호출 경로 전환
+- UI 대시보드 (`hana_app/pages/`) 에 yellow_subtype/action/red_suspect 컬럼 추가
+- 실데이터 기반 τ_red / τ_review / cost_ratio_by_class 튜닝
+- Y_OTHER 증가율 모니터링 대시보드
+- 명시적 평가 메트릭 리포트 (Stage 1 PR-AUC, Stage 2 Macro F1, Confusion matrix 6×6)
+- StratifiedKFold CV (현 플랜은 단일 train/val split)

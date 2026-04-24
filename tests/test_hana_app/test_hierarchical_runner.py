@@ -464,3 +464,127 @@ def test_dispatch_raises_valueerror_on_missing_stage2_probs():
             stage2_labels=STAGE2_LABELS,
             tau_red=0.7, tau_review=0.3,
         )
+
+
+def test_end_to_end_train_predict(tmp_path):
+    """라벨 생성 → 학습 → 추론의 전체 플로우.
+
+    Task 0-9 의 모든 컴포넌트를 하나의 워크플로우에서 검증.
+    """
+    from datetime import date
+    from scripts.etl.models import PatientFeatures
+    from scripts.etl.prescription_aggregator import (
+        _assign_risk_level, _assign_yellow_subtype,
+    )
+    from hana_app.core.ml_runner import _patient_features_to_row
+    from hana_app.core.hierarchical_runner import (
+        train_hierarchical, predict_risk,
+    )
+
+    # 합성 PatientFeatures 생성 — 각 카테고리별 최소 30건
+    features = []
+    import random
+    rng = random.Random(42)
+
+    def _ft(**kw):
+        base = dict(patient_id=f"P{len(features):05d}",
+                    window_start=date(2026, 1, 1),
+                    window_end=date(2026, 3, 31))
+        base.update(kw)
+        return PatientFeatures(**base)
+
+    # Red (30)
+    for _ in range(30):
+        features.append(_ft(ddi_contraindicated=1, drug_count=rng.randint(3, 8)))
+    # Y_MIX (30)
+    for _ in range(30):
+        features.append(_ft(ddi_major=1, dup_same_ingredient=1,
+                             drug_count=rng.randint(3, 8)))
+    # Y_DDI_MAJOR (30)
+    for _ in range(30):
+        features.append(_ft(ddi_major=1, drug_count=rng.randint(3, 8)))
+    # Y_DDI_MOD (30)
+    for _ in range(30):
+        features.append(_ft(ddi_moderate=2, drug_count=rng.randint(3, 8)))
+    # Y_DUP (30)
+    for _ in range(30):
+        features.append(_ft(dup_same_ingredient=1, drug_count=rng.randint(3, 8)))
+    # Y_FRAG (30)
+    for _ in range(30):
+        features.append(_ft(institution_count=3, drug_count=rng.randint(3, 8)))
+    # No_Alert — Normal (50)
+    for _ in range(50):
+        features.append(_ft(drug_count=rng.randint(0, 3)))
+
+    # ETL 단계: risk_level + yellow_subtype 생성
+    for f in features:
+        _assign_risk_level(f)
+        _assign_yellow_subtype(f)
+
+    # row 직렬화 → 학습용 DataFrame
+    df = pd.DataFrame([_patient_features_to_row(f) for f in features])
+
+    # 검증: risk_level 과 yellow_subtype 이 올바르게 채워졌는지
+    assert (df["risk_level"] == "Red").sum() == 30
+    assert df.loc[df["risk_level"] == "Yellow", "yellow_subtype"].notna().all()
+    assert (df["yellow_subtype"] == "Y_MIX").sum() == 30
+
+    feature_cols = ["drug_count", "ddi_major", "ddi_moderate",
+                    "dup_same_ingredient", "institution_count"]
+
+    # 학습
+    bundle = train_hierarchical(
+        df=df, feature_cols=feature_cols,
+        output_dir=tmp_path, seed=42,
+    )
+    assert bundle["thresholds"]["tau_red"] > 0
+    assert bundle["thresholds"]["tau_review"] < bundle["thresholds"]["tau_red"]
+
+    # 추론 — 학습 데이터 일부 샘플로 스모크 테스트
+    X_sample = df[feature_cols].iloc[:20].to_numpy()
+    results = predict_risk(
+        X=X_sample,
+        stage1_model=bundle["stage1_model"],
+        stage2_model=bundle["stage2_model"],
+        stage2_encoder=bundle["stage2_encoder"],
+        thresholds=bundle["thresholds"],
+    )
+    assert len(results) == 20
+
+    # 스모크 검증: 각 결과에 필수 키, p_red 범위, action 존재
+    for r in results:
+        assert set(r.keys()) >= {"risk_level", "p_red", "red_suspect", "action"}
+        assert 0.0 <= r["p_red"] <= 1.0
+        assert isinstance(r["action"], str) and len(r["action"]) > 0
+
+
+def test_end_to_end_meta_has_clinical_standards_version(tmp_path):
+    """학습 결과 메타 파일이 CLINICAL_STANDARDS_VERSION 을 기록해 재현성을 보장."""
+    import json
+    from hana_app.core.hierarchical_runner import train_hierarchical
+
+    rng = np.random.default_rng(7)
+    n = 200
+    df = pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "feat_a": rng.random(n),
+        "feat_b": rng.random(n),
+        "risk_level": (["Red"] * 10 + ["Yellow"] * 80 + ["Normal"] * 110),
+        "yellow_subtype": (
+            [None] * 10
+            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 20
+            + [None] * 110
+        ),
+    })
+    train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b"],
+        output_dir=tmp_path, seed=7,
+    )
+    meta = json.loads((tmp_path / "stage_meta.json").read_text())
+    assert "clinical_standards_version" in meta
+    assert meta["clinical_standards_version"] == "v1.0"
+    assert "stage1_sha256" in meta
+    assert "stage2_sha256" in meta
+    assert "stage2_label_counts" in meta
+    assert "y_other_excluded_count" in meta
