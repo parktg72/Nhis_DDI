@@ -41,6 +41,7 @@ PROTECTED_FEATURES = {
 META_COLS = {
     "patient_id", "window_start", "window_end",
     "risk_level", "risk_reasons", "age", "sex",
+    "yellow_subtype",
 }
 
 
