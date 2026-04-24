@@ -145,6 +145,25 @@ class TestTrainDataset:
         ds2 = load_dataset_from_df(sample_ml_df_with_label, random_state=42)
         np.testing.assert_array_equal(ds1.y_train, ds2.y_train)
 
+    def test_meta_cols_include_yellow_subtype(self):
+        """TrainDataset.meta_* 에 yellow_subtype 이 subgroup 조인 키로 포함되어야 함."""
+        df = pd.DataFrame({
+            "patient_id":    [f"P{i:04d}" for i in range(20)],
+            "window_start":  ["2026-01-01"] * 20,
+            "window_end":    ["2026-03-31"] * 20,
+            "risk_level":    (["Red"] * 5 + ["Yellow"] * 10 + ["Normal"] * 5),
+            "yellow_subtype": ([None] * 5 + ["Y_DDI_MAJOR"] * 5 + ["Y_MIX"] * 5 + [None] * 5),
+            "drug_count":    [5] * 20,
+            "ddi_major":     [1] * 20,
+        })
+        ds = load_dataset_from_df(df, random_state=42)
+        for split_name in ("train", "val", "test"):
+            meta = getattr(ds, f"meta_{split_name}")
+            if len(meta) > 0:
+                assert "yellow_subtype" in meta.columns, (
+                    f"meta_{split_name} 에 yellow_subtype 없음 (subgroup 분석 불가)"
+                )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Evaluator 테스트

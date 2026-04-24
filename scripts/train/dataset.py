@@ -220,7 +220,7 @@ def _split_dataset(
         X = sub[feature_cols].astype(float).values
         y_bin = sub["is_high_risk"].values.astype(int)
         y_multi = sub["risk_level_encoded"].values.astype(int)
-        meta_cols = [c for c in ["patient_id", "risk_level", "window_start", "window_end"] if c in sub.columns]
+        meta_cols = [c for c in ["patient_id", "risk_level", "yellow_subtype", "window_start", "window_end"] if c in sub.columns]
         meta = sub[meta_cols].reset_index(drop=True)
         return X, y_bin, y_multi, meta
 
