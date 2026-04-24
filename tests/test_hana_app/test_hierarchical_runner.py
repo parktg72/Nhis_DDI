@@ -324,3 +324,80 @@ def test_train_hierarchical_cost_sensitive_with_missing_class(tmp_path):
     # 에러 없이 완료 + label 분포 유지
     assert "Y_DUP" in result["stage2_label_counts"]
     assert "Y_FRAG" not in result["stage2_label_counts"]
+
+
+def test_dispatch_no_alert_action():
+    from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
+    # 마지막 원소 No_Alert 가 가장 높음
+    probs = np.array([0.05, 0.05, 0.05, 0.05, 0.05, 0.75])
+    r = _dispatch_result(
+        p_red=0.05, stage2_probs=probs, stage2_labels=STAGE2_LABELS,
+        tau_red=0.7, tau_review=0.3,
+    )
+    assert r["risk_level"] == "No_Alert"
+    assert r["action"] == "알림 없음"
+
+
+def test_dispatch_red_confirmed_above_tau_red():
+    from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
+    r = _dispatch_result(
+        p_red=0.95, stage2_probs=None, stage2_labels=STAGE2_LABELS,
+        tau_red=0.7, tau_review=0.3,
+    )
+    assert r["risk_level"] == "Red"
+    assert r["red_suspect"] is False
+    assert r["action"] == "응급 개입"
+    assert r["stage2_probs"] is None
+
+
+def test_dispatch_red_suspect_between_thresholds():
+    """τ_review ≤ P(Red) < τ_red → Stage 2 출력 + red_suspect=True."""
+    from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
+    probs = np.array([0.6, 0.1, 0.1, 0.1, 0.05, 0.05])  # Y_MIX
+    r = _dispatch_result(
+        p_red=0.5, stage2_probs=probs, stage2_labels=STAGE2_LABELS,
+        tau_red=0.7, tau_review=0.3,
+    )
+    assert r["risk_level"] == "Y_MIX"
+    assert r["red_suspect"] is True
+    assert "약사 전화" in r["action"]
+
+
+def test_predict_risk_end_to_end(tmp_path):
+    """predict_risk 가 train_hierarchical 번들로 추론 결과 리스트를 반환하는지."""
+    from hana_app.core.hierarchical_runner import train_hierarchical, predict_risk
+
+    rng = np.random.default_rng(42)
+    n = 500
+    df = pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "feat_a": rng.random(n),
+        "feat_b": rng.random(n),
+        "feat_c": rng.random(n),
+        "risk_level": (["Red"] * 25 + ["Yellow"] * 100 +
+                       ["Green"] * 150 + ["Normal"] * 225),
+        "yellow_subtype": (
+            [None] * 25
+            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20 + ["Y_DDI_MOD"] * 20
+            + ["Y_DUP"] * 20 + ["Y_FRAG"] * 20
+            + [None] * 375
+        ),
+    })
+    bundle = train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b", "feat_c"],
+        output_dir=tmp_path, seed=42,
+    )
+    X = df[["feat_a", "feat_b", "feat_c"]].iloc[:10].to_numpy()
+    results = predict_risk(
+        X=X,
+        stage1_model=bundle["stage1_model"],
+        stage2_model=bundle["stage2_model"],
+        stage2_encoder=bundle["stage2_encoder"],
+        thresholds=bundle["thresholds"],
+    )
+    assert len(results) == 10
+    for r in results:
+        assert set(r.keys()) >= {
+            "risk_level", "p_red", "stage2_probs", "red_suspect", "action"
+        }
+        assert r["p_red"] >= 0.0 and r["p_red"] <= 1.0

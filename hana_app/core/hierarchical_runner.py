@@ -440,3 +440,112 @@ def train_hierarchical(
         "y_other_excluded_count": y_other_excluded,
         "meta_path": out / "stage_meta.json",
     }
+
+
+ACTION_BY_LABEL: dict[str, str] = {
+    "Y_MIX":        "약사 전화 (즉시)",
+    "Y_DDI_MAJOR":  "약사 전화",
+    "Y_DDI_MOD":    "문자 알림",
+    "Y_DUP":        "문서 + 문자 알림",
+    "Y_FRAG":       "문자 알림",
+    "No_Alert":     "알림 없음",
+}
+
+
+def _dispatch_result(
+    p_red: float,
+    stage2_probs: np.ndarray | None,
+    stage2_labels: tuple[str, ...],
+    tau_red: float,
+    tau_review: float,
+) -> dict:
+    """단일 환자에 대한 2단 임계값 분기 결과.
+
+    p_red >= tau_red → Red 확정 (Stage 2 skip)
+    tau_review <= p_red < tau_red → Stage 2 라벨 + red_suspect=True
+    p_red < tau_review → Stage 2 라벨 단독 (red_suspect=False)
+    """
+    if p_red >= tau_red:
+        return {
+            "risk_level": "Red",
+            "p_red": float(p_red),
+            "stage2_probs": None,
+            "red_suspect": False,
+            "action": "응급 개입",
+        }
+    assert stage2_probs is not None, "Stage 2 probs required when p_red < tau_red"
+    stage2_idx = int(np.argmax(stage2_probs))
+    stage2_label = stage2_labels[stage2_idx]
+    red_suspect = bool(p_red >= tau_review)
+    return {
+        "risk_level": stage2_label,
+        "p_red": float(p_red),
+        "stage2_probs": {lbl: float(stage2_probs[i])
+                         for i, lbl in enumerate(stage2_labels)},
+        "red_suspect": red_suspect,
+        "action": ACTION_BY_LABEL.get(stage2_label, "알림 없음"),
+    }
+
+
+def predict_risk(
+    X: np.ndarray,
+    stage1_model,
+    stage2_model,
+    stage2_encoder,
+    thresholds: dict[str, float],
+    classes_present: list[int] | None = None,
+) -> list[dict]:
+    """계층 추론 — 각 샘플에 대해 2단 분기 결과 리스트 반환.
+
+    X : (n, n_features) 피처 배열 (열 순서는 학습 시 feature_cols 와 일치해야 함)
+
+    Task 8 의 local→global remapping 을 역변환해 stage2_probs 를 항상
+    STAGE2_LABELS (6-class) 순서의 벡터로 정렬한다. 누락된 클래스는 0.0.
+
+    Note
+    ----
+    classes_present=None 일 때 encoder.classes_ 를 fallback 으로 사용하지만,
+    stage2_model 이 일부 클래스만으로 학습된 경우 (local→global remapping 발동)
+    predict_proba 출력 열 수가 encoder.classes_ 수와 맞지 않아 IndexError 가 된다.
+    그 경우 classes_present 를 명시적으로 전달해야 한다 (저장된 bundle["classes_present"]).
+    """
+    X_arr = np.asarray(X)
+    p_red = stage1_model.predict_proba(X_arr)[:, 1]
+
+    # Stage 2 확률 — local 공간 → global STAGE2_LABELS 공간으로 reorder/pad
+    local_probs = stage2_model.predict_proba(X_arr)  # shape (n, k)
+    n = len(X_arr)
+    stage2_probs_global = np.zeros((n, len(STAGE2_LABELS)), dtype=float)
+
+    if classes_present is not None:
+        # train_hierarchical 번들에서 저장된 global 인덱스 리스트 사용
+        for local_i, global_i in enumerate(classes_present):
+            stage2_probs_global[:, global_i] = local_probs[:, local_i]
+    else:
+        # classes_present 누락 시 encoder.classes_ 로 fallback
+        # 주의: local→global remapping 이 발동한 경우 열 수 불일치 → ValueError
+        if local_probs.shape[1] != len(stage2_encoder.classes_):
+            raise ValueError(
+                f"stage2_model 출력 클래스 수({local_probs.shape[1]})와 "
+                f"encoder.classes_ 수({len(stage2_encoder.classes_)})가 불일치. "
+                "일부 클래스가 학습에서 누락된 경우 classes_present 를 명시적으로 전달해야 함 "
+                "(저장된 bundle['classes_present'] 사용)."
+            )
+        class_to_global = {c: i for i, c in enumerate(STAGE2_LABELS)}
+        for local_i, cls_str in enumerate(stage2_encoder.classes_):
+            if cls_str in class_to_global:
+                stage2_probs_global[:, class_to_global[cls_str]] = local_probs[:, local_i]
+
+    tau_red = thresholds["tau_red"]
+    tau_review = thresholds["tau_review"]
+
+    results = []
+    for i in range(n):
+        results.append(_dispatch_result(
+            p_red=float(p_red[i]),
+            stage2_probs=stage2_probs_global[i],
+            stage2_labels=STAGE2_LABELS,
+            tau_red=tau_red,
+            tau_review=tau_review,
+        ))
+    return results
