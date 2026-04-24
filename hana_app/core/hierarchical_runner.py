@@ -290,6 +290,130 @@ def select_thresholds_from_pr(
     return {"tau_red": tau_red, "tau_review": tau_review}
 
 
+def tau_sensitivity_sweep(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    recall_floors: Iterable[float],
+    review_recall_target: float = 0.98,
+) -> list[dict]:
+    """recall_floor 값을 스윕하며 각 후보의 τ_red/τ_review + 운영 메트릭 계산.
+
+    실데이터 접근 전 하이퍼파라미터 민감도 분석용 — 사용자가 폐쇄망에서
+    stage1 모델로 (y_true, y_proba) 배열을 뽑아 본 함수에 넣으면 여러
+    recall_floor 후보에 대한 τ 와 예상 운영 영향을 비교표로 받는다.
+
+    각 row 는 precondition 실패(ValueError)를 crash 대신 error 필드에 기록해
+    전체 스윕이 중단되지 않도록 한다.
+
+    Parameters
+    ----------
+    y_true, y_proba
+        Stage 1 검증 세트에서 추출한 이진 라벨 / Red 예측 확률.
+        select_thresholds_from_pr 와 동일 계약.
+    recall_floors : Iterable[float]
+        τ_red 후보를 결정할 Red recall 하한 스윕 값 목록 (예: [0.85, 0.90, 0.95]).
+    review_recall_target : float, default 0.98
+        τ_review 가 보장할 recall (모든 row 공통).
+
+    Returns
+    -------
+    list[dict]
+        각 row 는 다음 키 포함:
+        - recall_floor_requested : 입력된 recall_floor
+        - tau_red, tau_review : 선택된 임계값 (error 시 None)
+        - actual_red_recall : tau_red 에서의 실제 recall
+        - actual_red_precision : tau_red 에서의 실제 precision
+        - fallback_triggered : recall_floor 가 만족 불가해 min-threshold fallback 사용
+        - n_red_confirmed : p_red ≥ tau_red 건수
+        - n_review_band : tau_review ≤ p_red < tau_red 건수 (red_suspect 태그 대상)
+        - n_clean_stage2 : p_red < tau_review 건수 (Stage 2 단독)
+        - stage2_traffic_pct : Stage 2 로 라우팅되는 비율 (100 * (review_band + clean) / n)
+        - red_missed_to_stage2 : y_true=1 인데 p_red < tau_red 로 Stage 1 에서 놓친 건수
+        - red_lost_clean_stage2 : y_true=1 인데 p_red < tau_review — red_suspect 태그도
+          못 받아 영구 유실된 건수 (가장 위험한 지표)
+        - red_leakage_pct : 100 * red_lost_clean_stage2 / total_positives
+        - error : precondition 실패 시 메시지, 정상 시 None
+    """
+    y_true_arr = np.asarray(y_true, dtype=int)
+    y_proba_arr = np.asarray(y_proba, dtype=float)
+    n = len(y_true_arr)
+    total_positives = int(y_true_arr.sum())
+
+    rows: list[dict] = []
+    for floor in recall_floors:
+        row: dict = {
+            "recall_floor_requested": float(floor),
+            "tau_red": None,
+            "tau_review": None,
+            "actual_red_recall": None,
+            "actual_red_precision": None,
+            "fallback_triggered": None,
+            "n_red_confirmed": None,
+            "n_review_band": None,
+            "n_clean_stage2": None,
+            "stage2_traffic_pct": None,
+            "red_missed_to_stage2": None,
+            "red_lost_clean_stage2": None,
+            "red_leakage_pct": None,
+            "error": None,
+        }
+        try:
+            thr = select_thresholds_from_pr(
+                y_true_arr, y_proba_arr,
+                recall_floor=float(floor),
+                review_recall_target=review_recall_target,
+            )
+        except ValueError as e:
+            row["error"] = str(e)
+            rows.append(row)
+            continue
+
+        tau_red = thr["tau_red"]
+        tau_review = thr["tau_review"]
+
+        # Stage 1 decision at tau_red
+        pred_red = y_proba_arr >= tau_red
+        tp = int(((pred_red == 1) & (y_true_arr == 1)).sum())
+        fp = int(((pred_red == 1) & (y_true_arr == 0)).sum())
+        fn = int(((pred_red == 0) & (y_true_arr == 1)).sum())
+        actual_recall = tp / (tp + fn) if (tp + fn) else 0.0
+        actual_precision = tp / (tp + fp) if (tp + fp) else 0.0
+
+        n_red_confirmed = int(pred_red.sum())
+        in_review = (y_proba_arr >= tau_review) & (~pred_red)
+        in_clean = y_proba_arr < tau_review
+        n_review_band = int(in_review.sum())
+        n_clean_stage2 = int(in_clean.sum())
+
+        stage2_traffic = n_review_band + n_clean_stage2
+        stage2_pct = 100.0 * stage2_traffic / n if n else 0.0
+
+        red_missed = fn  # 모든 y_true=1 중 tau_red 미달
+        # red_suspect 태그도 못 받은 영구 유실 (clean_stage2 안의 실제 Red)
+        red_lost = int(((y_proba_arr < tau_review) & (y_true_arr == 1)).sum())
+        red_leakage_pct = 100.0 * red_lost / total_positives if total_positives else 0.0
+
+        # Fallback 판정: recall_floor 이 만족 불가했다면 actual_recall 이 여전히 floor 미만
+        fallback = actual_recall < float(floor) - 1e-9
+
+        row.update({
+            "tau_red": tau_red,
+            "tau_review": tau_review,
+            "actual_red_recall": actual_recall,
+            "actual_red_precision": actual_precision,
+            "fallback_triggered": fallback,
+            "n_red_confirmed": n_red_confirmed,
+            "n_review_band": n_review_band,
+            "n_clean_stage2": n_clean_stage2,
+            "stage2_traffic_pct": stage2_pct,
+            "red_missed_to_stage2": red_missed,
+            "red_lost_clean_stage2": red_lost,
+            "red_leakage_pct": red_leakage_pct,
+        })
+        rows.append(row)
+    return rows
+
+
 def train_hierarchical(
     df: pd.DataFrame,
     feature_cols: list[str],
