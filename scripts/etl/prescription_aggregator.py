@@ -187,6 +187,7 @@ def aggregate_patient_features(
 
     # ── 위험도 결정 ──────────────────────────────────────────────────────────
     _assign_risk_level(features)
+    _assign_yellow_subtype(features)
 
     return features
 
@@ -375,6 +376,46 @@ def _assign_risk_level(features: PatientFeatures) -> None:
 
     features.risk_level = "Normal"
     features.risk_reasons = []
+
+
+def _assign_yellow_subtype(features: PatientFeatures) -> None:
+    """Yellow 세분화 (risk_level == 'Yellow' 인 환자 전용).
+
+    Y_MIX 가 Y_DDI_MAJOR 보다 우선한다: 2개 이상 trigger 가 발동하면 '복합 위험'
+    으로 보고 즉시 개입 경로에 올린다. Red 조건이 충족된 환자는 _assign_risk_level
+    이 이미 Red 로 결정했으므로 이 함수가 실행되어도 Yellow 가 아니기에 None.
+
+    규칙 드리프트 엣지 (risk_level=Yellow 인데 trigger 집합이 빔) 는 RuntimeError
+    대신 Y_OTHER 폴백 + 경고 로그로 처리 (ETL 파이프라인 중단 방지).
+    """
+    import logging
+
+    if features.risk_level != "Yellow":
+        features.yellow_subtype = None
+        return
+
+    triggers = collect_yellow_triggers(features)
+    if len(triggers) >= 2:
+        features.yellow_subtype = "Y_MIX"
+        return
+    if triggers == {"DDI_MAJOR"}:
+        features.yellow_subtype = "Y_DDI_MAJOR"
+        return
+    if triggers == {"DDI_MOD"}:
+        features.yellow_subtype = "Y_DDI_MOD"
+        return
+    if triggers == {"DUP"}:
+        features.yellow_subtype = "Y_DUP"
+        return
+    if triggers == {"FRAG"}:
+        features.yellow_subtype = "Y_FRAG"
+        return
+
+    logging.getLogger(__name__).warning(
+        "yellow_without_trigger patient_id=%s — Y_OTHER 로 격리 (규칙 드리프트 의심)",
+        features.patient_id,
+    )
+    features.yellow_subtype = "Y_OTHER"
 
 
 def aggregate_batch(

@@ -281,6 +281,7 @@ class PatientFeatures:
     # 위험도 레이블 (Rule-based)
     risk_level:   str = "Normal"  # Red/Yellow/Green/Normal
     risk_reasons: list[str] = field(default_factory=list)
+    yellow_subtype: Optional[str] = None  # Y_MIX/Y_DDI_MAJOR/Y_DDI_MOD/Y_DUP/Y_FRAG/Y_OTHER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
