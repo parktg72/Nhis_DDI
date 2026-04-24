@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 from hana_app.core.ml_runner import list_saved_results, load_model, RISK_LABEL_MAP
 from hana_app.core.config import load_config, is_hana
 from hana_app.core.page_guards import check_hana_validated, get_validation_error
+from hana_app.core.yellow_subtype_view import render_yellow_subtype_section
 
 st.set_page_config(page_title="결과 분석", page_icon="📊", layout="wide")
 st.title("📊 학습 결과 분석")
@@ -297,6 +298,9 @@ with tab_dist:
         ))
         fig.update_layout(title="DDI 심각도별 평균 쌍 수", yaxis_title="평균 DDI 쌍 수")
         st.plotly_chart(fig, use_container_width=True)
+
+        # ── Yellow 세분화 (계층 분류) — yellow_subtype 컬럼 있을 때만 표시 ──────
+        render_yellow_subtype_section(df)
 
     elif risk_summary:
         # 저장된 결과 — 요약 통계로 차트 재구성
