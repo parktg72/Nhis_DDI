@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -41,14 +41,12 @@ def test_build_stage2_label_green_normal_are_no_alert():
 
 def test_build_stage2_label_red_raises():
     """Red 는 Stage 2 대상이 아님."""
-    import pytest
     with pytest.raises(ValueError, match="Red"):
         build_stage2_label(risk_level="Red", yellow_subtype=None)
 
 
 def test_build_stage2_label_unknown_risk_level_raises():
     """알 수 없는 risk_level 은 ValueError (silent drift 방지)."""
-    import pytest
     with pytest.raises(ValueError, match="유효하지 않은 risk_level"):
         build_stage2_label(risk_level="Unknown", yellow_subtype=None)
 
@@ -61,7 +59,6 @@ def test_build_stage2_label_unknown_risk_level_raises():
 
 def test_build_stage2_label_y_other_is_excluded():
     """Y_OTHER 는 학습셋에서 제외되어야 하므로 명시적 예외."""
-    import pytest
     with pytest.raises(ValueError, match="Y_OTHER"):
         build_stage2_label(risk_level="Yellow", yellow_subtype="Y_OTHER")
 
