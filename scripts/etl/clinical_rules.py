@@ -6,6 +6,12 @@ Red/Yellow trigger 집합 수집 공용 모듈. ETL 라벨 생성, 학습 라벨
 trigger 는 문자열 집합으로 반환한다. 판정 순서는 여기서 정하지 않는다
 (호출자 책임). 규칙 변경 시 CLINICAL_STANDARDS_VERSION 을 올리고
 학습 메타에 기록할 것.
+
+Red vs Yellow 트리거 이름 비대칭 — 의도된 설계:
+  Red 트리거 ("RED_*"): risk_reasons 로 임상팀에 노출되는 사유 코드.
+  Yellow 트리거 ("DDI_MAJOR"/"DDI_MOD"/"DUP"/"FRAG"): 내부 토큰.
+    _assign_yellow_subtype 이 set 비교로 Y_MIX/Y_DDI_MAJOR/... 판정에 사용.
+    (출력 라벨은 Y_ prefix 를 별도로 가짐, 네임스페이스 분리.)
 """
 from __future__ import annotations
 

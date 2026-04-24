@@ -60,6 +60,27 @@ class TestCollectRedTriggers:
         trg = collect_red_triggers(_features(ddi_contraindicated=1, triple_whammy=True))
         assert trg == {"RED_CONTRAINDICATED", "RED_TRIPLE_WHAMMY"}
 
+    def test_age_none_does_not_trigger_elderly(self):
+        """age=None 가드: 다른 조건이 모두 맞아도 None 이면 트리거 안 됨."""
+        trg = collect_red_triggers(_features(
+            age=None, drug_count=5, has_renal_risk_drug=True,
+        ))
+        assert "RED_ELDERLY_ORGAN" not in trg
+
+    def test_hepatic_risk_path(self):
+        """elderly + 간기능 저하 약물로도 RED_ELDERLY_ORGAN 발동."""
+        trg = collect_red_triggers(_features(
+            age=80, drug_count=6, has_hepatic_risk_drug=True,
+        ))
+        assert trg == {"RED_ELDERLY_ORGAN"}
+
+    def test_drug_count_9_with_high_risk_not_triggered(self):
+        """10종 미만은 RED_10DRUG_HIGHRISK 트리거 안 됨 (경계 off-by-one 방지)."""
+        trg = collect_red_triggers(_features(
+            drug_count=9, has_high_risk_drug=True,
+        ))
+        assert "RED_10DRUG_HIGHRISK" not in trg
+
 
 class TestCollectYellowTriggers:
     def test_empty_on_normal(self):
@@ -83,3 +104,10 @@ class TestCollectYellowTriggers:
     def test_multiple_yellow_triggers(self):
         trg = collect_yellow_triggers(_features(ddi_major=1, dup_same_ingredient=1))
         assert trg == {"DDI_MAJOR", "DUP"}
+
+    def test_three_triggers_all_returned(self):
+        """3개 이상 Yellow trigger 가 동시에 있어도 모두 반환 (short-circuit 방지)."""
+        trg = collect_yellow_triggers(_features(
+            ddi_major=1, ddi_moderate=2, dup_same_ingredient=1, institution_count=3,
+        ))
+        assert trg == {"DDI_MAJOR", "DDI_MOD", "DUP", "FRAG"}
