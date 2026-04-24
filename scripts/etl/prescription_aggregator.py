@@ -342,69 +342,38 @@ def _fill_dup_features(
 
 
 def _assign_risk_level(features: PatientFeatures) -> None:
+    """위험도 판정 (CLINICAL_STANDARDS_v1.0).
+
+    trigger 집합을 clinical_rules 에서 수집해 Red > Yellow > Green > Normal
+    순으로 분기한다. 판정 이유(risk_reasons)는 trigger 이름으로 기록되어
+    서빙 단계에서 동일 이름으로 설명 가능하다.
     """
-    위험도 4단계 판정 규칙 (CLINICAL_STANDARDS_v1.0.md 기준).
+    from .clinical_rules import collect_red_triggers, collect_yellow_triggers
 
-    Red 조건:
-      - Contraindicated DDI ≥ 1
-      - Major DDI ≥ 3
-      - Triple Whammy
-      - 10종 이상 + 고위험 약물 포함
-      - 75세 이상 + 5종 이상 + 신기능/간기능 저하 약물
-    """
-    reasons: list[str] = []
+    red_triggers = collect_red_triggers(features)
+    if red_triggers:
+        features.risk_level = "Red"
+        features.risk_reasons = sorted(red_triggers)
+        return
 
-    # Red 조건
-    if features.ddi_contraindicated >= 1:
-        features.risk_level = "Red"
-        reasons.append(f"Contraindicated DDI {features.ddi_contraindicated}건")
-    elif features.ddi_major >= 3:
-        features.risk_level = "Red"
-        reasons.append(f"Major DDI {features.ddi_major}건 (≥3)")
-    elif features.triple_whammy:
-        features.risk_level = "Red"
-        reasons.append("Triple Whammy")
-    elif features.drug_count >= 10 and features.has_high_risk_drug:
-        features.risk_level = "Red"
-        reasons.append(f"10종↑+고위험약물 포함 (약물={features.drug_count})")
-    elif (
-        features.age is not None
-        and features.age >= 75
-        and features.drug_count >= 5
-        and (features.has_renal_risk_drug or features.has_hepatic_risk_drug)
-    ):
-        features.risk_level = "Red"
-        reasons.append(
-            f"75세↑(고령)+5종↑+신기능/간기능 저하 약물 "
-            f"(나이={features.age}, 약물={features.drug_count})"
-        )
+    yellow_triggers = collect_yellow_triggers(features)
+    if yellow_triggers:
+        features.risk_level = "Yellow"
+        features.risk_reasons = sorted(yellow_triggers)
+        return
 
-    # Yellow 조건
-    elif features.ddi_major >= 1:
-        features.risk_level = "Yellow"
-        reasons.append(f"Major DDI {features.ddi_major}건")
-    elif features.ddi_moderate >= 2:
-        features.risk_level = "Yellow"
-        reasons.append(f"Moderate DDI {features.ddi_moderate}건 (≥2)")
-    elif features.dup_same_ingredient >= 1:
-        features.risk_level = "Yellow"
-        reasons.append(f"동일성분중복 {features.dup_same_ingredient}건")
-    elif features.institution_count >= 3:
-        features.risk_level = "Yellow"
-        reasons.append(f"3기관↑ 동시처방 ({features.institution_count}개)")
-
-    # Green 조건
-    elif features.ddi_minor >= 1:
+    if features.ddi_minor >= 1:
         features.risk_level = "Green"
-        reasons.append(f"Minor DDI {features.ddi_minor}건")
-    elif features.drug_count >= 5:
+        features.risk_reasons = [f"Minor DDI {features.ddi_minor}건"]
+        return
+
+    if features.drug_count >= 5:
         features.risk_level = "Green"
-        reasons.append(f"5종↑ ({features.drug_count}종)")
+        features.risk_reasons = [f"5종↑ ({features.drug_count}종)"]
+        return
 
-    else:
-        features.risk_level = "Normal"
-
-    features.risk_reasons = reasons
+    features.risk_level = "Normal"
+    features.risk_reasons = []
 
 
 def aggregate_batch(

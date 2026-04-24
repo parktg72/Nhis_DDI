@@ -100,7 +100,7 @@ class TestAssignRiskLevel:
         feat = _make_features(drug_count=12, has_high_risk_drug=True)
         _assign_risk_level(feat)
         assert feat.risk_level == "Red"
-        assert "고위험약물" in feat.risk_reasons[0]
+        assert any("고위험약물" in r or "RED_10DRUG_HIGHRISK" in r for r in feat.risk_reasons)
 
     def test_10drugs_without_high_risk_not_red(self):
         """10종 이상이지만 고위험 약물 없으면 Red 아님."""
@@ -113,7 +113,7 @@ class TestAssignRiskLevel:
         feat = _make_features(age=78, drug_count=6, has_renal_risk_drug=True)
         _assign_risk_level(feat)
         assert feat.risk_level == "Red"
-        assert "신기능/간기능" in feat.risk_reasons[0]
+        assert any("신기능/간기능" in r or "RED_ELDERLY_ORGAN" in r for r in feat.risk_reasons)
 
     def test_elderly_with_hepatic_risk_is_red(self):
         """75세 이상 + 5종 이상 + 간기능 저하 약물 → Red."""
@@ -360,3 +360,75 @@ class TestATCHierarchyFeatures:
         # 이전 버그: dup_atc5 = 1 (cnt4 결과가 dup_atc5에 잘못 할당됨)
         assert feat.dup_atc5 == 0, "회귀: ATC 4단계 중복이 dup_atc5에 잘못 할당됨"
         assert feat.dup_atc4 == 1
+
+
+# ─── _assign_risk_level 리팩터 후 라벨 동일성 회귀 테스트 ──────────────────────
+
+class TestAssignRiskLevelBackwardCompat:
+    """리팩터 전후 라벨 동일성 — 기존 elif cascade 규칙이 그대로 적용되는지."""
+
+    def _make(self, **kwargs) -> PatientFeatures:
+        base = dict(
+            patient_id="P001",
+            window_start=date(2026, 1, 1),
+            window_end=date(2026, 3, 31),
+        )
+        base.update(kwargs)
+        return PatientFeatures(**base)
+
+    def test_contraindicated_red(self):
+        f = self._make(ddi_contraindicated=1)
+        _assign_risk_level(f)
+        assert f.risk_level == "Red"
+        assert any("Contraindicated" in r or "RED_CONTRAINDICATED" in r for r in f.risk_reasons)
+
+    def test_major_ge_3_red(self):
+        f = self._make(ddi_major=3)
+        _assign_risk_level(f)
+        assert f.risk_level == "Red"
+
+    def test_triple_whammy_red(self):
+        f = self._make(triple_whammy=True)
+        _assign_risk_level(f)
+        assert f.risk_level == "Red"
+
+    def test_major_1_yellow(self):
+        f = self._make(ddi_major=1)
+        _assign_risk_level(f)
+        assert f.risk_level == "Yellow"
+
+    def test_moderate_2_yellow(self):
+        f = self._make(ddi_moderate=2)
+        _assign_risk_level(f)
+        assert f.risk_level == "Yellow"
+
+    def test_dup_yellow(self):
+        f = self._make(dup_same_ingredient=1)
+        _assign_risk_level(f)
+        assert f.risk_level == "Yellow"
+
+    def test_institution_ge_3_yellow(self):
+        f = self._make(institution_count=3)
+        _assign_risk_level(f)
+        assert f.risk_level == "Yellow"
+
+    def test_minor_green(self):
+        f = self._make(ddi_minor=1)
+        _assign_risk_level(f)
+        assert f.risk_level == "Green"
+
+    def test_5drug_green(self):
+        f = self._make(drug_count=5)
+        _assign_risk_level(f)
+        assert f.risk_level == "Green"
+
+    def test_normal(self):
+        f = self._make()
+        _assign_risk_level(f)
+        assert f.risk_level == "Normal"
+
+    def test_red_takes_priority_over_yellow(self):
+        """Red + Yellow trigger 동시 존재 시 Red 우선 (기존 elif cascade 동작 보존)."""
+        f = self._make(ddi_contraindicated=1, ddi_major=1, dup_same_ingredient=1)
+        _assign_risk_level(f)
+        assert f.risk_level == "Red"
