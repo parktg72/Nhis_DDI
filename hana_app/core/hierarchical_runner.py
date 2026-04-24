@@ -267,3 +267,163 @@ def select_thresholds_from_pr(
         tau_review = float(thresholds[cand_idx].max())
 
     return {"tau_red": tau_red, "tau_review": tau_review}
+
+
+def train_hierarchical(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    output_dir,
+    seed: int = 42,
+    stage1_params: dict | None = None,
+    stage2_params: dict | None = None,
+    recall_floor: float = 0.90,
+    review_recall_target: float = 0.98,
+    cost_sensitive: bool = False,
+    cost_ratio_by_class: dict[str, float] | None = None,
+) -> dict:
+    """Stage 1 (Red 이진) + Stage 2 (Yellow 서브라벨 6-class) 계층 학습.
+
+    df 에는 risk_level, yellow_subtype, feature_cols 가 포함되어야 한다.
+    Y_OTHER 는 Stage 2 학습셋에서 제외된다.
+
+    저장 파일:
+      {output_dir}/stage1_red.joblib
+      {output_dir}/stage2_yellow.joblib
+      {output_dir}/stage_meta.json  (임계값, feature_cols, 라벨 카운트, SHA-256)
+    """
+    import json
+    import hashlib
+    import sys
+    from collections import Counter
+    from pathlib import Path as _Path
+
+    import joblib
+    from xgboost import XGBClassifier
+    from sklearn.model_selection import train_test_split
+
+    # clinical_rules 는 scripts/etl/ 에 위치 — 절대 경로 import
+    _root = _Path(__file__).resolve().parents[2]
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from scripts.etl.clinical_rules import CLINICAL_STANDARDS_VERSION  # noqa: E402
+
+    out = _Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # ── Stage 1: Red 이진 ─────────────────────────────────────────────────
+    X = df[feature_cols].to_numpy()
+    y1 = (df["risk_level"] == "Red").astype(int).to_numpy()
+
+    X_tr, X_val, y_tr, y_val = train_test_split(
+        X, y1, test_size=0.2, random_state=seed, stratify=y1,
+    )
+
+    pos = int(y_tr.sum())
+    neg = int(len(y_tr) - pos)
+    scale_pos_weight = neg / max(pos, 1)
+
+    defaults1 = dict(
+        n_estimators=200, max_depth=6, learning_rate=0.1,
+        subsample=0.8, colsample_bytree=0.8,
+        objective="binary:logistic", eval_metric="logloss",
+        scale_pos_weight=scale_pos_weight, random_state=seed, verbosity=0,
+    )
+    if stage1_params:
+        defaults1.update(stage1_params)
+    m1 = XGBClassifier(**defaults1)
+    m1.fit(X_tr, y_tr)
+    proba_val = m1.predict_proba(X_val)[:, 1]
+    thresholds = select_thresholds_from_pr(
+        y_val, proba_val,
+        recall_floor=recall_floor,
+        review_recall_target=review_recall_target,
+    )
+    # Edge case: PR 곡선 해상도 부족 (val 양성 수 적을 때) 으로 tau_review == tau_red 발생 시
+    # τ_review < τ_red 불변식을 유지하도록 미세 조정한다.
+    if thresholds["tau_review"] >= thresholds["tau_red"]:
+        thresholds["tau_review"] = max(0.0, thresholds["tau_red"] - 1e-6)
+
+    # ── Stage 2: 6-class ─────────────────────────────────────────────────
+    mask_non_red = df["risk_level"] != "Red"
+    mask_not_other = df["yellow_subtype"].fillna("") != "Y_OTHER"
+    y_other_excluded = int(((df["risk_level"] == "Yellow") &
+                            (df["yellow_subtype"] == "Y_OTHER")).sum())
+    df2 = df[mask_non_red & mask_not_other].copy()
+    labels_str = [
+        build_stage2_label(r["risk_level"], r["yellow_subtype"])
+        for _, r in df2.iterrows()
+    ]
+    # global indices (STAGE2_LABELS 순서 고정): 0..5
+    y2_global, encoder = encode_stage2_labels(labels_str)
+    X2 = df2[feature_cols].to_numpy()
+
+    # XGBoost 는 y 가 [0, num_class) 연속 범위여야 한다.
+    # 학습셋에 없는 클래스(예: Y_FRAG)가 있으면 global → local 재매핑.
+    classes_present = np.unique(y2_global)          # e.g. [0,1,2,3,5]
+    if len(classes_present) < len(STAGE2_LABELS) or not (
+        classes_present == np.arange(len(STAGE2_LABELS))
+    ).all():
+        global_to_local = {int(g): l for l, g in enumerate(classes_present)}
+        y2 = np.array([global_to_local[int(g)] for g in y2_global], dtype=int)
+        n_stage2_classes = len(classes_present)
+    else:
+        y2 = y2_global
+        n_stage2_classes = len(STAGE2_LABELS)
+
+    sw2 = _stage2_sample_weight(
+        y2, cost_sensitive=cost_sensitive,
+        cost_ratio_by_class=cost_ratio_by_class,
+    )
+
+    defaults2 = dict(
+        n_estimators=200, max_depth=6, learning_rate=0.1,
+        subsample=0.8, colsample_bytree=0.8,
+        objective="multi:softprob", num_class=n_stage2_classes,
+        eval_metric="mlogloss", random_state=seed, verbosity=0,
+    )
+    if stage2_params:
+        defaults2.update(stage2_params)
+    m2 = XGBClassifier(**defaults2)
+    m2.fit(X2, y2, sample_weight=sw2)
+
+    # ── 저장 ─────────────────────────────────────────────────────────────
+    p1 = out / "stage1_red.joblib"
+    p2 = out / "stage2_yellow.joblib"
+    joblib.dump(m1, p1)
+    # stage2_classes_global: predict_risk 에서 로컬 인덱스 → 전역 STAGE2_LABELS 매핑에 사용
+    joblib.dump({
+        "model": m2,
+        "encoder": encoder,
+        "stage2_classes_global": classes_present.tolist(),
+    }, p2)
+
+    def _sha(p):
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+
+    label_counts = dict(Counter(labels_str))
+
+    meta = {
+        "clinical_standards_version": CLINICAL_STANDARDS_VERSION,
+        "feature_cols": list(feature_cols),
+        "thresholds": thresholds,
+        "stage2_labels": list(STAGE2_LABELS),
+        "stage2_label_counts": label_counts,
+        "y_other_excluded_count": y_other_excluded,
+        "stage1_sha256": _sha(p1),
+        "stage2_sha256": _sha(p2),
+        "cost_sensitive": cost_sensitive,
+        "cost_ratio_by_class": cost_ratio_by_class,
+    }
+    (out / "stage_meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2)
+    )
+
+    return {
+        "stage1_model": m1,
+        "stage2_model": m2,
+        "stage2_encoder": encoder,
+        "thresholds": thresholds,
+        "stage2_label_counts": label_counts,
+        "y_other_excluded_count": y_other_excluded,
+        "meta_path": out / "stage_meta.json",
+    }

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -179,3 +180,74 @@ def test_threshold_rejects_mismatched_lengths():
             y_true=np.array([0, 1]),
             y_proba=np.array([0.1, 0.5, 0.9]),
         )
+
+
+def test_train_hierarchical_returns_two_models(tmp_path):
+    """train_hierarchical 은 Stage 1 + Stage 2 모델과 임계값을 반환."""
+    from hana_app.core.hierarchical_runner import train_hierarchical
+
+    rng = np.random.default_rng(42)
+    n = 500
+    df = pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "feat_a": rng.random(n),
+        "feat_b": rng.random(n),
+        "feat_c": rng.random(n),
+        "risk_level": (["Red"] * 25 + ["Yellow"] * 100 +
+                       ["Green"] * 150 + ["Normal"] * 225),
+        "yellow_subtype": (
+            [None] * 25
+            + ["Y_MIX"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
+            + ["Y_DUP"] * 25 + ["Y_FRAG"] * 20
+            + [None] * 375
+        ),
+    })
+
+    result = train_hierarchical(
+        df=df,
+        feature_cols=["feat_a", "feat_b", "feat_c"],
+        output_dir=tmp_path,
+        seed=42,
+    )
+
+    # 반환 구조 검증
+    assert "stage1_model" in result
+    assert "stage2_model" in result
+    assert "thresholds" in result
+    assert "tau_red" in result["thresholds"]
+    assert "tau_review" in result["thresholds"]
+    assert result["thresholds"]["tau_review"] < result["thresholds"]["tau_red"]
+
+    # 파일 저장 검증
+    assert (tmp_path / "stage1_red.joblib").exists()
+    assert (tmp_path / "stage2_yellow.joblib").exists()
+    assert (tmp_path / "stage_meta.json").exists()
+
+
+def test_train_hierarchical_excludes_y_other_from_stage2(tmp_path):
+    from hana_app.core.hierarchical_runner import train_hierarchical
+
+    rng = np.random.default_rng(0)
+    n = 300
+    df = pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "feat_a": rng.random(n),
+        "feat_b": rng.random(n),
+        "risk_level": (["Red"] * 10 + ["Yellow"] * 100 + ["Normal"] * 190),
+        "yellow_subtype": (
+            [None] * 10
+            + ["Y_OTHER"] * 20   # 학습셋에서 빠져야 함
+            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 20
+            + [None] * 190
+        ),
+    })
+
+    result = train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b"],
+        output_dir=tmp_path, seed=0,
+    )
+    # stage2 학습에 사용된 라벨 집합에 Y_OTHER 없음
+    assert "Y_OTHER" not in result["stage2_label_counts"]
+    # 감사: Y_OTHER 제외 건수 기록
+    assert result["y_other_excluded_count"] == 20
