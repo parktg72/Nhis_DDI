@@ -17,6 +17,7 @@ from typing import Optional
 
 import pandas as pd
 
+from .clinical_rules import collect_red_triggers, collect_yellow_triggers
 from .drug_master import DrugMaster
 from .models import DrugOverlapPair, PatientFeatures, PrescriptionRecord
 from .overlap_calculator import calculate_overlaps_for_patient, get_concurrent_drug_count
@@ -348,8 +349,6 @@ def _assign_risk_level(features: PatientFeatures) -> None:
     순으로 분기한다. 판정 이유(risk_reasons)는 trigger 이름으로 기록되어
     서빙 단계에서 동일 이름으로 설명 가능하다.
     """
-    from .clinical_rules import collect_red_triggers, collect_yellow_triggers
-
     red_triggers = collect_red_triggers(features)
     if red_triggers:
         features.risk_level = "Red"
@@ -362,6 +361,8 @@ def _assign_risk_level(features: PatientFeatures) -> None:
         features.risk_reasons = sorted(yellow_triggers)
         return
 
+    # TODO: Green 트리거도 collect_green_triggers 로 clinical_rules 에 이관 예정
+    #       현재는 risk_reasons 형식이 Red/Yellow(토큰) vs Green(한국어 문구) 로 혼재.
     if features.ddi_minor >= 1:
         features.risk_level = "Green"
         features.risk_reasons = [f"Minor DDI {features.ddi_minor}건"]

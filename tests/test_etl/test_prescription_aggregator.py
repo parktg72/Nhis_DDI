@@ -100,7 +100,7 @@ class TestAssignRiskLevel:
         feat = _make_features(drug_count=12, has_high_risk_drug=True)
         _assign_risk_level(feat)
         assert feat.risk_level == "Red"
-        assert any("고위험약물" in r or "RED_10DRUG_HIGHRISK" in r for r in feat.risk_reasons)
+        assert any("RED_10DRUG_HIGHRISK" in r for r in feat.risk_reasons)
 
     def test_10drugs_without_high_risk_not_red(self):
         """10종 이상이지만 고위험 약물 없으면 Red 아님."""
@@ -113,7 +113,7 @@ class TestAssignRiskLevel:
         feat = _make_features(age=78, drug_count=6, has_renal_risk_drug=True)
         _assign_risk_level(feat)
         assert feat.risk_level == "Red"
-        assert any("신기능/간기능" in r or "RED_ELDERLY_ORGAN" in r for r in feat.risk_reasons)
+        assert any("RED_ELDERLY_ORGAN" in r for r in feat.risk_reasons)
 
     def test_elderly_with_hepatic_risk_is_red(self):
         """75세 이상 + 5종 이상 + 간기능 저하 약물 → Red."""
