@@ -6,6 +6,7 @@ predict_risk() 가 2단 임계값 (τ_red, τ_review) 으로 분기한다.
 """
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
 from typing import Iterable
@@ -17,6 +18,12 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_sample_weight
 
 from .ml_runner import load_features_from_parquet, stratified_sample_from_parquet
+
+# clinical_rules 는 scripts/etl/ 에 위치 — 절대 경로 import (모듈 최상단)
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from scripts.etl.clinical_rules import CLINICAL_STANDARDS_VERSION  # noqa: E402
 
 YELLOW_SUBTYPE_LABELS: tuple[str, ...] = (
     "Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG",
@@ -84,6 +91,7 @@ def _stage2_sample_weight(
     y_train: np.ndarray,
     cost_sensitive: bool = False,
     cost_ratio_by_class: dict[str, float] | None = None,
+    class_names: tuple[str, ...] | None = None,
 ) -> np.ndarray:
     """Stage 2 6-class balanced sample_weight.
 
@@ -93,14 +101,20 @@ def _stage2_sample_weight(
     Parameters
     ----------
     y_train : np.ndarray
-        정수 인코딩된 Stage 2 라벨 — encode_stage2_labels() 의 출력.
-        문자열 라벨 또는 0..len(STAGE2_LABELS)-1 범위 외 정수는 지원하지 않음.
+        정수 인코딩된 Stage 2 라벨 — encode_stage2_labels() 의 출력, 또는
+        train_hierarchical 의 local→global 재매핑이 적용된 배열.
     cost_sensitive : bool
         True 면 cost_ratio_by_class 로 balanced 가중치를 곱함.
     cost_ratio_by_class : dict[str, float] | None
         클래스 이름(STAGE2_LABELS 중 하나) → 비용 배수.
         명시되지 않은 클래스는 1.0 (변경 없음) 으로 처리.
         STAGE2_LABELS 에 없는 키가 있으면 KeyError (오탈자 차단).
+    class_names : tuple[str, ...] | None
+        y_train 정수 인덱스 i → 클래스 이름 매핑.
+        None 이면 기본 STAGE2_LABELS 사용 (전체 6-class 학습 가정).
+        train_hierarchical 이 local→global 재매핑을 쓰는 경우에는
+        local index 순서의 class_names 를 반드시 전달해야 cost_ratio 가
+        올바른 클래스에 적용된다.
     """
     y_arr = np.asarray(y_train)
     if not np.issubdtype(y_arr.dtype, np.integer):
@@ -119,7 +133,8 @@ def _stage2_sample_weight(
             f"cost_ratio_by_class 에 STAGE2 가 아닌 키 포함: {sorted(unknown)}"
         )
 
-    label_strs = [STAGE2_LABELS[int(i)] for i in y_arr]
+    _names = class_names if class_names is not None else STAGE2_LABELS
+    label_strs = [_names[int(i)] for i in y_arr]
     cost_mult = np.array(
         [cost_ratio_by_class.get(s, 1.0) for s in label_strs],
         dtype=float,
@@ -193,8 +208,9 @@ def select_thresholds_from_pr(
     τ_review:
       Recall ≥ review_recall_target (더 보수적) 을 만족하는 최대 임계값
       (더 높은 threshold = 더 엄격 = 더 적은 샘플 → 가장 엄격한 후보 채택).
-      precondition 으로 review_recall_target > recall_floor 을 강제해
-      반드시 τ_review < τ_red 가 성립한다.
+      precondition 으로 review_recall_target > recall_floor 을 강제하고,
+      PR 곡선 해상도 부족으로 동값이 나올 때는 τ_review 를 1e-6 만큼 내려
+      τ_review < τ_red 를 항상 보장한다.
 
     Parameters
     ----------
@@ -266,6 +282,11 @@ def select_thresholds_from_pr(
         cand_idx = np.where(valid_review)[0]
         tau_review = float(thresholds[cand_idx].max())
 
+    # PR 곡선 해상도 부족(양성 수 적음) 으로 τ_review == τ_red 동값 가능 —
+    # 불변식 τ_review < τ_red 를 유지하도록 미세 조정.
+    if tau_review >= tau_red:
+        tau_review = max(0.0, tau_red - 1e-6)
+
     return {"tau_red": tau_red, "tau_review": tau_review}
 
 
@@ -293,21 +314,13 @@ def train_hierarchical(
     """
     import json
     import hashlib
-    import sys
     from collections import Counter
-    from pathlib import Path as _Path
 
     import joblib
     from xgboost import XGBClassifier
     from sklearn.model_selection import train_test_split
 
-    # clinical_rules 는 scripts/etl/ 에 위치 — 절대 경로 import
-    _root = _Path(__file__).resolve().parents[2]
-    if str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
-    from scripts.etl.clinical_rules import CLINICAL_STANDARDS_VERSION  # noqa: E402
-
-    out = _Path(output_dir)
+    out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     # ── Stage 1: Red 이진 ─────────────────────────────────────────────────
@@ -338,10 +351,6 @@ def train_hierarchical(
         recall_floor=recall_floor,
         review_recall_target=review_recall_target,
     )
-    # Edge case: PR 곡선 해상도 부족 (val 양성 수 적을 때) 으로 tau_review == tau_red 발생 시
-    # τ_review < τ_red 불변식을 유지하도록 미세 조정한다.
-    if thresholds["tau_review"] >= thresholds["tau_red"]:
-        thresholds["tau_review"] = max(0.0, thresholds["tau_red"] - 1e-6)
 
     # ── Stage 2: 6-class ─────────────────────────────────────────────────
     mask_non_red = df["risk_level"] != "Red"
@@ -370,9 +379,12 @@ def train_hierarchical(
         y2 = y2_global
         n_stage2_classes = len(STAGE2_LABELS)
 
+    # local index → 전역 클래스 이름 매핑: cost_ratio 가 올바른 클래스에 적용되도록 보장
+    local_class_names = tuple(STAGE2_LABELS[g] for g in classes_present)
     sw2 = _stage2_sample_weight(
         y2, cost_sensitive=cost_sensitive,
         cost_ratio_by_class=cost_ratio_by_class,
+        class_names=local_class_names,
     )
 
     defaults2 = dict(
@@ -395,6 +407,7 @@ def train_hierarchical(
         "model": m2,
         "encoder": encoder,
         "stage2_classes_global": classes_present.tolist(),
+        "classes_present": classes_present.tolist(),
     }, p2)
 
     def _sha(p):

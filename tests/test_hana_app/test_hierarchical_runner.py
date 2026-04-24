@@ -251,3 +251,76 @@ def test_train_hierarchical_excludes_y_other_from_stage2(tmp_path):
     assert "Y_OTHER" not in result["stage2_label_counts"]
     # 감사: Y_OTHER 제외 건수 기록
     assert result["y_other_excluded_count"] == 20
+
+
+def test_train_hierarchical_local_global_remapping_roundtrip(tmp_path):
+    """Stage 2 학습 시 일부 클래스가 누락되어도 predict_proba + classes_present 로
+    올바르게 STAGE2_LABELS 문자열로 복원 가능한지."""
+    from hana_app.core.hierarchical_runner import (
+        train_hierarchical, STAGE2_LABELS,
+    )
+    import joblib
+
+    rng = np.random.default_rng(99)
+    n = 200
+    # Y_FRAG 가 학습 데이터에 전혀 없도록 구성
+    df = pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "feat_a": rng.random(n),
+        "feat_b": rng.random(n),
+        "risk_level": (["Red"] * 10 + ["Yellow"] * 80 + ["Normal"] * 110),
+        "yellow_subtype": (
+            [None] * 10
+            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 20  # Y_FRAG 없음
+            + [None] * 110
+        ),
+    })
+    result = train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b"],
+        output_dir=tmp_path, seed=99,
+    )
+    # 저장된 stage2 번들에 classes_present 가 포함
+    bundle = joblib.load(tmp_path / "stage2_yellow.joblib")
+    assert "classes_present" in bundle
+    classes_present = bundle["classes_present"]
+    # Y_FRAG 의 global index(4) 는 포함되지 않아야 함
+    assert 4 not in classes_present
+
+    # 로컬 인덱스 → 전역 라벨 복원
+    local_to_global_labels = [STAGE2_LABELS[g] for g in classes_present]
+    assert "Y_FRAG" not in local_to_global_labels
+    assert "No_Alert" in local_to_global_labels
+
+
+def test_train_hierarchical_cost_sensitive_with_missing_class(tmp_path):
+    """Critical regression: cost_sensitive=True + 누락 클래스 조합에서
+    cost_ratio 가 local 인덱스로 잘못 적용되지 않아야 함."""
+    from hana_app.core.hierarchical_runner import train_hierarchical
+
+    rng = np.random.default_rng(77)
+    n = 200
+    df = pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "feat_a": rng.random(n),
+        "feat_b": rng.random(n),
+        "risk_level": (["Red"] * 10 + ["Yellow"] * 80 + ["Normal"] * 110),
+        "yellow_subtype": (
+            [None] * 10
+            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 20  # Y_FRAG 없음
+            + [None] * 110
+        ),
+    })
+
+    # cost_sensitive=True + 존재하는 클래스(Y_DUP)에 가중치
+    # Y_FRAG 가 없으므로 local→global remapping 이 발동함
+    result = train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b"],
+        output_dir=tmp_path, seed=77,
+        cost_sensitive=True,
+        cost_ratio_by_class={"Y_DUP": 5.0},
+    )
+    # 에러 없이 완료 + label 분포 유지
+    assert "Y_DUP" in result["stage2_label_counts"]
+    assert "Y_FRAG" not in result["stage2_label_counts"]
