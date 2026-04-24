@@ -53,6 +53,7 @@ def features_to_df(features: list[PatientFeatures]) -> pd.DataFrame:
             "sex":                 f.sex,
             "risk_level":          f.risk_level,
             "risk_reasons":        "|".join(f.risk_reasons),
+            "yellow_subtype":      f.yellow_subtype,
         }
         rows.append(row)
     return pd.DataFrame(rows)

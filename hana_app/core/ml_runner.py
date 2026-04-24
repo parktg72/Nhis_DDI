@@ -348,6 +348,7 @@ def _patient_features_to_row(f: PatientFeatures) -> dict:
         "risk_level": f.risk_level,
         "risk_label": RISK_LABEL_MAP.get(f.risk_level, 0),
         "risk_binary": 1 if f.risk_level in ("Red", "Yellow") else 0,
+        "yellow_subtype": f.yellow_subtype,
     }
 
 

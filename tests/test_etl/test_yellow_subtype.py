@@ -109,3 +109,34 @@ def test_edge_yellow_without_trigger_is_y_other(caplog):
         _assign_yellow_subtype(f)
     assert f.yellow_subtype == "Y_OTHER"
     assert any("yellow_without_trigger" in r.message for r in caplog.records)
+
+
+def test_yellow_subtype_written_to_parquet(tmp_path):
+    """feature_writer 가 yellow_subtype 컬럼을 DataFrame 에 기록하는지."""
+    from scripts.etl.feature_writer import features_to_df
+
+    f1 = _make(ddi_major=1)
+    _assign_risk_level(f1); _assign_yellow_subtype(f1)
+    f2 = _make(ddi_contraindicated=1)
+    _assign_risk_level(f2); _assign_yellow_subtype(f2)
+
+    df = features_to_df([f1, f2])
+    assert "yellow_subtype" in df.columns
+    # f1 은 Yellow/Y_DDI_MAJOR, f2 는 Red/None
+    row1 = df.loc[df["patient_id"] == "P001"].iloc[0]
+    assert row1["yellow_subtype"] == "Y_DDI_MAJOR"
+
+
+def test_ml_runner_row_has_yellow_subtype():
+    """ml_runner._patient_features_to_row 가 yellow_subtype 을 포함하는지."""
+    from hana_app.core.ml_runner import _patient_features_to_row
+
+    f = _make(ddi_major=1)
+    _assign_risk_level(f); _assign_yellow_subtype(f)
+    row = _patient_features_to_row(f)
+    assert row["yellow_subtype"] == "Y_DDI_MAJOR"
+
+    f2 = _make(ddi_contraindicated=1)
+    _assign_risk_level(f2); _assign_yellow_subtype(f2)
+    row2 = _patient_features_to_row(f2)
+    assert row2["yellow_subtype"] is None
