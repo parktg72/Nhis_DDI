@@ -61,6 +61,32 @@ def test_unknown_class_in_ratio_raises():
         )
 
 
+def test_string_y_train_raises_typeerror():
+    """문자열 라벨 입력은 TypeError (정수 인코딩 필요)."""
+    y_str = np.array(["Y_MIX", "No_Alert", "Y_DUP"])
+    with pytest.raises(TypeError, match="정수 인코딩"):
+        _stage2_sample_weight(y_str, cost_sensitive=False)
+
+
+def test_partial_cost_ratio_defaults_unlisted_to_one():
+    """cost_ratio_by_class 에 일부 클래스만 있으면 나머지는 1.0 배수."""
+    labels = ["Y_MIX", "No_Alert", "Y_DUP"]
+    y, _enc = encode_stage2_labels(labels)
+    sw = _stage2_sample_weight(
+        y, cost_sensitive=True,
+        cost_ratio_by_class={"Y_MIX": 5.0},  # Y_MIX 만 명시
+    )
+    y_mix_idx = encode_stage2_labels(["Y_MIX"])[0][0]
+    no_alert_idx = encode_stage2_labels(["No_Alert"])[0][0]
+    y_dup_idx = encode_stage2_labels(["Y_DUP"])[0][0]
+
+    # balanced 는 각 클래스 1건 → 1.0
+    # Y_MIX 는 ×5.0, 나머지는 ×1.0 (default)
+    assert sw[y == y_mix_idx][0] == 5.0
+    assert sw[y == no_alert_idx][0] == 1.0
+    assert sw[y == y_dup_idx][0] == 1.0
+
+
 def test_xgboost_fit_accepts_stage2_sample_weight():
     """XGBoost 6-class fit 이 sample_weight 수용."""
     from xgboost import XGBClassifier

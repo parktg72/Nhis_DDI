@@ -10,6 +10,7 @@ from typing import Iterable
 
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.class_weight import compute_sample_weight
 
 YELLOW_SUBTYPE_LABELS: tuple[str, ...] = (
     "Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG",
@@ -79,12 +80,25 @@ def _stage2_sample_weight(
     balanced (클래스 불균형 역수) 가 기본 깔개. cost_sensitive=True 이고
     cost_ratio_by_class 가 주어지면 각 샘플에 해당 클래스 비용 배수를 곱한다.
 
-    cost_ratio_by_class 키는 STAGE2_LABELS 의 문자열이어야 한다.
-    알 수 없는 키가 있으면 KeyError (오탈자 차단).
+    Parameters
+    ----------
+    y_train : np.ndarray
+        정수 인코딩된 Stage 2 라벨 — encode_stage2_labels() 의 출력.
+        문자열 라벨 또는 0..len(STAGE2_LABELS)-1 범위 외 정수는 지원하지 않음.
+    cost_sensitive : bool
+        True 면 cost_ratio_by_class 로 balanced 가중치를 곱함.
+    cost_ratio_by_class : dict[str, float] | None
+        클래스 이름(STAGE2_LABELS 중 하나) → 비용 배수.
+        명시되지 않은 클래스는 1.0 (변경 없음) 으로 처리.
+        STAGE2_LABELS 에 없는 키가 있으면 KeyError (오탈자 차단).
     """
-    from sklearn.utils.class_weight import compute_sample_weight
-
     y_arr = np.asarray(y_train)
+    if not np.issubdtype(y_arr.dtype, np.integer):
+        raise TypeError(
+            f"y_train 은 정수 인코딩 (encode_stage2_labels() 출력) 이어야 함 — "
+            f"받은 dtype: {y_arr.dtype}"
+        )
+
     balanced = compute_sample_weight("balanced", y_arr)
     if not cost_sensitive or cost_ratio_by_class is None:
         return balanced
@@ -95,7 +109,6 @@ def _stage2_sample_weight(
             f"cost_ratio_by_class 에 STAGE2 가 아닌 키 포함: {sorted(unknown)}"
         )
 
-    # y_arr 은 정수 인덱스 — STAGE2_LABELS 순서로 역변환해 라벨 문자열 얻기
     label_strs = [STAGE2_LABELS[int(i)] for i in y_arr]
     cost_mult = np.array(
         [cost_ratio_by_class.get(s, 1.0) for s in label_strs],
