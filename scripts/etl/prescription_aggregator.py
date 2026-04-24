@@ -387,9 +387,9 @@ def _assign_yellow_subtype(features: PatientFeatures) -> None:
 
     규칙 드리프트 엣지 (risk_level=Yellow 인데 trigger 집합이 빔) 는 RuntimeError
     대신 Y_OTHER 폴백 + 경고 로그로 처리 (ETL 파이프라인 중단 방지).
+    Y_OTHER 분기는 yellow_subtype 만 설정하고 risk_reasons 는 건드리지 않는다
+    (분류 책임만 가지며, 객체 수복은 호출자 몫).
     """
-    import logging
-
     if features.risk_level != "Yellow":
         features.yellow_subtype = None
         return
