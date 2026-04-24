@@ -112,31 +112,42 @@ def test_edge_yellow_without_trigger_is_y_other(caplog):
 
 
 def test_yellow_subtype_written_to_parquet(tmp_path):
-    """feature_writer 가 yellow_subtype 컬럼을 DataFrame 에 기록하는지."""
+    """feature_writer 결과를 parquet 으로 쓰고 다시 읽어도 yellow_subtype 이 보존되는지.
+
+    None → NaN 변환은 pandas 의 기본 동작. 다운스트림 비교는 pd.isna() 사용 필요.
+    """
+    import pandas as pd
     from scripts.etl.feature_writer import features_to_df
 
-    f1 = _make(ddi_major=1)
+    f1 = _make(patient_id="P001", ddi_major=1)
     _assign_risk_level(f1); _assign_yellow_subtype(f1)
-    f2 = _make(ddi_contraindicated=1)
+    f2 = _make(patient_id="P002", ddi_contraindicated=1)
     _assign_risk_level(f2); _assign_yellow_subtype(f2)
 
     df = features_to_df([f1, f2])
     assert "yellow_subtype" in df.columns
-    # f1 은 Yellow/Y_DDI_MAJOR, f2 는 Red/None
-    row1 = df.loc[df["patient_id"] == "P001"].iloc[0]
+
+    path = tmp_path / "features.parquet"
+    df.to_parquet(path, index=False)
+    rt = pd.read_parquet(path)
+
+    row1 = rt.loc[rt["patient_id"] == "P001"].iloc[0]
     assert row1["yellow_subtype"] == "Y_DDI_MAJOR"
+
+    row2 = rt.loc[rt["patient_id"] == "P002"].iloc[0]
+    assert pd.isna(row2["yellow_subtype"])   # None → NaN after parquet roundtrip
 
 
 def test_ml_runner_row_has_yellow_subtype():
     """ml_runner._patient_features_to_row 가 yellow_subtype 을 포함하는지."""
     from hana_app.core.ml_runner import _patient_features_to_row
 
-    f = _make(ddi_major=1)
+    f = _make(patient_id="P001", ddi_major=1)
     _assign_risk_level(f); _assign_yellow_subtype(f)
     row = _patient_features_to_row(f)
     assert row["yellow_subtype"] == "Y_DDI_MAJOR"
 
-    f2 = _make(ddi_contraindicated=1)
+    f2 = _make(patient_id="P002", ddi_contraindicated=1)
     _assign_risk_level(f2); _assign_yellow_subtype(f2)
     row2 = _patient_features_to_row(f2)
     assert row2["yellow_subtype"] is None
