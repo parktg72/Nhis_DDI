@@ -39,6 +39,7 @@ mlruns/
 
 # 가상환경
 venv/
+.venv/
 .venv_hana/
 .venv_macos/
 

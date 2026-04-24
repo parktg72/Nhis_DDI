@@ -429,6 +429,99 @@ class MLModel:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 계층 예측기 (Stage 1 Red + Stage 2 Yellow-subtype)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class HierarchicalPredictor:
+    """계층 분류 모델 래퍼 — stage1_red.joblib + stage2_yellow.joblib + stage_meta.json.
+
+    stage_meta.json 의 stage{1,2}_sha256 로 joblib 무결성 검증.
+    predict_risk_single() 이 2단 임계값(τ_red, τ_review) 분기 결과 dict 반환.
+    """
+
+    def __init__(self):
+        self._stage1 = None
+        self._stage2 = None
+        self._encoder = None
+        self._classes_present: list[int] = []
+        self._thresholds: dict[str, float] = {}
+        self._feature_cols: list[str] = []
+        self._meta: dict = {}
+
+    def load(self, model_dir: str | Path) -> bool:
+        model_dir = Path(model_dir)
+        meta_path = model_dir / "stage_meta.json"
+        p1 = model_dir / "stage1_red.joblib"
+        p2 = model_dir / "stage2_yellow.joblib"
+        if not meta_path.exists() or not p1.exists() or not p2.exists():
+            logger.error(
+                "계층 모델 파일 누락 — 로드 실패: meta=%s stage1=%s stage2=%s",
+                meta_path.exists(), p1.exists(), p2.exists(),
+            )
+            return False
+        try:
+            import json
+            import joblib
+            self._meta = json.loads(meta_path.read_text())
+            self._thresholds = self._meta["thresholds"]
+            self._feature_cols = self._meta["feature_cols"]
+
+            for p, key in ((p1, "stage1_sha256"), (p2, "stage2_sha256")):
+                expected = self._meta.get(key)
+                if not expected:
+                    logger.warning("%s 메타 누락 — 무결성 검증 스킵: %s", key, p.name)
+                    continue
+                actual = hashlib.sha256(p.read_bytes()).hexdigest()
+                if actual != expected:
+                    logger.error(
+                        "계층 모델 해시 불일치 — 로드 거부: %s (expected=%s, actual=%s)",
+                        p.name, expected[:16] + "…", actual[:16] + "…",
+                    )
+                    return False
+
+            self._stage1 = joblib.load(p1)
+            bundle = joblib.load(p2)
+            self._stage2 = bundle["model"]
+            self._encoder = bundle["encoder"]
+            self._classes_present = list(bundle["classes_present"])
+            logger.info(
+                "계층 모델 로드 완료: %s (τ_red=%.3f, τ_review=%.3f, %d features)",
+                model_dir,
+                self._thresholds["tau_red"],
+                self._thresholds["tau_review"],
+                len(self._feature_cols),
+            )
+            return True
+        except Exception as e:
+            logger.warning("계층 모델 로드 실패: %s", e)
+            return False
+
+    @property
+    def loaded(self) -> bool:
+        return self._stage1 is not None and self._stage2 is not None
+
+    @property
+    def feature_cols(self) -> list[str]:
+        return list(self._feature_cols)
+
+    def predict_risk_single(self, X: np.ndarray) -> dict:
+        """단일 샘플 계층 추론 — 반환: {risk_level, p_red, stage2_probs, red_suspect, action}."""
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent))
+        from hana_app.core.hierarchical_runner import predict_risk
+        X_row = np.asarray(X).reshape(1, -1)
+        results = predict_risk(
+            X_row,
+            self._stage1,
+            self._stage2,
+            self._encoder,
+            self._thresholds,
+            classes_present=self._classes_present,
+        )
+        return results[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 피처 빌더 (요청 → ML 입력 벡터)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -591,10 +684,12 @@ class HybridPredictor:
         ddi_matrix_path: str | Path = "data/processed/ddi_matrix_final.parquet",
         drug_index_path: str | Path = "data/processed/drug_name_index.parquet",
         cyp_matrix_path: str | Path = "data/processed/cyp_matrix.parquet",
+        hierarchical_model_dir: Optional[str | Path] = None,
     ):
         self._start_time = time.time()
         self._ml_lock = threading.RLock()
         self._ml = MLModel()
+        self._hierarchical: Optional[HierarchicalPredictor] = None
         self._ddi_matrix: Optional[pd.DataFrame] = None
         self._cyp = None
         self._std = None
@@ -625,8 +720,17 @@ class HybridPredictor:
             except Exception as e:
                 logger.warning("CYP 추출기 로드 실패: %s", e)
 
-        # ML 모델 로드
-        if model_path and Path(model_path).exists():
+        # ML 모델 로드 — 계층 모드 디렉터리 우선, 실패/미설정 시 단일 모델 fallback
+        if hierarchical_model_dir and Path(hierarchical_model_dir).exists():
+            hp = HierarchicalPredictor()
+            if hp.load(hierarchical_model_dir):
+                self._hierarchical = hp
+            else:
+                logger.warning(
+                    "HIERARCHICAL_MODEL_DIR 로드 실패 — 단일 모델 fallback: %s",
+                    hierarchical_model_dir,
+                )
+        if self._hierarchical is None and model_path and Path(model_path).exists():
             self._ml.load(model_path)
 
         # Safety Net 싱글턴 (요청당 재생성 방지)
@@ -672,6 +776,20 @@ class HybridPredictor:
     # 예측
     # ──────────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _stage2_label_to_risk(label: str) -> RiskLevel:
+        """Stage 2 6-class 라벨 (+ Red) → 기존 4-class RiskLevel enum 매핑.
+
+        Red          → RED
+        Y_*          → YELLOW (Y_OTHER 포함)
+        No_Alert     → NORMAL
+        """
+        if label == "Red":
+            return RiskLevel.RED
+        if label.startswith("Y_"):
+            return RiskLevel.YELLOW
+        return RiskLevel.NORMAL
+
     def predict(self, req: PredictRequest) -> PredictResponse:
         """단일 환자 위험도 예측."""
         ref = req.reference_date or date.today()
@@ -686,20 +804,40 @@ class HybridPredictor:
         if dup_count >= 1 and rule_level == RiskLevel.NORMAL:
             rule_level = RiskLevel.YELLOW
 
-        # Step 3: ML 예측 (모델 있을 때만)
+        # Step 3: ML 예측 — 계층 모드 우선, 아니면 단일 모델
         ml_level: Optional[RiskLevel] = None
         ml_prob: Optional[float] = None
-        with self._ml_lock:
-            ml_snapshot = self._ml  # 핫스왑 중 교체되더라도 이 참조는 안전
-        if ml_snapshot.loaded:
+        yellow_subtype: Optional[str] = None
+        stage2_probs: Optional[dict[str, float]] = None
+        red_suspect: bool = False
+        action: Optional[str] = None
+
+        _hier = getattr(self, "_hierarchical", None)
+        if _hier is not None and _hier.loaded:
             feat_vec, _ = self._builder.build(
                 req,
-                feature_names=ml_snapshot._feature_names or None,
-                scaler=ml_snapshot._scaler,
-                selector=ml_snapshot._selector,
+                feature_names=_hier.feature_cols or None,
             )
-            ml_prob  = ml_snapshot.predict_proba(feat_vec)
-            ml_level = ml_snapshot.classify(ml_prob)
+            h = _hier.predict_risk_single(feat_vec)
+            ml_prob = float(h["p_red"])
+            ml_level = self._stage2_label_to_risk(h["risk_level"])
+            if h["risk_level"].startswith("Y_"):
+                yellow_subtype = h["risk_level"]
+            stage2_probs = h.get("stage2_probs")
+            red_suspect = bool(h.get("red_suspect", False))
+            action = h.get("action")
+        else:
+            with self._ml_lock:
+                ml_snapshot = self._ml  # 핫스왑 중 교체되더라도 이 참조는 안전
+            if ml_snapshot.loaded:
+                feat_vec, _ = self._builder.build(
+                    req,
+                    feature_names=ml_snapshot._feature_names or None,
+                    scaler=ml_snapshot._scaler,
+                    selector=ml_snapshot._selector,
+                )
+                ml_prob  = ml_snapshot.predict_proba(feat_vec)
+                ml_level = ml_snapshot.classify(ml_prob)
 
         # Step 4: 최종 등급 = max(Rule, ML)
         final_level = rule_level
@@ -718,6 +856,10 @@ class HybridPredictor:
         all_reasons = list(rule_reasons) + [r for r in dup_reasons if r not in rule_reasons]
         if ml_prob is not None and ml_prob > 0.3:
             all_reasons.append(f"ML 모델 Red 확률: {ml_prob:.1%}")
+        if red_suspect:
+            all_reasons.append(
+                "Red 의심 (τ_review ≤ p_red < τ_red) — 운영팀 검수 큐"
+            )
 
         return PredictResponse(
             patient_id=req.patient_id,
@@ -730,6 +872,10 @@ class HybridPredictor:
             risk_reasons=all_reasons,
             intervention=INTERVENTION_MAP[final_level],
             reference_date=ref,
+            yellow_subtype=yellow_subtype,
+            stage2_probs=stage2_probs,
+            red_suspect=red_suspect,
+            action=action,
         )
 
     def _build_ddi_alerts(self, drugs: list[DrugItem]) -> list[DDIAlert]:

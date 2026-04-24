@@ -53,11 +53,14 @@ async def lifespan(app: FastAPI):
         logger.warning("ADMIN_API_KEY 미설정 — /admin/reload 비활성화됨")
     # MODEL_PATH: 런타임 오버라이드 전용 — settings.py에 포함하지 않음
     _model_path = os.environ.get("MODEL_PATH") or str(_settings.MODEL_PROD_PATH)
+    # HIERARCHICAL_MODEL_DIR: 설정되면 Stage 1 Red + Stage 2 Yellow-subtype 계층 모드
+    _hier_dir = os.environ.get("HIERARCHICAL_MODEL_DIR") or None
     init_predictor(
         model_path=_model_path,
         ddi_matrix_path=str(_settings.DDI_MATRIX_PATH),
         drug_index_path=str(_settings.DRUG_INDEX_PATH),
         cyp_matrix_path=str(_settings.CYP_MATRIX_PATH),
+        hierarchical_model_dir=_hier_dir,
     )
     logger.info("예측기 초기화 완료")
     init_metrics_writer(

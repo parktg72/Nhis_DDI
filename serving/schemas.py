@@ -121,6 +121,24 @@ class PredictResponse(BaseModel):
     intervention:   str              = Field(description="권장 개입 주기")
     reference_date: date
 
+    # 계층 분류 (Stage 1 Red + Stage 2 Yellow-subtype) 확장 필드
+    yellow_subtype: Optional[str]         = Field(
+        None,
+        description="Yellow 세부 라벨 (Y_MIX/Y_DDI_MAJOR/Y_DDI_MOD/Y_DUP/Y_FRAG/Y_OTHER) — 계층 모드에서만 채워짐",
+    )
+    stage2_probs:   Optional[dict[str, float]] = Field(
+        None,
+        description="Stage 2 다중 클래스 확률 분포 — 계층 모드, Red 비확정일 때만",
+    )
+    red_suspect:    bool = Field(
+        False,
+        description="Stage 1 'τ_review ≤ p_red < τ_red' 구간 — 운영팀 검수 큐 표시",
+    )
+    action:         Optional[str] = Field(
+        None,
+        description="세부 라벨별 개입 액션 (Y_MIX/Y_DDI_MAJOR=약사 전화, Y_DDI_MOD/Y_DUP/Y_FRAG=문자 알림 등)",
+    )
+
 
 class BatchPredictRequest(BaseModel):
     """배치 예측 요청 (다수 환자)."""
