@@ -12,6 +12,7 @@ from typing import Iterable
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import precision_recall_curve
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_sample_weight
 
@@ -190,23 +191,66 @@ def select_thresholds_from_pr(
       Recall ≥ recall_floor 제약 하에서 Precision 이 최대가 되는 임계값.
 
     τ_review:
-      Recall ≥ review_recall_target (더 보수적) 을 만족하는 최소 임계값.
-      review_recall_target > recall_floor 이어야 τ_review < τ_red 가 보장됨.
+      Recall ≥ review_recall_target (더 보수적) 을 만족하는 최대 임계값
+      (더 높은 threshold = 더 엄격 = 더 적은 샘플 → 가장 엄격한 후보 채택).
+      precondition 으로 review_recall_target > recall_floor 을 강제해
+      반드시 τ_review < τ_red 가 성립한다.
+
+    Parameters
+    ----------
+    y_true : np.ndarray
+        이진 {0, 1} 정답 라벨. 양/음 둘 다 최소 1건 이상 필요.
+    y_proba : np.ndarray
+        [0, 1] 범위의 양성 클래스 예측 확률.
+    recall_floor : float
+        τ_red 가 보장해야 할 Recall 하한. 범위 (0, 1].
+    review_recall_target : float
+        τ_review 가 보장해야 할 Recall. recall_floor 보다 엄격해야 함 (더 큰 값).
 
     Returns
     -------
     {"tau_red": float, "tau_review": float}
+
+    Raises
+    ------
+    ValueError
+        입력이 계약을 위반할 때. silent garbage 대신 명시적 실패.
     """
-    from sklearn.metrics import precision_recall_curve
+    y_true_arr = np.asarray(y_true)
+    if not np.isin(y_true_arr, [0, 1]).all():
+        raise ValueError("y_true 는 이진 {0, 1} 배열이어야 함")
+    if np.unique(y_true_arr).size < 2:
+        raise ValueError(
+            "y_true 는 양성/음성 샘플을 모두 포함해야 함 (PR 곡선 비정의)"
+        )
 
-    y_true = np.asarray(y_true).astype(int)
-    y_proba = np.asarray(y_proba).astype(float)
+    y_proba_arr = np.asarray(y_proba, dtype=float)
+    if y_proba_arr.size != y_true_arr.size:
+        raise ValueError(
+            f"y_true 와 y_proba 길이 불일치: {y_true_arr.size} vs {y_proba_arr.size}"
+        )
+    if y_proba_arr.min() < 0.0 or y_proba_arr.max() > 1.0:
+        raise ValueError("y_proba 는 [0.0, 1.0] 범위여야 함")
 
-    precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
+    if not (0.0 < recall_floor <= 1.0):
+        raise ValueError(f"recall_floor 은 (0, 1] 범위 — 받은 값: {recall_floor}")
+    if not (0.0 < review_recall_target <= 1.0):
+        raise ValueError(
+            f"review_recall_target 은 (0, 1] 범위 — 받은 값: {review_recall_target}"
+        )
+    if review_recall_target <= recall_floor:
+        raise ValueError(
+            f"review_recall_target ({review_recall_target}) 은 "
+            f"recall_floor ({recall_floor}) 보다 커야 함 (τ_review < τ_red 보장)"
+        )
+
+    precision, recall, thresholds = precision_recall_curve(
+        y_true_arr.astype(int), y_proba_arr
+    )
     # precision_recall_curve: precision/recall 은 len N+1, thresholds 는 len N
 
     # τ_red: recall ≥ recall_floor 을 만족하는 후보 중 최대 precision
-    valid_red = recall[:-1] >= recall_floor  # 마지막 point 는 threshold 없음
+    valid_red = recall[:-1] >= recall_floor
     if not valid_red.any():
         tau_red = float(thresholds.min())
     else:
@@ -221,9 +265,5 @@ def select_thresholds_from_pr(
     else:
         cand_idx = np.where(valid_review)[0]
         tau_review = float(thresholds[cand_idx].max())
-
-    # 방어: 수치 엣지에서 순서 뒤집힘 방지
-    if tau_review >= tau_red:
-        tau_review = tau_red * 0.5
 
     return {"tau_red": tau_red, "tau_review": tau_review}

@@ -126,3 +126,56 @@ def test_tau_review_is_lower_than_tau_red():
     )
     # review 는 더 느슨한 임계값 → 더 낮음
     assert thr["tau_review"] < thr["tau_red"]
+
+
+def test_threshold_rejects_non_binary_y_true():
+    import pytest
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
+    with pytest.raises(ValueError, match="이진"):
+        select_thresholds_from_pr(
+            y_true=np.array([0, 1, 2]),
+            y_proba=np.array([0.1, 0.5, 0.9]),
+        )
+
+
+def test_threshold_rejects_single_class_y_true():
+    import pytest
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
+    with pytest.raises(ValueError, match="양성/음성"):
+        select_thresholds_from_pr(
+            y_true=np.zeros(10, dtype=int),
+            y_proba=np.linspace(0.1, 0.9, 10),
+        )
+
+
+def test_threshold_rejects_out_of_range_proba():
+    import pytest
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
+    with pytest.raises(ValueError, match=r"\[0.0, 1.0\]"):
+        select_thresholds_from_pr(
+            y_true=np.array([0, 0, 1]),
+            y_proba=np.array([0.1, 0.5, 1.5]),
+        )
+
+
+def test_threshold_rejects_review_target_below_floor():
+    """review_recall_target <= recall_floor 이면 τ_review < τ_red 가 깨짐 → 거부."""
+    import pytest
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
+    with pytest.raises(ValueError, match="보다 커야 함"):
+        select_thresholds_from_pr(
+            y_true=np.array([0, 1, 0, 1]),
+            y_proba=np.array([0.1, 0.6, 0.3, 0.8]),
+            recall_floor=0.9,
+            review_recall_target=0.8,  # floor 보다 낮음 → 오류
+        )
+
+
+def test_threshold_rejects_mismatched_lengths():
+    import pytest
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
+    with pytest.raises(ValueError, match="길이 불일치"):
+        select_thresholds_from_pr(
+            y_true=np.array([0, 1]),
+            y_proba=np.array([0.1, 0.5, 0.9]),
+        )
