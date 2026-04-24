@@ -67,3 +67,38 @@ def encode_stage2_labels(
 def decode_stage2_labels(y: np.ndarray, encoder) -> np.ndarray:
     """정수 → 문자열 역변환."""
     return encoder.inverse_transform(np.asarray(y))
+
+
+def _stage2_sample_weight(
+    y_train: np.ndarray,
+    cost_sensitive: bool = False,
+    cost_ratio_by_class: dict[str, float] | None = None,
+) -> np.ndarray:
+    """Stage 2 6-class balanced sample_weight.
+
+    balanced (클래스 불균형 역수) 가 기본 깔개. cost_sensitive=True 이고
+    cost_ratio_by_class 가 주어지면 각 샘플에 해당 클래스 비용 배수를 곱한다.
+
+    cost_ratio_by_class 키는 STAGE2_LABELS 의 문자열이어야 한다.
+    알 수 없는 키가 있으면 KeyError (오탈자 차단).
+    """
+    from sklearn.utils.class_weight import compute_sample_weight
+
+    y_arr = np.asarray(y_train)
+    balanced = compute_sample_weight("balanced", y_arr)
+    if not cost_sensitive or cost_ratio_by_class is None:
+        return balanced
+
+    unknown = set(cost_ratio_by_class) - set(STAGE2_LABELS)
+    if unknown:
+        raise KeyError(
+            f"cost_ratio_by_class 에 STAGE2 가 아닌 키 포함: {sorted(unknown)}"
+        )
+
+    # y_arr 은 정수 인덱스 — STAGE2_LABELS 순서로 역변환해 라벨 문자열 얻기
+    label_strs = [STAGE2_LABELS[int(i)] for i in y_arr]
+    cost_mult = np.array(
+        [cost_ratio_by_class.get(s, 1.0) for s in label_strs],
+        dtype=float,
+    )
+    return balanced * cost_mult
