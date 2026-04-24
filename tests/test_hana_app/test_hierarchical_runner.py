@@ -46,6 +46,19 @@ def test_build_stage2_label_red_raises():
         build_stage2_label(risk_level="Red", yellow_subtype=None)
 
 
+def test_build_stage2_label_unknown_risk_level_raises():
+    """알 수 없는 risk_level 은 ValueError (silent drift 방지)."""
+    import pytest
+    with pytest.raises(ValueError, match="유효하지 않은 risk_level"):
+        build_stage2_label(risk_level="Unknown", yellow_subtype=None)
+
+    with pytest.raises(ValueError, match="유효하지 않은 risk_level"):
+        build_stage2_label(risk_level="yellow", yellow_subtype="Y_MIX")  # 대소문자 오염
+
+    with pytest.raises(ValueError, match="유효하지 않은 risk_level"):
+        build_stage2_label(risk_level="", yellow_subtype=None)
+
+
 def test_build_stage2_label_y_other_is_excluded():
     """Y_OTHER 는 학습셋에서 제외되어야 하므로 명시적 예외."""
     import pytest
