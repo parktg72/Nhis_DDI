@@ -176,3 +176,54 @@ def stratified_sample_stage2(
 
     sampled = sampled.drop(columns=["stage2_label_int"], errors="ignore")
     return sampled
+
+
+def select_thresholds_from_pr(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    recall_floor: float = 0.90,
+    review_recall_target: float = 0.98,
+) -> dict[str, float]:
+    """PR 곡선에서 τ_red, τ_review 2단 임계값 선택.
+
+    τ_red:
+      Recall ≥ recall_floor 제약 하에서 Precision 이 최대가 되는 임계값.
+
+    τ_review:
+      Recall ≥ review_recall_target (더 보수적) 을 만족하는 최소 임계값.
+      review_recall_target > recall_floor 이어야 τ_review < τ_red 가 보장됨.
+
+    Returns
+    -------
+    {"tau_red": float, "tau_review": float}
+    """
+    from sklearn.metrics import precision_recall_curve
+
+    y_true = np.asarray(y_true).astype(int)
+    y_proba = np.asarray(y_proba).astype(float)
+
+    precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
+    # precision_recall_curve: precision/recall 은 len N+1, thresholds 는 len N
+
+    # τ_red: recall ≥ recall_floor 을 만족하는 후보 중 최대 precision
+    valid_red = recall[:-1] >= recall_floor  # 마지막 point 는 threshold 없음
+    if not valid_red.any():
+        tau_red = float(thresholds.min())
+    else:
+        cand_idx = np.where(valid_red)[0]
+        best = cand_idx[np.argmax(precision[:-1][cand_idx])]
+        tau_red = float(thresholds[best])
+
+    # τ_review: recall ≥ review_recall_target 을 만족하는 최대 threshold
+    valid_review = recall[:-1] >= review_recall_target
+    if not valid_review.any():
+        tau_review = float(thresholds.min())
+    else:
+        cand_idx = np.where(valid_review)[0]
+        tau_review = float(thresholds[cand_idx].max())
+
+    # 방어: 수치 엣지에서 순서 뒤집힘 방지
+    if tau_review >= tau_red:
+        tau_review = tau_red * 0.5
+
+    return {"tau_red": tau_red, "tau_review": tau_review}

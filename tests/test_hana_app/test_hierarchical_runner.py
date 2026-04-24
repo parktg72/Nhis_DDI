@@ -80,3 +80,49 @@ def test_encode_preserves_class_order_across_inputs():
     y2, enc2 = encode_stage2_labels(["No_Alert", "Y_DUP"])
     assert list(enc1.classes_) == list(STAGE2_LABELS)
     assert list(enc2.classes_) == list(STAGE2_LABELS)
+
+
+def test_select_thresholds_returns_both_tau():
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
+
+    rng = np.random.default_rng(42)
+    # y_true: 10% Red, y_proba: Red 에 대해 약간 높은 값
+    y_true = np.array([1] * 100 + [0] * 900)
+    y_proba = np.concatenate([
+        rng.beta(5, 2, 100),   # Red 쪽 확률 높게
+        rng.beta(2, 5, 900),   # non-Red 확률 낮게
+    ])
+    thr = select_thresholds_from_pr(y_true, y_proba, recall_floor=0.90)
+    assert "tau_red" in thr and "tau_review" in thr
+    assert 0.0 < thr["tau_review"] < thr["tau_red"] < 1.0
+
+
+def test_tau_red_respects_recall_floor():
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
+    from sklearn.metrics import recall_score
+
+    rng = np.random.default_rng(0)
+    y_true = np.array([1] * 100 + [0] * 900)
+    y_proba = np.concatenate([
+        rng.beta(5, 2, 100),
+        rng.beta(2, 5, 900),
+    ])
+    thr = select_thresholds_from_pr(y_true, y_proba, recall_floor=0.90)
+
+    y_pred = (y_proba >= thr["tau_red"]).astype(int)
+    assert recall_score(y_true, y_pred) >= 0.90 - 0.01  # 수치 오차 허용
+
+
+def test_tau_review_is_lower_than_tau_red():
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
+
+    rng = np.random.default_rng(7)
+    y_true = np.concatenate([np.ones(50), np.zeros(950)])
+    y_proba = np.concatenate([rng.beta(4, 2, 50), rng.beta(2, 4, 950)])
+    thr = select_thresholds_from_pr(
+        y_true, y_proba,
+        recall_floor=0.90,
+        review_recall_target=0.98,
+    )
+    # review 는 더 느슨한 임계값 → 더 낮음
+    assert thr["tau_review"] < thr["tau_red"]
