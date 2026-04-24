@@ -401,3 +401,66 @@ def test_predict_risk_end_to_end(tmp_path):
             "risk_level", "p_red", "stage2_probs", "red_suspect", "action"
         }
         assert r["p_red"] >= 0.0 and r["p_red"] <= 1.0
+
+
+def test_predict_risk_with_missing_class_uses_classes_present(tmp_path):
+    """Y_FRAG 없이 학습된 모델에서 predict_risk 가 classes_present 로 올바르게 복원."""
+    from hana_app.core.hierarchical_runner import (
+        train_hierarchical, predict_risk, STAGE2_LABELS,
+    )
+    import joblib
+
+    rng = np.random.default_rng(123)
+    n = 300
+    df = pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "feat_a": rng.random(n),
+        "feat_b": rng.random(n),
+        "risk_level": (["Red"] * 10 + ["Yellow"] * 100 + ["Normal"] * 190),
+        "yellow_subtype": (
+            [None] * 10
+            + ["Y_MIX"] * 25 + ["Y_DDI_MAJOR"] * 25
+            + ["Y_DDI_MOD"] * 25 + ["Y_DUP"] * 25  # Y_FRAG 없음
+            + [None] * 190
+        ),
+    })
+    bundle = train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b"],
+        output_dir=tmp_path, seed=123,
+    )
+    # 저장된 번들에서 classes_present 복원
+    stage2_bundle = joblib.load(tmp_path / "stage2_yellow.joblib")
+    classes_present = stage2_bundle["classes_present"]
+    # Y_FRAG 의 global index=4 는 포함되지 않아야 함
+    assert 4 not in classes_present
+
+    # 명시적 classes_present 로 predict_risk 호출
+    X = df[["feat_a", "feat_b"]].iloc[:20].to_numpy()
+    results = predict_risk(
+        X=X,
+        stage1_model=bundle["stage1_model"],
+        stage2_model=bundle["stage2_model"],
+        stage2_encoder=bundle["stage2_encoder"],
+        thresholds=bundle["thresholds"],
+        classes_present=classes_present,
+    )
+    assert len(results) == 20
+
+    # 누락된 Y_FRAG 의 확률은 Red 가 아닌 모든 결과에서 0.0 이어야 함
+    y_frag_idx = STAGE2_LABELS.index("Y_FRAG")
+    for r in results:
+        if r["risk_level"] != "Red":
+            probs = r["stage2_probs"]
+            assert probs["Y_FRAG"] == 0.0, f"Y_FRAG 확률은 0.0 이어야 함, 받은 값: {probs['Y_FRAG']}"
+
+
+def test_dispatch_raises_valueerror_on_missing_stage2_probs():
+    """assert 대신 ValueError — production -O 모드에서도 안전."""
+    from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
+    import pytest
+    with pytest.raises(ValueError, match="stage2_probs"):
+        _dispatch_result(
+            p_red=0.5, stage2_probs=None,
+            stage2_labels=STAGE2_LABELS,
+            tau_red=0.7, tau_review=0.3,
+        )

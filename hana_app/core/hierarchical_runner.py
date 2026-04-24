@@ -473,7 +473,11 @@ def _dispatch_result(
             "red_suspect": False,
             "action": "응급 개입",
         }
-    assert stage2_probs is not None, "Stage 2 probs required when p_red < tau_red"
+    if stage2_probs is None:
+        raise ValueError(
+            "_dispatch_result: p_red < tau_red 일 때 stage2_probs 는 None 일 수 없음. "
+            "predict_risk() 를 호출하거나 유효한 probs 배열을 전달하세요."
+        )
     stage2_idx = int(np.argmax(stage2_probs))
     stage2_label = stage2_labels[stage2_idx]
     red_suspect = bool(p_red >= tau_review)
