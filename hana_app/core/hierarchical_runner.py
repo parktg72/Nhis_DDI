@@ -6,11 +6,16 @@ predict_risk() 가 2단 임계값 (τ_red, τ_review) 으로 분기한다.
 """
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_sample_weight
+
+from .ml_runner import load_features_from_parquet, stratified_sample_from_parquet
 
 YELLOW_SUBTYPE_LABELS: tuple[str, ...] = (
     "Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG",
@@ -18,6 +23,10 @@ YELLOW_SUBTYPE_LABELS: tuple[str, ...] = (
 STAGE2_LABELS: tuple[str, ...] = YELLOW_SUBTYPE_LABELS + ("No_Alert",)
 
 _VALID_RISK_LEVELS: frozenset[str] = frozenset({"Red", "Yellow", "Green", "Normal"})
+
+_STAGE2_LABEL_TO_INT: dict[str, int] = {
+    lbl: i for i, lbl in enumerate(STAGE2_LABELS)
+}
 
 
 def build_stage2_label(risk_level: str, yellow_subtype: str | None) -> str:
@@ -118,59 +127,52 @@ def _stage2_sample_weight(
 
 
 def stratified_sample_stage2(
-    parquet_paths,
+    parquet_paths: list[Path] | str | Path,
     sample_size: int,
     seed: int = 42,
     memory_limit_mb: int = 512,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """Stage 2 용 층화 샘플링.
 
     전처리:
       1) risk_level != 'Red' prefilter (Red 는 Stage 1 영역)
       2) yellow_subtype == 'Y_OTHER' 제외 (학습 오염 방지)
-      3) stage2_label 컬럼 derive: Yellow → yellow_subtype, 그 외 → No_Alert
+      3) stage2_label 컬럼 derive — build_stage2_label() 로 validated
+         (null yellow_subtype, 알 수 없는 risk_level 은 ValueError)
       4) stage2_label 기준 6-class 층화 추출
 
     내부적으로 ml_runner.stratified_sample_from_parquet 을 재사용한다
     (DuckDB numpy.int64 처리 등 호환 경로 보존).
     """
-    import tempfile
-    from pathlib import Path as _Path
-
-    import pandas as _pd
-
-    from .ml_runner import load_features_from_parquet, stratified_sample_from_parquet
-
-    # 1) 전체 로드 (메모리 제약 하) — 이후 prefilter 후 parquet 재저장
     df = load_features_from_parquet(parquet_paths, memory_limit_mb=memory_limit_mb)
 
-    # 2) prefilter
+    # DuckDB 가 null-only 컬럼을 Int32 로 읽을 수 있으므로 object 로 강제 변환
+    df["yellow_subtype"] = df["yellow_subtype"].astype(object).where(
+        df["yellow_subtype"].notna(), other=None
+    )
+
+    # prefilter
     df = df[df["risk_level"] != "Red"].copy()
     df = df[df["yellow_subtype"].fillna("") != "Y_OTHER"].copy()
 
-    # 3) stage2_label derive
-    def _lbl(row):
-        if row["risk_level"] == "Yellow":
-            return row["yellow_subtype"]
-        return "No_Alert"
-
-    df["stage2_label"] = df.apply(_lbl, axis=1)
-
-    # stage2_label 을 정수로 매핑 (stratified_sample_from_parquet 은 int 라벨 전제)
-    label_to_int = {lbl: i for i, lbl in enumerate(STAGE2_LABELS)}
-    df["stage2_label_int"] = df["stage2_label"].map(label_to_int).astype("int64")
-
-    # 4) 임시 parquet 에 저장 후 기존 층화 함수 호출
-    tmp_dir = _Path(tempfile.mkdtemp(prefix="stage2_stratified_"))
-    tmp = tmp_dir / "stage2.parquet"
-    df.to_parquet(tmp, index=False)
-    sampled = stratified_sample_from_parquet(
-        parquet_paths=tmp,
-        target_col="stage2_label_int",
-        sample_size=sample_size,
-        seed=seed,
-        memory_limit_mb=memory_limit_mb,
+    # stage2_label derive — build_stage2_label 이 validation 수행
+    df["stage2_label"] = df.apply(
+        lambda r: build_stage2_label(r["risk_level"], r["yellow_subtype"]),
+        axis=1,
     )
-    # stage2_label 문자열은 이미 컬럼에 존재 — 정수 컬럼만 정리
+    df["stage2_label_int"] = df["stage2_label"].map(_STAGE2_LABEL_TO_INT).astype("int64")
+
+    # 임시 parquet → 층화 추출 (TemporaryDirectory 로 자동 정리)
+    with tempfile.TemporaryDirectory(prefix="stage2_stratified_") as tmp_dir:
+        tmp = Path(tmp_dir) / "stage2.parquet"
+        df.to_parquet(tmp, index=False)
+        sampled = stratified_sample_from_parquet(
+            parquet_paths=tmp,
+            target_col="stage2_label_int",
+            sample_size=sample_size,
+            seed=seed,
+            memory_limit_mb=memory_limit_mb,
+        )
+
     sampled = sampled.drop(columns=["stage2_label_int"], errors="ignore")
     return sampled

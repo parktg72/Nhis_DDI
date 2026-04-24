@@ -68,7 +68,7 @@ def test_stage2_sampling_excludes_y_other(tmp_path):
     df.to_parquet(p, index=False)
     sample = stratified_sample_stage2(p, sample_size=100, seed=42)
     assert "Y_OTHER" not in set(sample["stage2_label"].unique())
-    assert (sample["yellow_subtype"] != "Y_OTHER").all()
+    assert ~sample["yellow_subtype"].fillna("").eq("Y_OTHER").any()
 
 
 def test_stage2_sampling_reproducible_with_seed(tmp_path):
@@ -79,3 +79,18 @@ def test_stage2_sampling_reproducible_with_seed(tmp_path):
         s1.sort_values("patient_id").reset_index(drop=True),
         s2.sort_values("patient_id").reset_index(drop=True),
     )
+
+
+def test_stage2_sampling_raises_on_yellow_with_null_subtype(tmp_path):
+    """데이터 품질 결함: Yellow 인데 yellow_subtype 이 None → build_stage2_label 로 ValueError."""
+    import pytest
+    df = pd.DataFrame([
+        {"patient_id": "P001", "risk_level": "Yellow",
+         "yellow_subtype": None, "feat1": 0.5},   # 데이터 결함
+        {"patient_id": "P002", "risk_level": "Normal",
+         "yellow_subtype": None, "feat1": 0.5},
+    ])
+    p = tmp_path / "features.parquet"
+    df.to_parquet(p, index=False)
+    with pytest.raises(ValueError, match="yellow_subtype"):
+        stratified_sample_stage2(p, sample_size=100, seed=42)
