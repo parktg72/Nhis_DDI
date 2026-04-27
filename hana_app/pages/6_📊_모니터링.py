@@ -93,11 +93,12 @@ st.markdown("---")
 # ─────────────────────────────────────────────────────────────────────────────
 # 탭
 # ─────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔌 HANA 연결 상태",
     "📋 ETL 실행 이력",
     "🤖 모델 학습 이력",
     "💾 시스템 상태",
+    "🟡 Y_OTHER 드리프트",
 ])
 
 # ─── Tab 1: HANA 연결 상태 ───────────────────────────────────────────────────
@@ -265,3 +266,15 @@ with tab4:
         st.success(f"✅ {CONFIG_FILE.name} 존재 ({CONFIG_FILE.stat().st_size / 1024:.1f} KB)")
     else:
         st.warning(f"⚠️ {CONFIG_FILE.name} 없음 — 1번 페이지에서 설정 후 저장하세요.")
+
+# ─── Tab 5: Y_OTHER 드리프트 ─────────────────────────────────────────────────
+with tab5:
+    from hana_app.core.y_other_monitoring import render_y_other_drift_section
+
+    _features_df = st.session_state.get("features_df")
+    _baseline_df = st.session_state.get("y_other_baseline_df")  # optional
+
+    if _features_df is None:
+        st.info("features_df 가 세션에 없습니다 — 3번 페이지에서 학습/탐색을 먼저 실행하세요.")
+    else:
+        render_y_other_drift_section(_features_df, baseline_df=_baseline_df)
