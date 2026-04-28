@@ -255,6 +255,10 @@ class HANAExtractor:
         return f'"{val}"'
 
     _PID_BATCH = 50_000
+    # T30(원내 처방)은 행 수가 압도적으로 많아 HANA 측 단일 쿼리 메모리 부담이
+    # 큼. statement-timeout / workload-governor 에 의한 cancel(InternalError 139)
+    # 을 방지하기 위해 IN-list를 더 작게 끊는다.
+    _PID_BATCH_T30 = 5_000
 
     def _query_paged_by_pid(
         self,
@@ -262,20 +266,22 @@ class HANAExtractor:
         params_base: list,
         pid_col: str,
         patient_ids: list[str] | None,
+        pid_batch: int | None = None,
     ) -> pd.DataFrame:
         """날짜 조건 SQL에 INDI_DSCM_NO IN (...) 조건을 추가하여 조회.
 
         patient_ids=None 이면 필터 없이 그대로 실행.
         patient_ids=[] 이면 빈 DataFrame 반환.
-        patient_ids 건수가 많으면 50,000 단위 배치로 분할·조합.
+        patient_ids 건수가 많으면 pid_batch (기본 _PID_BATCH) 단위로 분할·조합.
         """
         if patient_ids is not None and len(patient_ids) == 0:
             return pd.DataFrame()
         if not patient_ids:
             return self.conn.query_df(sql_base, params_base or None)
+        batch_size = pid_batch if pid_batch is not None else self._PID_BATCH
         results = []
-        for i in range(0, len(patient_ids), self._PID_BATCH):
-            batch = patient_ids[i: i + self._PID_BATCH]
+        for i in range(0, len(patient_ids), batch_size):
+            batch = patient_ids[i: i + batch_size]
             phs = ",".join(["?"] * len(batch))
             sql = f'{sql_base} AND "{pid_col}" IN ({phs})'
             results.append(self.conn.query_df(sql, params_base + list(batch)))
@@ -320,7 +326,10 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T30 (원내) 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self._query_paged_by_pid(sql, list(yyyymm_list), c["patient_id"], patient_ids)
+        return self._query_paged_by_pid(
+            sql, list(yyyymm_list), c["patient_id"], patient_ids,
+            pid_batch=self._PID_BATCH_T30,
+        )
 
     # ---- T60 ----------------------------------------------------------------
 
@@ -394,7 +403,10 @@ class HANAExtractor:
         )
         if progress_cb:
             progress_cb(f"T30 (원내) 조회: {date_from}~{date_to}")
-        return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
+        return self._query_paged_by_pid(
+            sql, [date_from, date_to], c["patient_id"], patient_ids,
+            pid_batch=self._PID_BATCH_T30,
+        )
 
     def fetch_t60_by_date(self, date_from: str, date_to: str,
                           progress_cb: Callable[[str], None] | None = None,
