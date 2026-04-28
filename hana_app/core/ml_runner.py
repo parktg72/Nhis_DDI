@@ -39,6 +39,8 @@ from scripts.etl.models import (
 from scripts.etl.prescription_aggregator import aggregate_patient_features
 from scripts.etl.overlap_calculator import calculate_overlaps_for_patient
 
+from .strata_utils import _DEFAULT_AGE_BINS, _DEFAULT_AGE_LABELS
+
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
@@ -396,11 +398,6 @@ FEATURES_CACHE_DIR = Path(__file__).parent.parent / "data" / "features_cache"
 # ─────────────────────────────────────────────────────────────────────────────
 # 사전 층화 샘플링 (자격DB 인구통계 기반)
 # ─────────────────────────────────────────────────────────────────────────────
-
-# 의학적 연령 구간 (기본값)
-_DEFAULT_AGE_BINS   = [0,  20,  40,  60,  75,  200]
-_DEFAULT_AGE_LABELS = ["0-19", "20-39", "40-59", "60-74", "75+"]
-
 
 def _allocate_stratum_quotas(
     strata_counts: pd.Series,

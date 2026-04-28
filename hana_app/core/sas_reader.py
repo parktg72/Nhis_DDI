@@ -26,6 +26,8 @@ if str(ROOT) not in sys.path:
 
 from scripts.etl.models import PrescriptionRecord
 
+from .strata_utils import byear_to_age_band
+
 logger = logging.getLogger(__name__)
 
 # SAS 파일 확장자
@@ -562,16 +564,18 @@ class SASExtractor:
                     f"자격DB SAS 1차 스캔 (층별 카운트): {fpath.name} (STD_YYYY={std_year})"
                 )
             strata_row_count: dict[str, int] = _defaultdict(int)
+            ref_year_int = int(str(std_year).strip())
             for chunk in read_sas_chunks(fpath, self.encoding, use_cols, self.chunksize):
                 if year_col in chunk.columns:
                     chunk = chunk[chunk[year_col].astype(str).str.strip() == str(std_year)]
                 if chunk.empty:
                     continue
                 for row in chunk.itertuples(index=False):
-                    sex_v   = str(getattr(row, sex_col,   "") or "").strip()
-                    byear_v = str(getattr(row, byear_col, "") or "").strip()
-                    addr_v  = str(getattr(row, addr_col,  "") or "")[:addr_digits]
-                    strata_row_count[f"{sex_v}|{byear_v}|{addr_v}"] += 1
+                    sex_v    = str(getattr(row, sex_col,   "") or "").strip()
+                    byear_raw = getattr(row, byear_col, None)
+                    age_band = byear_to_age_band(byear_raw, ref_year_int)
+                    addr_v   = str(getattr(row, addr_col,  "") or "")[:addr_digits]
+                    strata_row_count[f"{sex_v}|{age_band}|{addr_v}"] += 1
 
             total_rows = sum(strata_row_count.values())
             if total_rows == 0:
@@ -608,13 +612,14 @@ class SASExtractor:
                 if chunk.empty:
                     continue
                 for row in chunk.itertuples(index=False):
-                    pid_v   = str(getattr(row, pid_col,   "") or "").strip()
-                    sex_v   = str(getattr(row, sex_col,   "") or "").strip()
-                    byear_v = str(getattr(row, byear_col, "") or "").strip()
-                    addr_v  = str(getattr(row, addr_col,  "") or "")[:addr_digits]
+                    pid_v    = str(getattr(row, pid_col,   "") or "").strip()
+                    sex_v    = str(getattr(row, sex_col,   "") or "").strip()
+                    byear_v  = str(getattr(row, byear_col, "") or "").strip()
+                    age_band = byear_to_age_band(byear_v, ref_year_int)
+                    addr_v   = str(getattr(row, addr_col,  "") or "")[:addr_digits]
                     if not pid_v:
                         continue
-                    key = f"{sex_v}|{byear_v}|{addr_v}"
+                    key = f"{sex_v}|{age_band}|{addr_v}"
                     if key not in reservoirs:
                         continue
                     k = alloc[key]
