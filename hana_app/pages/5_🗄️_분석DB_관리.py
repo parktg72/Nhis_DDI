@@ -46,7 +46,7 @@ _defaults: dict[str, dict[str, Any]] = {
         "year_from": "2018", "year_to": "2024",
     },
     "eligibility": {
-        "enabled": False, "schema": "NHISBASE", "table": "HHDT_ELIG_INFO",
+        "enabled": False, "schema": "NHISBDA", "table": "HHDV_DSES_YY",
         "addr_level": "sgg",
     },
 }

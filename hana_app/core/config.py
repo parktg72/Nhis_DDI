@@ -147,8 +147,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
         "eligibility": {               # 자격 DB
             "enabled": False,
-            "schema": "NHISBASE",
-            "table": "HHDT_ELIG_INFO",
+            "schema": "NHISBDA",
+            "table": "HHDV_DSES_YY",
             "addr_level": "sgg",       # "sgg" (5자리 시군구) | "dong" (8자리 읍면동)
         },
     },

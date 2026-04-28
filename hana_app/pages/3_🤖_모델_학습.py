@@ -860,8 +860,8 @@ if run_btn:
             _elig = cfg.get("analysis_dbs", {}).get("eligibility", {})
             if _elig:
                 _table_cfg["eligibility"] = {
-                    "schema": _elig.get("schema", "NHISBASE"),
-                    "table": _elig.get("table", "HHDT_ELIG_INFO"),
+                    "schema": _elig.get("schema", "NHISBDA"),
+                    "table": _elig.get("table", "HHDV_DSES_YY"),
                 }
 
         extractor = (
