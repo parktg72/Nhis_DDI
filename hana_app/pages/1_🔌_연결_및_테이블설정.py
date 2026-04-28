@@ -336,7 +336,7 @@ with tab_tbl:
         "t30":    ("T30",    "진료내역 (원내)",    "NHISBDA",  "HHDT_TEMSBJ30"),
         "t40":    ("T40",    "상병내역",           "NHISBDA",  "HHDT_TEMSBJ40"),
         "t60":    ("T60",    "원외처방전 내역",    "NHISBDA",  "HHDT_TEMSBJ60"),
-        "yoyang": ("요양기관","요양기관 현황",     "NHISBASE", "HHDT_MDCIN_GNRL_INFO"),
+        "yoyang": ("요양기관","요양기관 현황",     "NHISBDA",  "HHRT_MCINST_YY"),
     }
 
     schema_options: list[str] = []

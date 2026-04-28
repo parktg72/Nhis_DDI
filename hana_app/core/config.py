@@ -101,7 +101,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "t30":    {"schema": "NHISBDA",  "table": "HHDT_TEMSBJ30"},
         "t40":    {"schema": "NHISBDA",  "table": "HHDT_TEMSBJ40"},
         "t60":    {"schema": "NHISBDA",  "table": "HHDT_TEMSBJ60"},
-        "yoyang": {"schema": "NHISBASE", "table": "HHDT_MDCIN_GNRL_INFO"},
+        "yoyang": {"schema": "NHISBDA", "table": "HHRT_MCINST_YY"},
     },
 
     # ── SAS 파일 설정 ─────────────────────────────────────────────
