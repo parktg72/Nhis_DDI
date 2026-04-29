@@ -167,6 +167,7 @@ echo [데이터 처리]
 
 echo [머신러닝]
 %PYTHON_BIN% -c "import sklearn, xgboost, lightgbm, shap; print('  sklearn/xgboost/lightgbm/shap OK')" 2>nul || (echo   [실패] ML 패키지 & set FAIL=1)
+%PYTHON_BIN% -c "import catboost; print('  catboost', catboost.__version__, 'OK')" 2>nul || (echo   [실패] catboost & set FAIL=1)
 
 echo [웹앱 / API]
 %PYTHON_BIN% -c "import streamlit; print('  Streamlit', streamlit.__version__, 'OK')" 2>nul || (echo   [실패] Streamlit & set FAIL=1)
