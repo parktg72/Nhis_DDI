@@ -81,6 +81,7 @@ def _make_hybrid_with_hierarchical(hp: HierarchicalPredictor) -> HybridPredictor
     pred = HybridPredictor.__new__(HybridPredictor)
     pred._start_time = 0.0
     pred._ml_lock = threading.RLock()
+    pred._hier_lock = threading.RLock()
     pred._ml = MagicMock()
     pred._ml.loaded = False
     pred._hierarchical = hp

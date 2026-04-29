@@ -68,6 +68,8 @@ def mock_predictor():
     pred._safety_net = None
     pred._dup_detector = None
     pred._ml_lock = __import__("threading").Lock()
+    pred._hier_lock = __import__("threading").RLock()
+    pred._hierarchical = None
     return pred
 
 

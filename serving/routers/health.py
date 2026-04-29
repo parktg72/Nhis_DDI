@@ -25,6 +25,10 @@ router = APIRouter(tags=["health"])
 class ReloadRequest(BaseModel):
     model_path: str
 
+
+class HierarchicalReloadRequest(BaseModel):
+    model_dir: str
+
 APP_VERSION = "1.0.0"
 
 _ADMIN_KEY: str = _settings.ADMIN_API_KEY
@@ -99,3 +103,27 @@ async def reload_model(
     if not ok:
         raise HTTPException(status_code=400, detail=f"모델 로드 실패: {body.model_path}")
     return {"status": "ok", "model_path": str(resolved)}
+
+
+@router.post("/admin/reload/hierarchical")
+async def reload_hierarchical_model(
+    body: HierarchicalReloadRequest,
+    _: None = Depends(_require_admin),
+):
+    """계층 모델 핫스왑 (무중단 교체). X-Admin-Key 헤더 인증 필수.
+
+    model_dir은 MODEL_DIR 환경변수로 지정된 디렉토리 내부 경로만 허용됩니다.
+    """
+    resolved = Path(body.model_dir).resolve()
+    try:
+        resolved.relative_to(_MODEL_DIR)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"모델 경로는 허용된 디렉토리({_MODEL_DIR}) 내부여야 합니다: {body.model_dir}",
+        )
+    pred = get_predictor()
+    ok = pred.reload_hierarchical(resolved)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"계층 모델 로드 실패: {body.model_dir}")
+    return {"status": "ok", "model_dir": str(resolved)}

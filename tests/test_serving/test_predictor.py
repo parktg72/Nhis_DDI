@@ -272,7 +272,9 @@ class TestHybridPredictorReloadModel:
         pred = HybridPredictor.__new__(HybridPredictor)
         pred._start_time = 0.0
         pred._ml_lock = threading.RLock()
+        pred._hier_lock = threading.RLock()
         pred._ml = MLModel()
+        pred._hierarchical = None
         pred._ddi_matrix = None
         pred._cyp = None
         pred._std = None

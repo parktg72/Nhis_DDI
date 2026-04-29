@@ -37,6 +37,16 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
+# RequestFeatureBuilder.build() 가 생성하는 컬럼 집합 — 계층 모델 호환성 검증용
+_BUILDER_KNOWN_COLS: frozenset[str] = frozenset({
+    "drug_count", "institution_count", "age", "sex_male",
+    "ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor",
+    "avg_drug_duration", "long_term_drug_count",
+    "dup_same_ingredient", "dup_atc5", "dup_atc4",
+    "cyp_risk_score", "cyp_high_risk_pairs",
+    "triple_whammy", "qt_risk_count", "drug_count_7d",
+})
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 규칙 기반 Safety Net 브릿지
@@ -688,6 +698,7 @@ class HybridPredictor:
     ):
         self._start_time = time.time()
         self._ml_lock = threading.RLock()
+        self._hier_lock = threading.RLock()
         self._ml = MLModel()
         self._hierarchical: Optional[HierarchicalPredictor] = None
         self._ddi_matrix: Optional[pd.DataFrame] = None
@@ -721,15 +732,29 @@ class HybridPredictor:
                 logger.warning("CYP 추출기 로드 실패: %s", e)
 
         # ML 모델 로드 — 계층 모드 디렉터리 우선, 실패/미설정 시 단일 모델 fallback
-        if hierarchical_model_dir and Path(hierarchical_model_dir).exists():
-            hp = HierarchicalPredictor()
-            if hp.load(hierarchical_model_dir):
-                self._hierarchical = hp
-            else:
+        if hierarchical_model_dir:
+            _hdir = Path(hierarchical_model_dir)
+            if not _hdir.exists():
                 logger.warning(
-                    "HIERARCHICAL_MODEL_DIR 로드 실패 — 단일 모델 fallback: %s",
+                    "HIERARCHICAL_MODEL_DIR 경로 없음 — 단일 모델 fallback: %s",
                     hierarchical_model_dir,
                 )
+            else:
+                hp = HierarchicalPredictor()
+                if hp.load(str(_hdir)):
+                    _missing = set(hp.feature_cols or []) - _BUILDER_KNOWN_COLS
+                    if _missing:
+                        logger.warning(
+                            "계층 모델 feature_cols 중 RequestFeatureBuilder 미지원 컬럼 %d개: %s"
+                            " — 온라인 서빙 시 해당 피처는 0.0 으로 채워짐",
+                            len(_missing), sorted(_missing),
+                        )
+                    self._hierarchical = hp
+                else:
+                    logger.warning(
+                        "HIERARCHICAL_MODEL_DIR 로드 실패 — 단일 모델 fallback: %s",
+                        hierarchical_model_dir,
+                    )
         if self._hierarchical is None and model_path and Path(model_path).exists():
             self._ml.load(model_path)
 
@@ -766,6 +791,25 @@ class HybridPredictor:
             with self._ml_lock:
                 self._ml = new_ml
             logger.info("모델 핫스왑 완료: %s", model_path)
+        return ok
+
+    def reload_hierarchical(self, model_dir: str | Path) -> bool:
+        """계층 모델 무중단 핫스왑 (스레드 안전)."""
+        new_hp = HierarchicalPredictor()
+        ok = new_hp.load(str(model_dir))
+        if ok:
+            _missing = set(new_hp.feature_cols or []) - _BUILDER_KNOWN_COLS
+            if _missing:
+                logger.warning(
+                    "계층 모델 feature_cols 중 RequestFeatureBuilder 미지원 컬럼 %d개: %s"
+                    " — 온라인 서빙 시 해당 피처는 0.0 으로 채워짐",
+                    len(_missing), sorted(_missing),
+                )
+            with self._hier_lock:
+                self._hierarchical = new_hp
+            logger.info("계층 모델 핫스왑 완료: %s", model_dir)
+        else:
+            logger.warning("계층 모델 핫스왑 실패: %s", model_dir)
         return ok
 
     @property
@@ -812,7 +856,8 @@ class HybridPredictor:
         red_suspect: bool = False
         action: Optional[str] = None
 
-        _hier = getattr(self, "_hierarchical", None)
+        with self._hier_lock:
+            _hier = self._hierarchical
         if _hier is not None and _hier.loaded:
             feat_vec, _ = self._builder.build(
                 req,
