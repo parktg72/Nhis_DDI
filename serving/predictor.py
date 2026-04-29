@@ -38,14 +38,41 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 # RequestFeatureBuilder.build() 가 생성하는 컬럼 집합 — 계층 모델 호환성 검증용
+# dup_efmdc 는 serving 에서 DrugMaster 미로드로 0.0 고정 → 의도적으로 제외
 _BUILDER_KNOWN_COLS: frozenset[str] = frozenset({
-    "drug_count", "institution_count", "age", "sex_male",
+    "drug_count", "institution_count", "age", "sex_m",
     "ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor",
     "avg_drug_duration", "long_term_drug_count",
-    "dup_same_ingredient", "dup_atc5", "dup_atc4",
-    "cyp_risk_score", "cyp_high_risk_pairs",
+    "dup_same_ingredient", "dup_atc5", "dup_atc4", "dup_atc3",
+    "has_high_risk_drug", "has_renal_risk_drug", "has_hepatic_risk_drug",
+    "cyp_risk_score", "cyp_high_risk_pairs", "cyp_max_enzyme_risk",
     "triple_whammy", "qt_risk_count", "drug_count_7d",
 })
+
+# 위험 약물 판정 상수 — 출처: scripts/etl/prescription_aggregator.py (CLINICAL_STANDARDS_v1.0)
+_HIGH_RISK_KEYWORDS = frozenset({
+    "warfarin", "methotrexate", "lithium", "digoxin", "amiodarone",
+    "phenytoin", "cyclosporine", "tacrolimus", "sirolimus", "theophylline",
+    "insulin", "clozapine", "carbamazepine", "valproate", "phenobarbital",
+})
+_HIGH_RISK_ATC_PREFIXES = (
+    "B01AA03", "L01BA01", "N05AN01", "C01AA05", "C01BD01",
+    "N03AB02", "L04AD01", "L04AD02", "L04AA18", "R03DA04",
+)
+_RENAL_RISK_KEYWORDS = frozenset({
+    "ibuprofen", "naproxen", "diclofenac", "celecoxib", "ketorolac",
+    "indomethacin", "meloxicam", "piroxicam",
+    "gentamicin", "tobramycin", "amikacin", "vancomycin",
+    "lithium", "cisplatin", "acyclovir", "tenofovir",
+    "cyclosporine", "tacrolimus",
+})
+_RENAL_RISK_ATC_PREFIXES = ("M01A", "N05AN01", "J01GB", "L04AD")
+_HEPATIC_RISK_KEYWORDS = frozenset({
+    "methotrexate", "valproate", "valproic", "isoniazid", "amiodarone",
+    "phenytoin", "carbamazepine", "ketoconazole", "itraconazole",
+    "acetaminophen", "paracetamol",
+})
+_HEPATIC_RISK_ATC_PREFIXES = ("L01BA01", "N03AG01", "J04AC01", "C01BD01", "N03AB02")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -587,7 +614,7 @@ class RequestFeatureBuilder:
         feat["institution_count"] = float(len({d.institution_id for d in drugs
                                                if d.institution_id}))
         feat["age"]               = float(req.patient_age or 0)
-        feat["sex_male"]          = float(req.patient_sex == "M") if req.patient_sex else 0.5
+        feat["sex_m"]             = float(req.patient_sex == "M") if req.patient_sex else 0.5
 
         # ── DDI 피처 (ATC 조합 기반) ──────────────────────────────────────
         ddi_counts = {"Contraindicated": 0, "Major": 0, "Moderate": 0, "Minor": 0}
@@ -614,17 +641,31 @@ class RequestFeatureBuilder:
         cnt5 = Counter(atc_codes)
         cnt4 = Counter(c[:5] for c in atc_codes if len(c) >= 5)
         cnt3 = Counter(c[:4] for c in atc_codes if len(c) >= 4)
+        cnt3atc = Counter(c[:3] for c in atc_codes if len(c) >= 3)
         feat["dup_same_ingredient"] = float(sum(1 for v in cnt5.values() if v >= 2))
         feat["dup_atc5"]            = float(sum(1 for v in cnt4.values() if v >= 2))
         feat["dup_atc4"]            = float(sum(1 for v in cnt3.values() if v >= 2))
+        feat["dup_atc3"]            = float(sum(1 for v in cnt3atc.values() if v >= 2))
+        # dup_efmdc: 약효분류 중복 — DrugMaster 미로드로 0.0 고정 (serving 제약)
+        feat["dup_efmdc"]           = 0.0
 
         # ── CYP 피처 ──────────────────────────────────────────────────────
         if self._cyp and atc_codes:
             cyp_feat = self._cyp.extract(atc_codes)
             feat.update(cyp_feat)
         else:
-            feat["cyp_risk_score"]     = 0.0
+            feat["cyp_risk_score"]      = 0.0
             feat["cyp_high_risk_pairs"] = 0.0
+            feat["cyp_max_enzyme_risk"] = 0.0
+
+        # ── 위험 약물 플래그 ──────────────────────────────────────────────
+        drug_names_lower = [(d.drug_name or "").lower() for d in drugs]
+        feat["has_high_risk_drug"]    = float(_has_risk_drug(
+            drug_names_lower, atc_codes, _HIGH_RISK_KEYWORDS, _HIGH_RISK_ATC_PREFIXES))
+        feat["has_renal_risk_drug"]   = float(_has_risk_drug(
+            drug_names_lower, atc_codes, _RENAL_RISK_KEYWORDS, _RENAL_RISK_ATC_PREFIXES))
+        feat["has_hepatic_risk_drug"] = float(_has_risk_drug(
+            drug_names_lower, atc_codes, _HEPATIC_RISK_KEYWORDS, _HEPATIC_RISK_ATC_PREFIXES))
 
         # Triple Whammy, QT 카운트 (단순 ATC prefix 기반)
         feat["triple_whammy"] = float(_check_triple_whammy(atc_codes))
@@ -662,6 +703,22 @@ class RequestFeatureBuilder:
 
         vec = df.values.flatten().astype(float)
         return vec, feat
+
+
+def _has_risk_drug(
+    names_lower: list[str],
+    atc_codes: list[str],
+    keywords: frozenset[str],
+    atc_prefixes: tuple[str, ...],
+) -> bool:
+    """약물 이름 또는 ATC prefix 기반 위험 약물 포함 여부."""
+    for name in names_lower:
+        if any(kw in name for kw in keywords):
+            return True
+    for atc in atc_codes:
+        if atc and atc.startswith(atc_prefixes):
+            return True
+    return False
 
 
 def _check_triple_whammy(atc_codes: list[str]) -> bool:
