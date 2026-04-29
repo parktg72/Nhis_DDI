@@ -462,12 +462,17 @@ st.header("2️⃣ 모델 선택 및 하이퍼파라미터")
 # 예측 타겟
 target = st.selectbox(
     "예측 타겟",
-    options=["risk_binary", "risk_label"],
+    options=["risk_binary", "hierarchical", "risk_label"],
     format_func=lambda x: {
-        "risk_binary": "이진 분류 (위험 / 정상) – 권장",
-        "risk_label": "4분류 (Red / Yellow / Green / Normal)",
+        "risk_binary":   "이진 분류 (위험 / 정상)",
+        "hierarchical":  "계층 분류 — Stage 1 Red 이진 + Stage 2 Yellow 6-class (권장)",
+        "risk_label":    "4분류 (Red / Yellow / Green / Normal) — 레거시",
     }[x],
-    index=["risk_binary", "risk_label"].index(trn.get("target", "risk_binary")),
+    index=["risk_binary", "hierarchical", "risk_label"].index(
+        trn.get("target", "risk_binary")
+        if trn.get("target") in ("risk_binary", "hierarchical", "risk_label")
+        else "risk_binary"
+    ),
 )
 
 # ── Phase 탭 ─────────────────────────────────────────────────────────────
@@ -560,6 +565,13 @@ with tab_p2:
                 key="stack_base",
             )
             params_map["stacking"] = {"base_models": stack_base}
+
+if target == "hierarchical":
+    st.info(
+        "**계층 분류 모드**: Stage 1 / Stage 2 모두 XGBoost 내부 고정.\n"
+        "아래 모델 선택 및 하이퍼파라미터는 적용되지 않으며, "
+        "Stage 1·2 파라미터는 '학습 전략 옵션' 섹션에서 별도 설정합니다."
+    )
 
 with tab_p3:
     st.warning(
@@ -682,6 +694,34 @@ if use_threshold_opt or use_cost_sensitive:
             help="의료 도메인에서 FN이 더 위험하므로 기본값 5.0",
         )
 
+# ── 계층 분류 전용 임계값 파라미터 ──────────────────────────────────
+recall_floor = 0.90
+review_recall_target = 0.98
+if target == "hierarchical":
+    st.markdown("---")
+    st.subheader("🎯 계층 분류 임계값 설정 (Stage 1)")
+    st.caption(
+        "τ_red: Red 확정 임계값 (Recall ≥ recall_floor 보장).  "
+        "τ_review: Red 의심 태그 임계값 (FN 영구 유실 방지용)."
+    )
+    hr_col1, hr_col2 = st.columns(2)
+    with hr_col1:
+        recall_floor = st.slider(
+            "Recall Floor (τ_red 결정 기준)",
+            min_value=0.80, max_value=0.99, value=float(trn.get("recall_floor", 0.90)),
+            step=0.01, format="%.2f",
+            help="Stage 1 Red 탐지 최소 Recall. 낮추면 τ_red 완화 → FP 증가.",
+        )
+    with hr_col2:
+        review_recall_target = st.slider(
+            "Review Recall Target (τ_review 결정 기준)",
+            min_value=0.90, max_value=1.00, value=float(trn.get("review_recall_target", 0.98)),
+            step=0.01, format="%.2f",
+            help="Red 의심 태그를 달 τ_review 기준 Recall. recall_floor 보다 높게 유지하세요.",
+        )
+    if review_recall_target <= recall_floor:
+        st.warning("⚠️ Review Recall Target 은 Recall Floor 보다 높아야 합니다.")
+
 # ── 선택된 모델 목록 조합 ─────────────────────────────────────────────────
 selected_models_p2 = [k for k, v in {
     "xgboost": sel_xgb, "lightgbm": sel_lgbm, "catboost": sel_cat,
@@ -760,6 +800,8 @@ with col_save:
             "cost_sensitive": use_cost_sensitive,
             "cost_fp": cost_fp,
             "cost_fn": cost_fn,
+            "recall_floor": recall_floor,
+            "review_recall_target": review_recall_target,
         })
         save_config(cfg)
         st.success("학습 설정이 저장되었습니다.")
@@ -774,7 +816,7 @@ if run_btn:
     if not selected_features:
         st.error("최소 1개 이상의 피처를 선택하세요.")
         st.stop()
-    if not all_selected_models:
+    if target != "hierarchical" and not all_selected_models:
         st.error("최소 1개 이상의 모델을 선택하세요.")
         st.stop()
 
@@ -1298,136 +1340,262 @@ if run_btn:
     else:
         st.stop()
 
-    # ── 3단계: 모델 학습 (복수 모델 순차 실행) ─────────────────────────
-    _model_label = ", ".join(all_selected_models)
-    st.subheader(f"🤖 모델 학습 중... ({_model_label})")
+    # ── 3단계: 모델 학습 ─────────────────────────────────────────────────────
+    if target == "hierarchical":
+        # ── 계층 분류 전용 경로 ────────────────────────────────────────────
+        from hana_app.core.hierarchical_runner import train_hierarchical, predict_risk
+        from hana_app.core.ml_runner import load_features_from_parquet, _duckdb_available
 
-    all_results: dict = {}
-    _n_models = len(all_selected_models)
+        st.subheader("🤖 계층 분류 학습 중 (Stage 1 + Stage 2)...")
+        _set_phase(0.60, 0.98)
+        log("계층 분류 학습 시작: Stage 1 Red 이진 + Stage 2 Yellow 6-class")
 
-    for mi, mname in enumerate(all_selected_models):
-        _lo = 0.60 + mi / _n_models * 0.35
-        _hi = 0.60 + (mi + 1) / _n_models * 0.35
-        _set_phase(_lo, _hi)
-        log(f"[{mi+1}/{_n_models}] {mname} 학습 시작 | 타겟: {target} | 피처: {len(selected_features)}개")
-
-        try:
-            result = train_model(
-                df=_train_df,
-                features_parquet=_train_parquet,
-                model_name=mname,
-                target=target,
-                params=params_map.get(mname),
-                test_size=test_size,
-                cv_folds=cv_folds,
-                sampling_size=sampling_size_actual,
-                sampling_rounds=sampling_rounds,
-                threshold_optimization=use_threshold_opt,
-                cost_sensitive=use_cost_sensitive,
-                cost_fp=cost_fp,
-                cost_fn=cost_fn,
-                progress_cb=log,
-                progress_pct_cb=update_pct,
-                gpu_memory_fraction=gpu_memory_fraction,
-                memory_limit_mb=memory_limit_mb,
-                feature_cols=selected_features,
-                guard=_mem_guard,
-                features_df=st.session_state.get("features_df"),
+        # Parquet 기반이면 메모리에 로드 (hierarchical_runner 는 DataFrame 입력)
+        if _train_parquet:
+            st.warning(
+                "⚠️ **계층 분류 + 대용량 Parquet**: `train_hierarchical` 은 DataFrame 전체를 메모리에 올립니다. "
+                f"RAM 한도({memory_limit_mb:,} MB)가 충분한지 확인하세요. "
+                "부족하면 층화 샘플링 후 저장 데이터를 사용하세요."
             )
-            all_results[mname] = result
-            log(f"[{mi+1}/{_n_models}] {mname} 완료 — F1={result['metrics']['f1_macro']:.4f}")
-        except (MemoryError, MemoryLimitExceeded) as _me:
-            _rss = getattr(_me, 'rss_mb', '?')
+            log(f"Parquet {len(_train_parquet)}개 파일 → DataFrame 로드 중...")
+            _train_df = load_features_from_parquet(
+                _train_parquet, memory_limit_mb=memory_limit_mb
+            ) if _duckdb_available() else pd.concat(
+                [pd.read_parquet(p) for p in _train_parquet], ignore_index=True
+            )
+
+        if "yellow_subtype" not in _train_df.columns:
             st.error(
-                f"⚠️ **메모리 한도 도달** — {mname} 학습 중\n\n"
-                "처리가 안전하게 중단되었습니다.\n\n"
-                "**해결 방법:**\n"
-                "- 📊 층화 샘플링 크기를 줄이세요\n"
-                "- 🧠 RAM 사용 한도를 높이세요\n"
-                "- 🌲 트리 수(n_estimators)를 줄이세요\n"
-                f"- 현재 RAM: {_rss} MB / 한도: {memory_limit_mb:,} MB / "
-                f"샘플: {sampling_size_actual:,}명"
+                "⚠️ 계층 분류에 필요한 'yellow_subtype' 컬럼이 없습니다.\n\n"
+                "ETL 파이프라인이 yellow_subtype 을 생성해야 합니다. "
+                "데이터를 재추출하거나 다른 타겟을 선택하세요."
             )
             st.stop()
+
+        _hier_out = (
+            Path(__file__).parent.parent / "models" / "hierarchical"
+            / datetime.now().strftime("%Y%m%d_%H%M%S")
+        )
+        try:
+            _hier_result = train_hierarchical(
+                df=_train_df,
+                feature_cols=selected_features,
+                output_dir=_hier_out,
+                recall_floor=recall_floor,
+                review_recall_target=review_recall_target,
+                cost_sensitive=use_cost_sensitive,
+            )
         except Exception as e:
-            log(f"[{mi+1}/{_n_models}] {mname} 실패: {e}")
-            st.warning(f"⚠️ {mname} 학습 실패: {e}")
+            st.error(f"❌ 계층 분류 학습 실패: {e}")
             st.exception(e)
+            st.stop()
 
-    if not all_results:
-        st.error("모든 모델 학습이 실패했습니다.")
-        st.stop()
+        progress_bar.progress(1.0, text="계층 분류 학습 완료!")
+        status_text.success("**계층 분류 학습 완료!**")
 
-    # 모델 객체를 all_results에서 제거 (디스크에 이미 저장됨, 메모리 절약)
-    for _res in all_results.values():
-        _res.pop("model", None)
-    import gc as _gc; _gc.collect()
-    st.session_state.last_result = list(all_results.values())[-1]
-    st.session_state.train_results = all_results
-    progress_bar.progress(1.0, text="학습 완료!")
-    status_text.success(f"**{len(all_results)}개 모델 학습 완료!**")
+        import json as _json
+        _meta = _json.loads((_hier_out / "stage_meta.json").read_text(encoding="utf-8"))
+        thresholds = _meta.get("thresholds", {})
+        label_counts = _meta.get("stage2_label_counts", {})
 
-    # ── 결과 비교 테이블 ──────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("📊 모델 비교 결과")
+        st.markdown("---")
+        st.subheader("📊 계층 분류 학습 결과")
 
-    compare_rows = []
-    for mname, res in all_results.items():
-        m = res["metrics"]
-        row = {
-            "모델": mname,
-            "Accuracy": f"{m.get('accuracy', 0):.4f}",
-            "F1 (macro)": f"{m.get('f1_macro', 0):.4f}",
-            "AUC": f"{m.get('roc_auc', m.get('roc_auc_ovr', 0)):.4f}",
-            f"CV {cv_folds}-fold": f"{m.get('cv_mean', 0):.4f} \u00b1 {m.get('cv_std', 0):.4f}",
+        _t_col1, _t_col2, _t_col3 = st.columns(3)
+        _t_col1.metric("τ_red", f"{thresholds.get('tau_red', '?'):.3f}" if isinstance(thresholds.get('tau_red'), float) else "?")
+        _t_col2.metric("τ_review", f"{thresholds.get('tau_review', '?'):.3f}" if isinstance(thresholds.get('tau_review'), float) else "?")
+        _t_col3.metric("Y_OTHER 제외", f"{_meta.get('y_other_excluded_count', 0):,}명")
+
+        st.markdown("**Stage 2 라벨 분포**")
+        _lc_cols = st.columns(len(label_counts) or 1)
+        _label_emoji = {
+            "Y_MIX": "🟡", "Y_DDI_MAJOR": "🔴", "Y_DDI_MOD": "🟠",
+            "Y_DUP": "🟣", "Y_FRAG": "🔵", "No_Alert": "⚪",
         }
-        if use_threshold_opt and "optimal_threshold" in m:
-            row["최적 임계값"] = f"{m['optimal_threshold']:.2f}"
-            row["F1@최적"] = f"{m.get('f1_at_optimal', 0):.4f}"
-        compare_rows.append(row)
+        for _lc_col, (_lbl, _cnt) in zip(_lc_cols, label_counts.items()):
+            _lc_col.metric(f"{_label_emoji.get(_lbl, '')} {_lbl}", f"{_cnt:,}명")
 
-    st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
+        with st.expander("📋 stage_meta.json 전체"):
+            st.json(_meta)
 
-    # ── 각 모델별 상세 결과 ──────────────────────────────────────────
-    for mname, res in all_results.items():
-        m = res["metrics"]
-        with st.expander(f"📋 {mname} 상세 결과"):
-            rc1, rc2, rc3, rc4 = st.columns(4)
-            rc1.metric("Accuracy", f"{m.get('accuracy', 0):.4f}")
-            rc2.metric("F1 (macro)", f"{m.get('f1_macro', 0):.4f}")
-            rc3.metric("AUC", f"{m.get('roc_auc', m.get('roc_auc_ovr', 0)):.4f}")
-            rc4.metric("CV", f"{m.get('cv_mean', 0):.4f}")
-            st.text(m.get("classification_report", "N/A"))
-            st.caption(f"모델 저장: `{res.get('model_path', 'N/A')}`")
+        st.success(
+            f"🏆 계층 분류 모델 저장: `{_hier_out}`\n\n"
+            "**4단계 결과분석** 페이지에서 Yellow 서브타입 분포를 확인하세요."
+        )
+        _hier_last = {
+            "model_name": "hierarchical",
+            "target": "hierarchical",
+            "model_path": str(_hier_out),
+            "metrics": {
+                "tau_red": thresholds.get("tau_red"),
+                "tau_review": thresholds.get("tau_review"),
+                "f1_macro": 0.0,
+            },
+            "meta": _meta,
+        }
+        st.session_state.last_result = _hier_last
+        st.session_state.train_results = {"hierarchical": _hier_last}
 
-    # ── 샘플링 라운드 요약 (반복 학습 시) ─────────────────────────
-    for mname, res in all_results.items():
-        rs = res.get("round_summary")
-        if rs and rs["total_rounds"] > 1:
-            with st.expander(f"📊 {mname} — {rs['total_rounds']}회 샘플링 라운드 요약"):
-                round_rows = []
-                for rr in res.get("all_rounds", []):
-                    rm = rr["metrics"]
-                    round_rows.append({
-                        "Round": rr["sampling_round"],
-                        "Seed": rr["sampling_seed"],
-                        "Accuracy": f"{rm['accuracy']:.4f}",
-                        "F1": f"{rm['f1_macro']:.4f}",
-                        "AUC": f"{rm.get('roc_auc', rm.get('roc_auc_ovr', 0)):.4f}",
-                        "CV": f"{rm['cv_mean']:.4f}",
-                    })
-                st.dataframe(pd.DataFrame(round_rows), use_container_width=True, hide_index=True)
-                st.info(
-                    f"F1 평균: **{rs['f1_mean']:.4f}** ± {rs['f1_std']:.4f} | "
-                    f"AUC 평균: **{rs['auc_mean']:.4f}** ± {rs['auc_std']:.4f} | "
-                    f"최고 Round: **{rs['best_round']}**"
+        # predict_risk → features_df 에 red_suspect / action 컬럼 채우기
+        # (page 4 의 yellow_subtype_view 가 이 컬럼을 사용)
+        _feat_df = st.session_state.get("features_df") if _train_parquet else _train_df
+        if _feat_df is not None and selected_features and \
+                all(c in _feat_df.columns for c in selected_features):
+            try:
+                import joblib as _jl
+                _bundle = _jl.load(_hier_out / "stage2_yellow.joblib")
+                log("predict_risk: red_suspect / action 컬럼 계산 중...")
+                _preds = predict_risk(
+                    _feat_df[selected_features].to_numpy(),
+                    stage1_model=_hier_result["stage1_model"],
+                    stage2_model=_bundle["model"],
+                    stage2_encoder=_hier_result["stage2_encoder"],
+                    thresholds=_hier_result["thresholds"],
+                    classes_present=_bundle["classes_present"],
                 )
+                _feat_df = _feat_df.copy()
+                _feat_df["red_suspect"] = [p["red_suspect"] for p in _preds]
+                _feat_df["action"] = [p["action"] for p in _preds]
+                st.session_state.features_df = _feat_df
+                _rs_cnt = int(_feat_df["red_suspect"].sum())
+                log(f"✅ predict_risk 완료 — red_suspect: {_rs_cnt:,}건")
+                st.info(f"📌 **Red 의심 (red_suspect=True)**: {_rs_cnt:,}건 — 4단계 결과분석에서 확인 가능")
+            except Exception as _pe:
+                st.warning(f"⚠️ predict_risk 실패 (학습 결과는 저장됨): {_pe}")
 
-    # 최고 성능 모델 표시
-    _best = max(all_results.items(), key=lambda x: x[1]["metrics"].get("f1_macro", 0))
-    st.success(
-        f"🏆 최고 성능: **{_best[0]}** "
-        f"(F1={_best[1]['metrics']['f1_macro']:.4f})\n\n"
-        "**4단계 결과분석** 페이지에서 상세 결과를 확인하세요."
-    )
-    st.balloons()
+        st.balloons()
+
+    else:
+        # ── 기존 단일/앙상블 모델 학습 (복수 모델 순차 실행) ─────────────
+        _model_label = ", ".join(all_selected_models)
+        st.subheader(f"🤖 모델 학습 중... ({_model_label})")
+
+        all_results: dict = {}
+        _n_models = len(all_selected_models)
+
+        for mi, mname in enumerate(all_selected_models):
+            _lo = 0.60 + mi / _n_models * 0.35
+            _hi = 0.60 + (mi + 1) / _n_models * 0.35
+            _set_phase(_lo, _hi)
+            log(f"[{mi+1}/{_n_models}] {mname} 학습 시작 | 타겟: {target} | 피처: {len(selected_features)}개")
+
+            try:
+                result = train_model(
+                    df=_train_df,
+                    features_parquet=_train_parquet,
+                    model_name=mname,
+                    target=target,
+                    params=params_map.get(mname),
+                    test_size=test_size,
+                    cv_folds=cv_folds,
+                    sampling_size=sampling_size_actual,
+                    sampling_rounds=sampling_rounds,
+                    threshold_optimization=use_threshold_opt,
+                    cost_sensitive=use_cost_sensitive,
+                    cost_fp=cost_fp,
+                    cost_fn=cost_fn,
+                    progress_cb=log,
+                    progress_pct_cb=update_pct,
+                    gpu_memory_fraction=gpu_memory_fraction,
+                    memory_limit_mb=memory_limit_mb,
+                    feature_cols=selected_features,
+                    guard=_mem_guard,
+                    features_df=st.session_state.get("features_df"),
+                )
+                all_results[mname] = result
+                log(f"[{mi+1}/{_n_models}] {mname} 완료 — F1={result['metrics']['f1_macro']:.4f}")
+            except (MemoryError, MemoryLimitExceeded) as _me:
+                _rss = getattr(_me, 'rss_mb', '?')
+                st.error(
+                    f"⚠️ **메모리 한도 도달** — {mname} 학습 중\n\n"
+                    "처리가 안전하게 중단되었습니다.\n\n"
+                    "**해결 방법:**\n"
+                    "- 📊 층화 샘플링 크기를 줄이세요\n"
+                    "- 🧠 RAM 사용 한도를 높이세요\n"
+                    "- 🌲 트리 수(n_estimators)를 줄이세요\n"
+                    f"- 현재 RAM: {_rss} MB / 한도: {memory_limit_mb:,} MB / "
+                    f"샘플: {sampling_size_actual:,}명"
+                )
+                st.stop()
+            except Exception as e:
+                log(f"[{mi+1}/{_n_models}] {mname} 실패: {e}")
+                st.warning(f"⚠️ {mname} 학습 실패: {e}")
+                st.exception(e)
+
+        if not all_results:
+            st.error("모든 모델 학습이 실패했습니다.")
+            st.stop()
+
+        # 모델 객체를 all_results에서 제거 (디스크에 이미 저장됨, 메모리 절약)
+        for _res in all_results.values():
+            _res.pop("model", None)
+        import gc as _gc; _gc.collect()
+        st.session_state.last_result = list(all_results.values())[-1]
+        st.session_state.train_results = all_results
+        progress_bar.progress(1.0, text="학습 완료!")
+        status_text.success(f"**{len(all_results)}개 모델 학습 완료!**")
+
+        # ── 결과 비교 테이블 ──────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("📊 모델 비교 결과")
+
+        compare_rows = []
+        for mname, res in all_results.items():
+            m = res["metrics"]
+            row = {
+                "모델": mname,
+                "Accuracy": f"{m.get('accuracy', 0):.4f}",
+                "F1 (macro)": f"{m.get('f1_macro', 0):.4f}",
+                "AUC": f"{m.get('roc_auc', m.get('roc_auc_ovr', 0)):.4f}",
+                f"CV {cv_folds}-fold": f"{m.get('cv_mean', 0):.4f} \u00b1 {m.get('cv_std', 0):.4f}",
+            }
+            if use_threshold_opt and "optimal_threshold" in m:
+                row["최적 임계값"] = f"{m['optimal_threshold']:.2f}"
+                row["F1@최적"] = f"{m.get('f1_at_optimal', 0):.4f}"
+            compare_rows.append(row)
+
+        st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
+
+        # ── 각 모델별 상세 결과 ──────────────────────────────────────
+        for mname, res in all_results.items():
+            m = res["metrics"]
+            with st.expander(f"📋 {mname} 상세 결과"):
+                rc1, rc2, rc3, rc4 = st.columns(4)
+                rc1.metric("Accuracy", f"{m.get('accuracy', 0):.4f}")
+                rc2.metric("F1 (macro)", f"{m.get('f1_macro', 0):.4f}")
+                rc3.metric("AUC", f"{m.get('roc_auc', m.get('roc_auc_ovr', 0)):.4f}")
+                rc4.metric("CV", f"{m.get('cv_mean', 0):.4f}")
+                st.text(m.get("classification_report", "N/A"))
+                st.caption(f"모델 저장: `{res.get('model_path', 'N/A')}`")
+
+        # ── 샘플링 라운드 요약 (반복 학습 시) ────────────────────────
+        for mname, res in all_results.items():
+            rs = res.get("round_summary")
+            if rs and rs["total_rounds"] > 1:
+                with st.expander(f"📊 {mname} — {rs['total_rounds']}회 샘플링 라운드 요약"):
+                    round_rows = []
+                    for rr in res.get("all_rounds", []):
+                        rm = rr["metrics"]
+                        round_rows.append({
+                            "Round": rr["sampling_round"],
+                            "Seed": rr["sampling_seed"],
+                            "Accuracy": f"{rm['accuracy']:.4f}",
+                            "F1": f"{rm['f1_macro']:.4f}",
+                            "AUC": f"{rm.get('roc_auc', rm.get('roc_auc_ovr', 0)):.4f}",
+                            "CV": f"{rm['cv_mean']:.4f}",
+                        })
+                    st.dataframe(pd.DataFrame(round_rows), use_container_width=True, hide_index=True)
+                    st.info(
+                        f"F1 평균: **{rs['f1_mean']:.4f}** ± {rs['f1_std']:.4f} | "
+                        f"AUC 평균: **{rs['auc_mean']:.4f}** ± {rs['auc_std']:.4f} | "
+                        f"최고 Round: **{rs['best_round']}**"
+                    )
+
+        # 최고 성능 모델 표시
+        _best = max(all_results.items(), key=lambda x: x[1]["metrics"].get("f1_macro", 0))
+        st.success(
+            f"🏆 최고 성능: **{_best[0]}** "
+            f"(F1={_best[1]['metrics']['f1_macro']:.4f})\n\n"
+            "**4단계 결과분석** 페이지에서 상세 결과를 확인하세요."
+        )
+        st.balloons()
