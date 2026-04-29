@@ -32,6 +32,7 @@ class HANAConnection:
         self._host = ""
         self._port = 30015
         self._user = ""
+        self._password = ""
 
     # ── 연결 / 해제 ────────────────────────────────────────────────────────
 
@@ -49,6 +50,13 @@ class HANAConnection:
         self._host = host
         self._port = port
         self._user = user
+        self._password = password
+
+    def reconnect(self) -> None:
+        """저장된 자격증명으로 HANA 세션 재연결 (장시간 추출 중 세션 만료 대응)."""
+        if not self._password:
+            raise RuntimeError("재연결 불가: 저장된 자격증명 없음 (connect() 미호출)")
+        self.connect(self._host, self._port, self._user, self._password)
 
     def close(self) -> None:
         if self.conn:
@@ -218,29 +226,38 @@ class HANAConnection:
         """SQL 실행 → DataFrame 반환 (fetchmany 청크 방식으로 OOM 방지).
 
         chunksize : 한 번에 가져올 행 수 (기본 50,000).
+        세션 만료(장시간 추출 중 HANA 세션 종료)가 감지되면 재연결 후 1회 재시도.
         """
-        cur = self.conn.cursor()
-        try:
-            if params:
-                cur.execute(sql, params)
-            else:
-                cur.execute(sql)
-            cols = [d[0] for d in cur.description]
+        for attempt in range(2):
+            try:
+                cur = self.conn.cursor()
+                try:
+                    if params:
+                        cur.execute(sql, params)
+                    else:
+                        cur.execute(sql)
+                    cols = [d[0] for d in cur.description]
 
-            chunks: list[pd.DataFrame] = []
-            while True:
-                rows = cur.fetchmany(chunksize)
-                if not rows:
-                    break
-                chunks.append(pd.DataFrame(rows, columns=cols))
+                    chunks: list[pd.DataFrame] = []
+                    while True:
+                        rows = cur.fetchmany(chunksize)
+                        if not rows:
+                            break
+                        chunks.append(pd.DataFrame(rows, columns=cols))
 
-            if not chunks:
-                return pd.DataFrame(columns=cols)
-            if len(chunks) == 1:
-                return chunks[0]
-            return pd.concat(chunks, ignore_index=True)
-        finally:
-            cur.close()
+                    if not chunks:
+                        return pd.DataFrame(columns=cols)
+                    if len(chunks) == 1:
+                        return chunks[0]
+                    return pd.concat(chunks, ignore_index=True)
+                finally:
+                    cur.close()
+            except Exception as exc:
+                # 세션이 끊긴 경우만 재연결 후 재시도 (쿼리 오류 258/139 등은 재시도 안 함)
+                if attempt == 0 and self._password and not self.is_connected():
+                    self.reconnect()
+                    continue
+                raise
 
     def get_date_range(self, schema: str, table: str, date_col: str) -> dict[str, str]:
         """테이블의 날짜 컬럼 최솟값·최댓값 반환."""
