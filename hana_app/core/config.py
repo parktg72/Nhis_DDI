@@ -97,10 +97,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # ── HANA 테이블 위치 ─────────────────────────────────────────
     "tables": {
-        "t20":    {"schema": "NHISBDA",  "table": "HHDT_TEMSBJ20"},
-        "t30":    {"schema": "NHISBDA",  "table": "HHDT_TEMSBJ30"},
-        "t40":    {"schema": "NHISBDA",  "table": "HHDT_TEMSBJ40"},
-        "t60":    {"schema": "NHISBDA",  "table": "HHDT_TEMSBJ60"},
+        "t20":    {"schema": "NHISBASE",  "table": "HBMT_TBGJME20"},
+        "t30":    {"schema": "NHISBASE",  "table": "HBMT_TBGJME30"},
+        "t40":    {"schema": "NHISBASE",  "table": "HBMT_TBGJME40"},
+        "t60":    {"schema": "NHISBASE",  "table": "HBMT_TBGJME60"},
         "yoyang": {"schema": "NHISBDA", "table": "HHRT_MCINST_YY"},
     },
 

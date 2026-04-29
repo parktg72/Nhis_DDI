@@ -332,10 +332,10 @@ with tab_tbl:
                 "HANA DB를 선택한 경우에만 이 탭을 사용합니다.")
 
     table_keys = {
-        "t20":    ("T20",    "요양급여비용명세서", "NHISBDA",  "HHDT_TEMSBJ20"),
-        "t30":    ("T30",    "진료내역 (원내)",    "NHISBDA",  "HHDT_TEMSBJ30"),
-        "t40":    ("T40",    "상병내역",           "NHISBDA",  "HHDT_TEMSBJ40"),
-        "t60":    ("T60",    "원외처방전 내역",    "NHISBDA",  "HHDT_TEMSBJ60"),
+        "t20":    ("T20",    "요양급여비용명세서", "NHISBASE",  "HBMT_TBGJME20"),
+        "t30":    ("T30",    "진료내역 (원내)",    "NHISBASE",  "HBMT_TBGJME30"),
+        "t40":    ("T40",    "상병내역",           "NHISBASE",  "HBMT_TBGJME40"),
+        "t60":    ("T60",    "원외처방전 내역",    "NHISBASE",  "HBMT_TBGJME60"),
         "yoyang": ("요양기관","요양기관 현황",     "NHISBDA",  "HHRT_MCINST_YY"),
     }
 
