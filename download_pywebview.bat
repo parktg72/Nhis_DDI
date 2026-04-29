@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM Download pywebview for Python 3.12 (Windows, offline install)
 REM Run this script on a machine WITH internet access
 REM Then copy the packages_win\py312 folder to the offline machine
