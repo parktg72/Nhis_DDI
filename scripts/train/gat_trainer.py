@@ -92,6 +92,7 @@ class GATTrainer(BaseGraphTrainer):
                 heads=self.params.get("heads", 4),
                 out_dim=self.params.get("out_dim", 32),
             )
+            self._trained = True
             return self
 
         # 3. 부정쌍 샘플링 (NEG_POS_RATIO:1)
@@ -178,6 +179,9 @@ class GATTrainer(BaseGraphTrainer):
         if best_state:
             model.load_state_dict(best_state)
         self._gat_model = model
+        # EnsembleTrainer3Way.fit_gat() 가 BaseGraphTrainer.fit() wrapper 를 우회해
+        # 여기를 직접 호출하므로, calibrate() / save() 가 검사하는 _trained 를 명시 set.
+        self._trained = True
         logger.info("GATTrainer 학습 완료 (%.1fs): gat_val_auc=%.4f, pairs=%d",
                     time.perf_counter() - t0, best_auc, len(tr_pairs))
 

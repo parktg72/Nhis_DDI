@@ -271,8 +271,8 @@ class TestBaseGraphTrainer:
 
 
 @pytest.mark.skipif(
-    not _torch_available,
-    reason="PyTorch 미설치",
+    not (_torch_available and _pyg_available),
+    reason="PyTorch/PyG 미설치",
 )
 class TestGATTrainer:
 
@@ -297,7 +297,11 @@ class TestGATTrainer:
             "severity": ["contraindicated","major","major"],
         })
         from scripts.train.gat_dataset import GATDataset
-        return GATDataset(prescription_df=prescription_df, ddi_df=ddi_df)
+        return GATDataset(
+            prescription_df=prescription_df,
+            ddi_df=ddi_df,
+            prescription_split="train",
+        )
 
     def test_fit_sets_trained(self, small_dataset, tmp_path):
         from scripts.train.gat_trainer import GATTrainer

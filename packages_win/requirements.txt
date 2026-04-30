@@ -41,6 +41,7 @@ joblib>=1.3.0
 # -- 머신러닝 Phase 3 (딥러닝)
 torch>=2.2.0
 pytorch-tabnet>=4.0.0
+torch-geometric>=2.7.0,<3.0.0  # GAT 모델 (선택적; 부재 시 GAT 테스트 자동 skip)
 
 # -- 웹 앱 (Streamlit)
 streamlit>=1.30.0
