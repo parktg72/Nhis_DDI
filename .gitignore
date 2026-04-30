@@ -50,7 +50,7 @@ hana_desktop/
 hana_app/hana_config.json
 
 # 미완성 앱 / 비코드 파일 (리뷰 도구 파일명 인코딩 호환성)
-hana/
+hana/*
 hira/
 error/
 lay_out/
@@ -68,6 +68,8 @@ web-user-guide.md
 !hana_app/run.bat
 !packages_win/install.bat
 !packages_win/download.bat
+!hana/install.bat
+!hana/download.bat
 !hana_app/requirements.txt
 !packages_win/requirements.txt
 
