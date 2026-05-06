@@ -101,8 +101,6 @@ def test_run_training_calls_with_partition_str(monkeypatch):
         captured["partition"] = partition
         captured["kwargs"] = kwargs
         # Return a minimal TrainResult
-        import sys
-        sys.path.insert(0, "/tmp/codex-review-fixes")
         from scripts.train.pipeline import TrainResult
         from scripts.train.evaluator import EvalResult
         r = TrainResult(partition=partition, model_type="xgboost")
@@ -120,7 +118,6 @@ def test_run_training_calls_with_partition_str(monkeypatch):
             pass
 
     import sys
-    sys.path.insert(0, "/tmp/codex-review-fixes")
     # Force reimport after monkeypatch
     if "dags.ddi_train_dag" in sys.modules:
         del sys.modules["dags.ddi_train_dag"]

@@ -65,6 +65,12 @@ if "%PKG_MISSING%"=="1" (
 REM --find-links 이중 경로
 set FIND_LINKS=--find-links="%WIN_PKG_DIR%" --find-links="%HANA_PKG_DIR%"
 
+REM Python 3.12 일 때만 constraints-py312.txt 적용 (dev/prod 패리티)
+set CONSTRAINT=
+if "%PY_VERSION%"=="312" (
+    set CONSTRAINT=--constraint "%PROJECT_ROOT%constraints-py312.txt"
+)
+
 REM 가상환경 설정
 set CREATE_VENV=0
 if "%2"=="venv" set CREATE_VENV=1
@@ -94,6 +100,7 @@ echo [2/5] 핵심 데이터 처리 및 ML 패키지 설치...
 %PYTHON_BIN% -m pip install ^
     --no-index ^
     %FIND_LINKS% ^
+    %CONSTRAINT% ^
     numpy pandas pyarrow scipy scikit-learn xgboost lightgbm shap joblib
 
 REM ── 3단계: HANA 연결 ─────────────────────────────────────────
@@ -139,6 +146,7 @@ REM packages_win requirements
 %PYTHON_BIN% -m pip install ^
     --no-index ^
     %FIND_LINKS% ^
+    %CONSTRAINT% ^
     --upgrade ^
     -r "%WIN_DIR%\requirements.txt"
 
@@ -146,6 +154,7 @@ REM hana requirements
 %PYTHON_BIN% -m pip install ^
     --no-index ^
     %FIND_LINKS% ^
+    %CONSTRAINT% ^
     --upgrade ^
     -r "%HANA_DIR%\requirements.txt"
 

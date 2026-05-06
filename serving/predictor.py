@@ -637,15 +637,16 @@ class RequestFeatureBuilder:
         feat["long_term_drug_count"] = float(sum(1 for d in durations if d >= 30))
 
         # ── ATC 중복 피처 ──────────────────────────────────────────────────
+        # ETL 계약(scripts/etl/prescription_aggregator.py:325-343)과 정렬:
+        #   dup_atc5 = full 7-char ATC, dup_atc4 = 5-prefix, dup_atc3 = 4-prefix
         from collections import Counter
-        cnt5 = Counter(atc_codes)
-        cnt4 = Counter(c[:5] for c in atc_codes if len(c) >= 5)
-        cnt3 = Counter(c[:4] for c in atc_codes if len(c) >= 4)
-        cnt3atc = Counter(c[:3] for c in atc_codes if len(c) >= 3)
+        cnt5 = Counter(atc_codes)                                       # full 7-char
+        cnt4 = Counter(c[:5] for c in atc_codes if len(c) >= 5)         # 5-prefix
+        cnt3 = Counter(c[:4] for c in atc_codes if len(c) >= 4)         # 4-prefix
         feat["dup_same_ingredient"] = float(sum(1 for v in cnt5.values() if v >= 2))
-        feat["dup_atc5"]            = float(sum(1 for v in cnt4.values() if v >= 2))
-        feat["dup_atc4"]            = float(sum(1 for v in cnt3.values() if v >= 2))
-        feat["dup_atc3"]            = float(sum(1 for v in cnt3atc.values() if v >= 2))
+        feat["dup_atc5"]            = float(sum(1 for v in cnt5.values() if v >= 2))
+        feat["dup_atc4"]            = float(sum(1 for v in cnt4.values() if v >= 2))
+        feat["dup_atc3"]            = float(sum(1 for v in cnt3.values() if v >= 2))
         # dup_efmdc: 약효분류 중복 — DrugMaster 미로드로 0.0 고정 (serving 제약)
         feat["dup_efmdc"]           = 0.0
 

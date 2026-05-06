@@ -46,17 +46,34 @@ def _require_admin(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
         raise HTTPException(status_code=401, detail="관리자 인증 실패")
 
 
+def _model_mode(pred) -> str:
+    """단일 ML / 계층 / 양쪽 / 없음 — model_mode 라벨 도출."""
+    ml_on = bool(pred._ml.loaded)
+    hier_on = pred._hierarchical is not None and pred._hierarchical.loaded
+    if ml_on and hier_on:
+        return "both"
+    if hier_on:
+        return "hierarchical"
+    if ml_on:
+        return "single"
+    return "none"
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
-    """서버 및 모델 상태 확인."""
+    """서버 및 모델 상태 확인. 계층 모드만 로드된 경우도 model_loaded=True."""
     try:
         pred = get_predictor()
+        ml_loaded = bool(pred._ml.loaded)
+        hier_loaded = pred._hierarchical is not None and pred._hierarchical.loaded
         return HealthResponse(
             status="ok",
-            model_loaded=pred._ml.loaded,
+            model_loaded=ml_loaded or hier_loaded,
             rule_loaded=pred._safety_net is not None,
             version=APP_VERSION,
             uptime_sec=round(pred.uptime, 1),
+            model_mode=_model_mode(pred),
+            hierarchical_loaded=hier_loaded,
         )
     except RuntimeError:
         return HealthResponse(
@@ -65,19 +82,37 @@ async def health_check():
             rule_loaded=False,
             version=APP_VERSION,
             uptime_sec=0.0,
+            model_mode="none",
+            hierarchical_loaded=False,
         )
 
 
 @router.get("/model/info", response_model=ModelInfoResponse)
 async def model_info():
-    """로드된 모델 정보."""
+    """로드된 모델 정보. 계층 모드만 로드된 경우 stage1/stage2 정보로 채움."""
     pred = get_predictor()
     ml = pred._ml
+    hier = pred._hierarchical
+
+    if ml.loaded:
+        return ModelInfoResponse(
+            model_type=ml._model_type,
+            partition=ml._partition,
+            n_features=len(ml._feature_names) if ml._feature_names else None,
+            threshold=ml._threshold,
+        )
+    if hier is not None and hier.loaded:
+        return ModelInfoResponse(
+            model_type="hierarchical",
+            partition=None,
+            n_features=len(hier.feature_cols) if hier.feature_cols else None,
+            threshold=hier._thresholds.get("tau_red"),
+        )
     return ModelInfoResponse(
-        model_type=ml._model_type if ml.loaded else "none",
+        model_type="none",
         partition=ml._partition,
         n_features=len(ml._feature_names) if ml._feature_names else None,
-        threshold=ml._threshold if ml.loaded else None,
+        threshold=None,
     )
 
 

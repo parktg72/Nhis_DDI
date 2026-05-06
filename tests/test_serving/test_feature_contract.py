@@ -48,8 +48,6 @@ def test_mlmodel_loads_feature_names(tmp_path):
 
 def test_builder_aligns_to_feature_names(tmp_path):
     """Builder must reorder features to match training order."""
-    import sys
-    sys.path.insert(0, "/tmp/codex-review-fixes")
     from serving.predictor import RequestFeatureBuilder
     from serving.schemas import PredictRequest, DrugItem
 

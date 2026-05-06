@@ -51,6 +51,12 @@ if not exist "%HANA_PKG_DIR%" (
     set HANA_PKG_DIR=
 )
 
+REM Python 3.12 일 때만 constraints-py312.txt 적용 (dev/prod 패리티)
+set CONSTRAINT=
+if "%PY_VERSION%"=="312" (
+    set CONSTRAINT=--constraint "%PROJECT_ROOT%\constraints-py312.txt"
+)
+
 REM 가상환경 옵션
 set CREATE_VENV=0
 if "%2"=="venv" set CREATE_VENV=1
@@ -78,6 +84,7 @@ if "%HANA_PKG_DIR%"=="" (
     %PYTHON_BIN% -m pip install ^
         --no-index ^
         --find-links="%PKG_DIR%" ^
+        %CONSTRAINT% ^
         --upgrade ^
         -r "%REQUIREMENTS%"
 ) else (
@@ -86,6 +93,7 @@ if "%HANA_PKG_DIR%"=="" (
         --no-index ^
         --find-links="%PKG_DIR%" ^
         --find-links="%HANA_PKG_DIR%" ^
+        %CONSTRAINT% ^
         --upgrade ^
         -r "%REQUIREMENTS%"
 )

@@ -160,10 +160,18 @@ class BatchPredictResponse(BaseModel):
 class HealthResponse(BaseModel):
     """헬스체크 응답."""
     status:       str    # "ok" | "degraded"
-    model_loaded: bool
+    model_loaded: bool   # 단일 ML 또는 계층 모델 둘 중 하나라도 로드되면 True
     rule_loaded:  bool
     version:      str
     uptime_sec:   float
+    model_mode:           Optional[str]  = Field(
+        None,
+        description='로드된 모델 모드: "single" | "hierarchical" | "both" | "none"',
+    )
+    hierarchical_loaded:  Optional[bool] = Field(
+        None,
+        description="계층 분류기(Stage1/Stage2) 로드 여부",
+    )
 
 
 class ModelInfoResponse(BaseModel):

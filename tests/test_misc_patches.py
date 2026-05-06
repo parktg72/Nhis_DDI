@@ -38,7 +38,9 @@ def test_all_reasons_no_duplicate():
 
     pred = HybridPredictor.__new__(HybridPredictor)
     pred._ml_lock = threading.RLock()
+    pred._hier_lock = threading.RLock()
     pred._ml = MagicMock(loaded=False)
+    pred._hierarchical = None
     pred._ddi_matrix = None
     pred._safety_net = None
     pred._dup_detector = None

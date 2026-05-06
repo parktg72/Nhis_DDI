@@ -72,6 +72,7 @@ web-user-guide.md
 !hana/download.bat
 !hana_app/requirements.txt
 !packages_win/requirements.txt
+!constraints-py312.txt
 
 # 데스크탑 앱 (pywebview) 관련 파일 추적 허용 — 폐쇄망 배포 대상
 !desktop_app.py

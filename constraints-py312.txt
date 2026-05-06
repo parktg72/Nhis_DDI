@@ -1,0 +1,50 @@
+# ============================================================
+# Python 3.12 dev/prod 패리티 lock — Windows 폐쇄망 휠셋 기준
+# Codex review 2026-05-06 (docs/reports/2026-05-06-codex-review-for-claude.md)
+#
+# 사용법:
+#   pip install --constraint constraints-py312.txt -r hana_app/requirements.txt
+#   pip install --no-index --find-links=packages_win/py312 \
+#       --constraint constraints-py312.txt -r packages_win/requirements.txt
+#
+# 진실 출처: packages_win/py312/*.whl (prod 검증 통과 휠셋)
+# 로컬 .venv 가 휠셋보다 앞선 버전이면 prod 와 동작이 갈라진다 — 이 파일이 그 갈림을 막는 단일 lock.
+#
+# 갱신 절차:
+#   1. packages_win/py312/ 휠셋을 prod 검증 통과한 새 조합으로 업데이트
+#   2. 본 파일의 == 핀을 새 휠 버전으로 동기
+#   3. uv venv --python 3.12 .venv && pip install --constraint constraints-py312.txt ...
+#   4. 전체 pytest 통과 + Windows install_312.bat 검증 통과 확인
+# ============================================================
+
+# ── 핵심 네이티브 (학습/서빙 동작에 직접 영향) ────────────────────────────────
+numpy==2.4.3
+scipy==1.17.1
+pandas==2.3.3
+scikit-learn==1.8.0
+xgboost==3.2.0
+lightgbm==4.6.0
+catboost==1.2.10
+torch==2.11.0
+joblib==1.5.3
+shap==0.51.0
+statsmodels==0.14.6
+pyarrow==23.0.1
+
+# ── API 서빙 ──────────────────────────────────────────────────────────────
+# fastapi 0.135.x ↔ starlette 0.52.x: 0.136 + starlette 1.0 으로 동시 점프하면
+# Pydantic ResponseValidation 동작이 바뀌므로 함께 핀.
+fastapi==0.135.2
+starlette==0.52.1
+uvicorn==0.42.0
+pydantic==2.12.5
+pydantic-core==2.42.0
+
+# ── 데이터 입출력 / DB ────────────────────────────────────────────────────
+hdbcli==2.28.17
+pyreadstat==1.3.3
+duckdb==1.5.1
+
+# ── 시각화 / 보조 ─────────────────────────────────────────────────────────
+matplotlib==3.10.8
+plotly==6.6.0
