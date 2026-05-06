@@ -335,6 +335,47 @@ class TestPerformance:
         assert set(result1.triggered_rules) == set(result2.triggered_rules)
 
 
+# ─── _has_high_risk_drug yaml 동기 회귀 (Codex 2026-05-06 ISSUE-3b) ───────────
+
+class TestHasHighRiskDrugYamlAlignment:
+    """drug_rules.yaml :123 의 15개 keyword 모두 _has_high_risk_drug 가 인식해야 함.
+
+    직전까지 hardcoded 9개 list 였음 — sirolimus / insulin / clozapine /
+    carbamazepine / valproate / phenobarbital 6개 누락. drug_count >= 10 AND
+    has_high_risk_drug (drug_rules.yaml :255) 분기에서 해당 환자가 잘못 grade 됨.
+    yaml 1차 자료 동기 후 회귀 가드.
+    """
+
+    @pytest.mark.parametrize("high_risk_drug", [
+        # 직전까지 누락되어 있던 6개 — yaml :123 에 따르면 모두 high-risk
+        "sirolimus", "insulin", "clozapine",
+        "carbamazepine", "valproate", "phenobarbital",
+    ])
+    def test_newly_aligned_drug_detected(self, safety_net, high_risk_drug):
+        """yaml 정의된 약물이 _has_high_risk_drug 에서 인식되는지."""
+        from rules.safety_net import RiskAssessment
+        result = RiskAssessment(risk_grade="Normal")
+        result.input_drugs = [high_risk_drug]
+        assert safety_net._has_high_risk_drug(result), (
+            f"yaml :123 정의 약물 '{high_risk_drug}' 이 _has_high_risk_drug 에서 "
+            f"미인식 — drug_rules.yaml 동기 깨짐"
+        )
+
+    @pytest.mark.parametrize("legacy_drug", [
+        # 직전부터 인식되던 9개 — 회귀 방지
+        "warfarin", "methotrexate", "lithium", "digoxin", "amiodarone",
+        "phenytoin", "cyclosporine", "tacrolimus", "theophylline",
+    ])
+    def test_legacy_drug_still_detected(self, safety_net, legacy_drug):
+        """기존 인식 약물 회귀 방지."""
+        from rules.safety_net import RiskAssessment
+        result = RiskAssessment(risk_grade="Normal")
+        result.input_drugs = [legacy_drug]
+        assert safety_net._has_high_risk_drug(result), (
+            f"기존 인식 약물 '{legacy_drug}' 이 _has_high_risk_drug 에서 회귀"
+        )
+
+
 # ─── get_ddi_severity regex 특수문자 회귀 가드 (Codex 2026-05-06 ISSUE-6) ─────
 
 class TestGetDDISeverityRegexEscape:

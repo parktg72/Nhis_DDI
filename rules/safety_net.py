@@ -491,20 +491,27 @@ class SafetyNet:
 
     @staticmethod
     def _has_high_risk_drug(result: RiskAssessment) -> bool:
-        """고위험 약물 포함 여부 (입력 약물 전체 + DDI 쌍에서 확인)."""
-        high_risk_keywords = [
-            "warfarin", "methotrexate", "lithium", "digoxin", "amiodarone",
-            "phenytoin", "cyclosporine", "tacrolimus", "theophylline",
-        ]
+        """고위험 약물 포함 여부 (입력 약물 전체 + DDI 쌍에서 확인).
+
+        단일 출처: rules.risk_drug_constants.HIGH_RISK_KEYWORDS
+        (drug_rules.yaml :123 high_risk_drugs.name_keywords 미러 — CLINICAL_STANDARDS_v1.0).
+
+        Codex/Qwen 2026-05-06 ISSUE-3b: 직전까지 hardcoded 9개 list 가 yaml 정의
+        15개와 어긋난 결함. sirolimus / insulin / clozapine / carbamazepine /
+        valproate / phenobarbital 6개 누락 → drug_count >= 10 AND has_high_risk_drug
+        분기에서 해당 환자가 잘못 grade 됨. yaml 1차 자료 동기로 정정.
+        """
+        from rules.risk_drug_constants import HIGH_RISK_KEYWORDS
+
         # 1. 입력 약물 목록 전체 검사
         for drug in result.input_drugs:
             drug_lower = drug.lower()
-            for kw in high_risk_keywords:
+            for kw in HIGH_RISK_KEYWORDS:
                 if kw in drug_lower:
                     return True
         # 2. DDI 쌍에서도 검사 (매트릭스 매칭으로 추가된 약물명 포함)
         for pair in result.ddi_pairs:
-            for kw in high_risk_keywords:
+            for kw in HIGH_RISK_KEYWORDS:
                 if kw in pair.drug_a.lower() or kw in pair.drug_b.lower():
                     return True
         return False

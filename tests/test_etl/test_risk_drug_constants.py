@@ -88,23 +88,22 @@ def test_high_risk_keyword_count_15():
     )
 
 
-def test_safety_net_high_risk_subset_relationship():
-    """rules/safety_net.py 의 hardcoded high_risk_keywords (현 9개) 가 단일 출처의 부분집합.
+def test_safety_net_uses_single_source():
+    """rules/safety_net._has_high_risk_drug 가 단일 출처 import 사용 (ISSUE-3b 정렬 후).
 
-    임상 영향 변경 (9→15) 은 별도 단계. 본 테스트는 현재 hardcoded list 가 단일 출처를
-    초과하지 않음만 보장 (subset). 만약 safety_net 에 단일 출처 외 약물이 추가되면 fail
-    하여 drift 명시.
+    직전까지 hardcoded 9개 list — drug_rules.yaml :123 의 15개 정의와 어긋난 결함.
+    yaml 1차 자료 동기로 정정. 회귀 시 본 테스트가 hardcoded fallback 또는 부분 list
+    재출현을 잡는다.
     """
     from rules.safety_net import SafetyNet
-    # SafetyNet._has_high_risk_drug 의 hardcoded list 추출 — staticmethod 라 직접 inspect
     import inspect
     src = inspect.getsource(SafetyNet._has_high_risk_drug)
-    # 9개 약물 keyword 가 모두 단일 출처에 있는지
-    safety_net_keywords = {
-        "warfarin", "methotrexate", "lithium", "digoxin", "amiodarone",
-        "phenytoin", "cyclosporine", "tacrolimus", "theophylline",
-    }
-    assert safety_net_keywords.issubset(HIGH_RISK_KEYWORDS), (
-        f"safety_net hardcoded high-risk 가 단일 출처를 초과:\n"
-        f"  extra: {safety_net_keywords - HIGH_RISK_KEYWORDS}"
+    # 1) HIGH_RISK_KEYWORDS 를 import 해서 사용해야 함
+    assert "HIGH_RISK_KEYWORDS" in src, (
+        "safety_net._has_high_risk_drug 가 HIGH_RISK_KEYWORDS 를 사용하지 않음 — "
+        "yaml 정의와 drift 가능"
+    )
+    # 2) 더 이상 hardcoded list literal 이 함수 내부에 없어야 함 (회귀 가드)
+    assert "high_risk_keywords = [" not in src, (
+        "safety_net 에 hardcoded high_risk_keywords list 가 남아있음 — drift 위험"
     )
