@@ -49,6 +49,13 @@ def _normalize_yyyymmdd(d: "str | date") -> str:
     s = str(d).strip().replace("-", "").replace("/", "")
     if len(s) != 8 or not s.isdigit():
         raise ValueError(f"YYYYMMDD 형식 필요 (NVARCHAR(8) compat): {d!r}")
+    # 추가 검증 — 13월/2월30일/비윤년2월29일 등 형식상 8자리 숫자지만
+    # 잘못된 날짜를 query 에 보내 무음 0-row 또는 HANA 측 예외를 막음.
+    from datetime import datetime as _datetime
+    try:
+        _datetime.strptime(s, "%Y%m%d")
+    except ValueError as e:
+        raise ValueError(f"유효한 날짜 아님 (NVARCHAR(8) YYYYMMDD): {d!r} — {e}")
     return s
 
 

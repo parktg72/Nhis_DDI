@@ -37,8 +37,10 @@ pyarrow==23.0.1
 fastapi==0.135.2
 starlette==0.52.1
 uvicorn==0.42.0
+# pydantic 2.12.5 의 wheel metadata 가 pydantic-core==2.41.5 hard pin —
+# 2.42.0 으로 핀하면 pip install --constraint 시 충돌해 install 실패 (Codex 2026-05-06).
 pydantic==2.12.5
-pydantic-core==2.42.0
+pydantic-core==2.41.5
 
 # ── 데이터 입출력 / DB ────────────────────────────────────────────────────
 hdbcli==2.28.17

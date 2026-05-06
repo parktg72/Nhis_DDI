@@ -58,6 +58,29 @@ def test_none_raises():
         _normalize_yyyymmdd(None)  # type: ignore[arg-type]
 
 
+def test_invalid_month_raises():
+    """13월 같은 잘못된 월 — len/digit 검증만으론 통과, strptime 으로 reject."""
+    with pytest.raises(ValueError):
+        _normalize_yyyymmdd("20241332")
+
+
+def test_invalid_day_raises():
+    """2월 30일 같은 잘못된 일 — len/digit 검증만으론 통과, strptime 으로 reject."""
+    with pytest.raises(ValueError):
+        _normalize_yyyymmdd("20240230")
+
+
+def test_leap_year_feb29_passes():
+    """윤년 2월 29일은 유효 — 정상 통과 보장."""
+    assert _normalize_yyyymmdd("20240229") == "20240229"
+
+
+def test_non_leap_year_feb29_raises():
+    """비윤년 2월 29일은 invalid — strptime 으로 reject."""
+    with pytest.raises(ValueError):
+        _normalize_yyyymmdd("20230229")
+
+
 _T20_COLS = {
     "bill_no": "CMN_KEY", "patient_id": "INDI_DSCM_NO",
     "institution_id": "MDCARE_SYM", "start_date": "MDCARE_STRT_DT",
@@ -78,9 +101,11 @@ _T40_COLS = {
     "sick_code": "MCEX_SICK_SYM", "sick_type": "SICK_CLSF_TYPE",
 }
 _T60_COLS = {
+    # T60 production config (hana_app/hana_config.json:81): drug_code=GNL_NM_CD.
+    # T60 schema (HBMT_TBGJME60.txt) 에 WK_COMPN_CD 컬럼 없음 — GNL_NM_CD/RVSN_WK_COMPN_CD 만 존재.
     "bill_no": "CMN_KEY", "patient_id": "INDI_DSCM_NO",
     "institution_id": "MDCARE_SYM", "start_date": "MDCARE_STRT_DT",
-    "drug_code": "WK_COMPN_CD", "drug_code_alt": "RVSN_WK_COMPN_CD",
+    "drug_code": "GNL_NM_CD", "drug_code_alt": "RVSN_WK_COMPN_CD",
     "edi_code": "MCARE_DIV_CD",
     "dose_once": "MPRSC_TIME1_TUYAK_CPCT", "dose_freq": "MPRSC_DD1_TUYAK_CPCT",
     "total_days": "TOT_MCNT", "sick_code": "SICK_SYM1",
