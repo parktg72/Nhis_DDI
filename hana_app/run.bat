@@ -20,11 +20,17 @@ set APP_FILE=%SCRIPT_DIR%app.py
 if not "%1"=="" set PORT=%1
 
 REM Python 바이너리 결정 (가상환경 자동 감지)
-REM 우선순위: .venv_hana > .venv312 > 시스템 python
+REM 우선순위: .venv_hana > .venv > .venv312 > 시스템 python
+REM (.venv 는 install_all.bat / packages_win/install.bat / uv venv 가 생성하는
+REM  표준 이름. .venv_hana 는 install_312.bat 가 생성하는 별칭. run_desktop.bat
+REM  과 일관성 유지.)
 set PYTHON_BIN=python
 if exist "%PROJECT_ROOT%\.venv_hana\Scripts\python.exe" (
     set PYTHON_BIN=%PROJECT_ROOT%\.venv_hana\Scripts\python.exe
     echo 가상환경 사용: .venv_hana
+) else if exist "%PROJECT_ROOT%\.venv\Scripts\python.exe" (
+    set PYTHON_BIN=%PROJECT_ROOT%\.venv\Scripts\python.exe
+    echo 가상환경 사용: .venv
 ) else if exist "%PROJECT_ROOT%\.venv312\Scripts\python.exe" (
     set PYTHON_BIN=%PROJECT_ROOT%\.venv312\Scripts\python.exe
     echo 가상환경 사용: .venv312
