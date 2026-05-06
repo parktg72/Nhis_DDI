@@ -49,30 +49,16 @@ _BUILDER_KNOWN_COLS: frozenset[str] = frozenset({
     "triple_whammy", "qt_risk_count", "drug_count_7d",
 })
 
-# 위험 약물 판정 상수 — 출처: scripts/etl/prescription_aggregator.py (CLINICAL_STANDARDS_v1.0)
-_HIGH_RISK_KEYWORDS = frozenset({
-    "warfarin", "methotrexate", "lithium", "digoxin", "amiodarone",
-    "phenytoin", "cyclosporine", "tacrolimus", "sirolimus", "theophylline",
-    "insulin", "clozapine", "carbamazepine", "valproate", "phenobarbital",
-})
-_HIGH_RISK_ATC_PREFIXES = (
-    "B01AA03", "L01BA01", "N05AN01", "C01AA05", "C01BD01",
-    "N03AB02", "L04AD01", "L04AD02", "L04AA18", "R03DA04",
+# 위험 약물 판정 상수 — 단일 출처: rules/risk_drug_constants.py
+# (Codex 2026-05-06 ISSUE-3 단일화. 기준: drug_rules.yaml :123 high_risk_drugs).
+from rules.risk_drug_constants import (
+    HIGH_RISK_KEYWORDS as _HIGH_RISK_KEYWORDS,
+    HIGH_RISK_ATC_PREFIXES as _HIGH_RISK_ATC_PREFIXES,
+    RENAL_RISK_KEYWORDS as _RENAL_RISK_KEYWORDS,
+    RENAL_RISK_ATC_PREFIXES as _RENAL_RISK_ATC_PREFIXES,
+    HEPATIC_RISK_KEYWORDS as _HEPATIC_RISK_KEYWORDS,
+    HEPATIC_RISK_ATC_PREFIXES as _HEPATIC_RISK_ATC_PREFIXES,
 )
-_RENAL_RISK_KEYWORDS = frozenset({
-    "ibuprofen", "naproxen", "diclofenac", "celecoxib", "ketorolac",
-    "indomethacin", "meloxicam", "piroxicam",
-    "gentamicin", "tobramycin", "amikacin", "vancomycin",
-    "lithium", "cisplatin", "acyclovir", "tenofovir",
-    "cyclosporine", "tacrolimus",
-})
-_RENAL_RISK_ATC_PREFIXES = ("M01A", "N05AN01", "J01GB", "L04AD")
-_HEPATIC_RISK_KEYWORDS = frozenset({
-    "methotrexate", "valproate", "valproic", "isoniazid", "amiodarone",
-    "phenytoin", "carbamazepine", "ketoconazole", "itraconazole",
-    "acetaminophen", "paracetamol",
-})
-_HEPATIC_RISK_ATC_PREFIXES = ("L01BA01", "N03AG01", "J04AC01", "C01BD01", "N03AB02")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

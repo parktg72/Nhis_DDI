@@ -26,34 +26,18 @@ logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 고위험/신기능/간기능 저하 위험 약물 키워드 및 ATC prefix
-# 기준: CLINICAL_STANDARDS_v1.0.md + drug_rules.yaml high_risk_drugs
+# 단일 출처: rules/risk_drug_constants.py (Codex 2026-05-06 ISSUE-3 단일화).
+# 기준: CLINICAL_STANDARDS_v1.0.md + drug_rules.yaml :123 high_risk_drugs.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_HIGH_RISK_KEYWORDS = {
-    "warfarin", "methotrexate", "lithium", "digoxin", "amiodarone",
-    "phenytoin", "cyclosporine", "tacrolimus", "sirolimus", "theophylline",
-    "insulin", "clozapine", "carbamazepine", "valproate", "phenobarbital",
-}
-_HIGH_RISK_ATC_PREFIXES = (
-    "B01AA03", "L01BA01", "N05AN01", "C01AA05", "C01BD01",
-    "N03AB02", "L04AD01", "L04AD02", "L04AA18", "R03DA04",
+from rules.risk_drug_constants import (
+    HIGH_RISK_KEYWORDS as _HIGH_RISK_KEYWORDS,
+    HIGH_RISK_ATC_PREFIXES as _HIGH_RISK_ATC_PREFIXES,
+    RENAL_RISK_KEYWORDS as _RENAL_RISK_KEYWORDS,
+    RENAL_RISK_ATC_PREFIXES as _RENAL_RISK_ATC_PREFIXES,
+    HEPATIC_RISK_KEYWORDS as _HEPATIC_RISK_KEYWORDS,
+    HEPATIC_RISK_ATC_PREFIXES as _HEPATIC_RISK_ATC_PREFIXES,
 )
-
-_RENAL_RISK_KEYWORDS = {
-    "ibuprofen", "naproxen", "diclofenac", "celecoxib", "ketorolac",
-    "indomethacin", "meloxicam", "piroxicam",       # NSAIDs
-    "gentamicin", "tobramycin", "amikacin", "vancomycin",  # 신독성 항생제
-    "lithium", "cisplatin", "acyclovir", "tenofovir",
-    "cyclosporine", "tacrolimus",                    # calcineurin inhibitors
-}
-_RENAL_RISK_ATC_PREFIXES = ("M01A", "N05AN01", "J01GB", "L04AD")
-
-_HEPATIC_RISK_KEYWORDS = {
-    "methotrexate", "valproate", "valproic", "isoniazid", "amiodarone",
-    "phenytoin", "carbamazepine", "ketoconazole", "itraconazole",
-    "acetaminophen", "paracetamol",
-}
-_HEPATIC_RISK_ATC_PREFIXES = ("L01BA01", "N03AG01", "J04AC01", "C01BD01", "N03AB02")
 
 
 def _check_risk_drugs(
