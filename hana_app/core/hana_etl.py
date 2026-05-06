@@ -28,6 +28,30 @@ from hana_app.core.db import _assert_safe_identifier
 
 logger = logging.getLogger(__name__)
 
+
+def _normalize_yyyymmdd(d: "str | date") -> str:
+    """YYYYMMDD 형식 8자리 숫자 문자열로 정규화.
+
+    HANA 처방 테이블 4종(T20/T30/T40/T60)의 MDCARE_STRT_DT 컬럼이
+    `NVARCHAR(8)` 이라(lay_out/6_테이블명_260428/HBMT_TBGJME{20,30,40,60}.txt
+    schema 확인) lexicographic string compare 가 정확. 단, 호출자가 ISO 형식
+    ("2024-01-01") 또는 datetime.date 객체를 넘기면 무음 0-row 또는 driver
+    자동변환 형식 불확정 위험 — 본 helper 가 진입점에서 강제 정규화.
+
+    CAST AS DATE 권고를 schema 1차 자료 근거로 정정 (Codex/Qwen 2026-05-06):
+    NVARCHAR(8) 컬럼에 CAST 를 걸면 인덱스 무력화 + 잘못된 row 에서 throw
+    위험. 정답은 입력 정규화.
+    """
+    if isinstance(d, date):
+        return d.strftime("%Y%m%d")
+    if d is None:
+        raise ValueError(f"YYYYMMDD 형식 필요 (NVARCHAR(8) compat): {d!r}")
+    s = str(d).strip().replace("-", "").replace("/", "")
+    if len(s) != 8 or not s.isdigit():
+        raise ValueError(f"YYYYMMDD 형식 필요 (NVARCHAR(8) compat): {d!r}")
+    return s
+
+
 # Parquet 저장 디렉토리
 RAW_DIR = ROOT / "data" / "raw"
 
@@ -372,9 +396,11 @@ class HANAExtractor:
 
     # ---- 날짜 범위 쿼리 (일 단위 청크용) ------------------------------------
 
-    def fetch_t20_by_date(self, date_from: str, date_to: str,
+    def fetch_t20_by_date(self, date_from: "str | date", date_to: "str | date",
                           progress_cb: Callable[[str], None] | None = None,
                           patient_ids: list[str] | None = None) -> pd.DataFrame:
+        date_from = _normalize_yyyymmdd(date_from)
+        date_to   = _normalize_yyyymmdd(date_to)
         c = self.cols["t20"]
         tbl = self._tbl("t20")
         sql = (
@@ -388,9 +414,11 @@ class HANAExtractor:
             progress_cb(f"T20 조회: {date_from}~{date_to}")
         return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
 
-    def fetch_t30_by_date(self, date_from: str, date_to: str,
+    def fetch_t30_by_date(self, date_from: "str | date", date_to: "str | date",
                           progress_cb: Callable[[str], None] | None = None,
                           patient_ids: list[str] | None = None) -> pd.DataFrame:
+        date_from = _normalize_yyyymmdd(date_from)
+        date_to   = _normalize_yyyymmdd(date_to)
         c = self.cols["t30"]
         tbl = self._tbl("t30")
         sql = (
@@ -408,9 +436,11 @@ class HANAExtractor:
             pid_batch=self._PID_BATCH_T30,
         )
 
-    def fetch_t60_by_date(self, date_from: str, date_to: str,
+    def fetch_t60_by_date(self, date_from: "str | date", date_to: "str | date",
                           progress_cb: Callable[[str], None] | None = None,
                           patient_ids: list[str] | None = None) -> pd.DataFrame:
+        date_from = _normalize_yyyymmdd(date_from)
+        date_to   = _normalize_yyyymmdd(date_to)
         c = self.cols["t60"]
         tbl = self._tbl("t60")
         sql = (
@@ -426,9 +456,11 @@ class HANAExtractor:
             progress_cb(f"T60 (원외) 조회: {date_from}~{date_to}")
         return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
 
-    def fetch_t40_by_date(self, date_from: str, date_to: str,
+    def fetch_t40_by_date(self, date_from: "str | date", date_to: "str | date",
                           progress_cb: Callable[[str], None] | None = None,
                           patient_ids: list[str] | None = None) -> pd.DataFrame:
+        date_from = _normalize_yyyymmdd(date_from)
+        date_to   = _normalize_yyyymmdd(date_to)
         c = self.cols["t40"]
         tbl = self._tbl("t40")
         sql = (
@@ -506,6 +538,8 @@ class HANAExtractor:
             )
             params = list(yyyymm_list) + like_params
         elif date_from and date_to:
+            date_from = _normalize_yyyymmdd(date_from)
+            date_to   = _normalize_yyyymmdd(date_to)
             sql = (
                 f'SELECT DISTINCT "{pid_col}" FROM {tbl} '
                 f'WHERE "{c["start_date"]}" BETWEEN ? AND ? AND ({like_clauses})'
