@@ -333,3 +333,90 @@ class TestPerformance:
         result2 = safety_net.assess(drugs)
         assert result1.risk_grade == result2.risk_grade
         assert set(result1.triggered_rules) == set(result2.triggered_rules)
+
+
+# ─── get_ddi_severity regex 특수문자 회귀 가드 (Codex 2026-05-06 ISSUE-6) ─────
+
+class TestGetDDISeverityRegexEscape:
+    """get_ddi_severity 의 str.contains 가 약물명을 literal 로 매칭해야 함.
+
+    배경: _apply_matrix_ddi (line 325-326) 는 이미 regex=False 사용.
+    하지만 get_ddi_severity (line 560-563) 는 regex=False 누락 → 약물명에
+    +, (, ), ., * 등이 포함되면 regex 메타문자로 해석되어 오탐/누락 발생.
+    Qwen 2026-05-06 후속 검토에서 식별, schema-grade 결함은 아니지만 cross-
+    family 동일 가드 (학습-서빙 parity 와 같은 정신).
+    """
+
+    @staticmethod
+    def _make_sn_with_matrix(matrix_df):
+        """SafetyNet 인스턴스에 mini DDI matrix 직접 주입."""
+        import pandas as pd  # noqa
+        sn = SafetyNet(
+            ddi_matrix_path=Path("nonexistent_path_for_test"),
+            drug_index_path=Path("nonexistent_path_for_test"),
+        )
+        sn._ddi_matrix = matrix_df
+        return sn
+
+    def test_period_no_false_positive(self):
+        """검색 입력 'drug.name' 의 . 가 wildcard 로 해석되어 False positive 발생 X.
+
+        str.contains(pattern, target) — pattern 이 user 입력 'drug.name'.
+        regex=True: . 가 wildcard 라 target 'drugxname' 매치 → False pos "Major".
+        regex=False: literal '.' → 매치 X → "None" (정답).
+        """
+        import pandas as pd
+        df = pd.DataFrame({
+            "drug_a_name": ["drugxname"],
+            "drug_b_name": ["partner_b"],
+            "_a_lower":    ["drugxname"],   # innocent literal string (no .)
+            "_b_lower":    ["partner_b"],
+            "severity":    ["Major"],
+        })
+        sn = self._make_sn_with_matrix(df)
+        # 검색 입력에만 메타문자 . 포함
+        result = sn.get_ddi_severity("drug.name", "partner_b")
+        assert result == "None", (
+            f"회귀: regex 메타 . 가 wildcard 로 해석되어 'drugxname' 에 False "
+            f"positive 매치. severity={result}"
+        )
+
+    def test_plus_self_match(self):
+        """약물명 'drug+plus' 의 + 가 regex 메타로 해석되지 않아야 함.
+
+        regex=True 면 'drug+plus' 의 + 가 'g 1회 이상' 의미라 자기 자신 미매치.
+        """
+        import pandas as pd
+        df = pd.DataFrame({
+            "drug_a_name": ["drug+plus"],
+            "drug_b_name": ["partner_a"],
+            "_a_lower":    ["drug+plus"],
+            "_b_lower":    ["partner_a"],
+            "severity":    ["Major"],
+        })
+        sn = self._make_sn_with_matrix(df)
+        result = sn.get_ddi_severity("drug+plus", "partner_a")
+        assert result == "Major", (
+            f"회귀: 'drug+plus' 자기-매치 실패 — + 가 regex 메타로 해석됨. "
+            f"severity={result}"
+        )
+
+    def test_paren_no_regex_error(self):
+        """약물명 'drug(brand)' 의 () 가 regex group 으로 해석되지 않아야 함.
+
+        regex=True 면 () 가 group capture 라 매치 결과 다르거나 해석 모호.
+        """
+        import pandas as pd
+        df = pd.DataFrame({
+            "drug_a_name": ["drug(brand)"],
+            "drug_b_name": ["partner_c"],
+            "_a_lower":    ["drug(brand)"],
+            "_b_lower":    ["partner_c"],
+            "severity":    ["Major"],
+        })
+        sn = self._make_sn_with_matrix(df)
+        result = sn.get_ddi_severity("drug(brand)", "partner_c")
+        assert result == "Major", (
+            f"회귀: 'drug(brand)' 처리 실패 — () 가 regex 메타로 해석됨. "
+            f"severity={result}"
+        )

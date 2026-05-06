@@ -551,16 +551,20 @@ class SafetyNet:
         )
 
     def get_ddi_severity(self, drug_a: str, drug_b: str) -> str:
-        """두 약물 간 DDI 심각도 조회."""
+        """두 약물 간 DDI 심각도 조회.
+
+        regex=False: 약물명에 +, (, ), ., * 등이 포함되면 regex 메타로 해석되어
+        오탐/누락 발생. _apply_matrix_ddi 와 동일한 literal 매칭 가드.
+        """
         if self._ddi_matrix.empty:
             return "Unknown"
         a_lower = drug_a.lower().strip()
         b_lower = drug_b.lower().strip()
         mask = (
-            (self._ddi_matrix["_a_lower"].str.contains(a_lower, na=False) &
-             self._ddi_matrix["_b_lower"].str.contains(b_lower, na=False)) |
-            (self._ddi_matrix["_a_lower"].str.contains(b_lower, na=False) &
-             self._ddi_matrix["_b_lower"].str.contains(a_lower, na=False))
+            (self._ddi_matrix["_a_lower"].str.contains(a_lower, regex=False, na=False) &
+             self._ddi_matrix["_b_lower"].str.contains(b_lower, regex=False, na=False)) |
+            (self._ddi_matrix["_a_lower"].str.contains(b_lower, regex=False, na=False) &
+             self._ddi_matrix["_b_lower"].str.contains(a_lower, regex=False, na=False))
         )
         matches = self._ddi_matrix[mask]
         if matches.empty:
