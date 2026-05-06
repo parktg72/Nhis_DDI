@@ -39,7 +39,14 @@ def small_ddi_df():
 
 @pytest.fixture
 def trained_trainer(small_prescription_df, small_ddi_df, tmp_path):
-    ds = GATDataset(prescription_df=small_prescription_df, ddi_df=small_ddi_df)
+    # GATTrainer.fit_graph() 가 prescription_df.attrs['split']='train' 또는
+    # GATDataset.prescription_split='train' 을 요구 (gat_trainer.py:67-72).
+    # 픽스처 결함으로 6건 ERROR 발생하던 회귀 정정.
+    ds = GATDataset(
+        prescription_df=small_prescription_df,
+        ddi_df=small_ddi_df,
+        prescription_split="train",
+    )
     trainer = GATTrainer(
         params={"hidden_dim":8,"heads":1,"out_dim":4,"epochs":2,"lr":0.01,"random_state":42},
         config=None, model_dir=tmp_path,
