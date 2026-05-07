@@ -4,9 +4,11 @@ SAP HANA DB 연결 관리
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import pandas as pd
+
+T = TypeVar("T")
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_$#]{1,128}$")
 
@@ -184,15 +186,38 @@ class HANAConnection:
         finally:
             cur.close()
 
+    # ── cursor 재연결 helper ────────────────────────────────────────────────
+
+    def _execute_with_reconnect(self, run: Callable[[Any], T]) -> T:
+        """cursor 작업을 1회 reconnect+retry 로 보호 (Codex 2026-05-07 #4).
+
+        query_df 가 직접 갖던 retry 패턴을 단발 helper(get_row_count/preview/
+        get_date_range/get_distinct_values) 4건과 일관 적용. query_df 자체는
+        chunked fetchmany 가독성 보존 위해 그대로 유지 (옵션 A).
+        """
+        for attempt in range(2):
+            try:
+                cur = self.conn.cursor()
+                try:
+                    return run(cur)
+                finally:
+                    cur.close()
+            except Exception:
+                if attempt == 0 and self._password and not self.is_connected():
+                    self.reconnect()
+                    continue
+                raise
+        raise RuntimeError("unreachable")  # pragma: no cover
+
     def get_row_count(self, schema: str, table: str) -> int:
         _assert_safe_identifier(schema, "schema")
         _assert_safe_identifier(table, "table")
-        cur = self.conn.cursor()
-        try:
+
+        def _run(cur: Any) -> int:
             cur.execute(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
             return cur.fetchone()[0]
-        finally:
-            cur.close()
+
+        return self._execute_with_reconnect(_run)
 
     # ── 데이터 조회 ────────────────────────────────────────────────────────
 
@@ -207,15 +232,15 @@ class HANAConnection:
             raise ValueError(f"limit는 1~10,000 범위여야 합니다. (입력값: {limit})")
         if offset < 0:
             raise ValueError(f"offset은 0 이상이어야 합니다. (입력값: {offset})")
-        cur = self.conn.cursor()
-        try:
+
+        def _run(cur: Any) -> pd.DataFrame:
             cur.execute(
                 f'SELECT * FROM "{schema}"."{table}" LIMIT {limit} OFFSET {offset}'
             )
             cols = [d[0] for d in cur.description]
             return pd.DataFrame(cur.fetchall(), columns=cols)
-        finally:
-            cur.close()
+
+        return self._execute_with_reconnect(_run)
 
     def query_df(
         self,
@@ -264,15 +289,15 @@ class HANAConnection:
         _assert_safe_identifier(schema, "schema")
         _assert_safe_identifier(table, "table")
         _assert_safe_identifier(date_col, "column")
-        cur = self.conn.cursor()
-        try:
+
+        def _run(cur: Any) -> dict[str, str]:
             cur.execute(
                 f'SELECT MIN("{date_col}"), MAX("{date_col}") FROM "{schema}"."{table}"'
             )
             row = cur.fetchone()
             return {"min": str(row[0] or ""), "max": str(row[1] or "")}
-        finally:
-            cur.close()
+
+        return self._execute_with_reconnect(_run)
 
     def get_distinct_values(
         self, schema: str, table: str, col: str, limit: int = 100
@@ -283,15 +308,15 @@ class HANAConnection:
         limit = int(limit)
         if not (1 <= limit <= 10_000):
             raise ValueError(f"limit는 1~10,000 범위여야 합니다. (입력값: {limit})")
-        cur = self.conn.cursor()
-        try:
+
+        def _run(cur: Any) -> list[str]:
             cur.execute(
                 f'SELECT DISTINCT "{col}" FROM "{schema}"."{table}" '
                 f"WHERE \"{col}\" IS NOT NULL ORDER BY \"{col}\" LIMIT {limit}"
             )
             return [str(r[0]) for r in cur.fetchall()]
-        finally:
-            cur.close()
+
+        return self._execute_with_reconnect(_run)
 
 
 # public alias — table_validator 등 외부 모듈에서 사용
