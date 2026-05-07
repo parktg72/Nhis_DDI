@@ -141,8 +141,7 @@ class HANAConnection:
     # ── 스키마 / 테이블 목록 ──────────────────────────────────────────────
 
     def get_schemas(self, filter_prefix: str = "") -> list[str]:
-        cur = self.conn.cursor()
-        try:
+        def _run(cur: Any) -> list[str]:
             if filter_prefix:
                 cur.execute(
                     "SELECT SCHEMA_NAME FROM SCHEMAS "
@@ -155,23 +154,21 @@ class HANAConnection:
                     "WHERE HAS_PRIVILEGES = 'TRUE' ORDER BY SCHEMA_NAME"
                 )
             return [r[0] for r in cur.fetchall()]
-        finally:
-            cur.close()
+
+        return self._execute_with_reconnect(_run)
 
     def get_tables(self, schema: str) -> list[str]:
-        cur = self.conn.cursor()
-        try:
+        def _run(cur: Any) -> list[str]:
             cur.execute(
                 "SELECT TABLE_NAME FROM TABLES WHERE SCHEMA_NAME = ? ORDER BY TABLE_NAME",
                 (schema,),
             )
             return [r[0] for r in cur.fetchall()]
-        finally:
-            cur.close()
+
+        return self._execute_with_reconnect(_run)
 
     def get_columns(self, schema: str, table: str) -> list[dict[str, str]]:
-        cur = self.conn.cursor()
-        try:
+        def _run(cur: Any) -> list[dict[str, str]]:
             cur.execute(
                 "SELECT COLUMN_NAME, DATA_TYPE_NAME, IS_NULLABLE "
                 "FROM TABLE_COLUMNS "
@@ -183,8 +180,8 @@ class HANAConnection:
                 {"name": r[0], "type": r[1], "nullable": r[2]}
                 for r in cur.fetchall()
             ]
-        finally:
-            cur.close()
+
+        return self._execute_with_reconnect(_run)
 
     # ── cursor 재연결 helper ────────────────────────────────────────────────
 

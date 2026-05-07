@@ -221,3 +221,110 @@ class TestHelperRetryIntegration:
         result = c.get_distinct_values("SCHEMA", "TBL", "COL")
         assert result == ["Z"]
         c.reconnect.assert_called_once()
+
+
+# ─── 메타 helper 통합 (Codex 2026-05-07 #4-ext) ───────────────────────────────
+
+class TestMetaHelperRetryIntegration:
+    """get_schemas / get_tables / get_columns 가 _execute_with_reconnect 사용 검증.
+
+    UI 카탈로그 탐색 hot path 3 helper 가 직전까지 direct cursor 라 세션 만료 시
+    raw exception. #4 의 partial scope 를 동일 패턴으로 확장.
+    """
+
+    def _make_conn(self):
+        return _make_conn_with_password()
+
+    def test_get_schemas_uses_reconnect_helper(self):
+        c = self._make_conn()
+        c.conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = [("NHISBASE",), ("NHISBDA",)]
+        c.conn.cursor.return_value = cur
+
+        result = c.get_schemas()
+        assert result == ["NHISBASE", "NHISBDA"]
+        cur.execute.assert_called_once()
+        cur.close.assert_called_once()
+
+    def test_get_schemas_with_filter_uses_reconnect_helper(self):
+        c = self._make_conn()
+        c.conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = [("NHISBASE",)]
+        c.conn.cursor.return_value = cur
+
+        result = c.get_schemas(filter_prefix="NHIS")
+        assert result == ["NHISBASE"]
+        # filter prefix 분기 — LIKE 패턴 바인딩 검증
+        args, _ = cur.execute.call_args
+        assert "LIKE" in args[0]
+        assert args[1] == ("NHIS%",)
+
+    def test_get_schemas_retries_on_session_loss(self):
+        c = self._make_conn()
+        c.conn = MagicMock()
+        cur1, cur2 = MagicMock(), MagicMock()
+        cur1.execute.side_effect = RuntimeError("session timeout")
+        cur2.fetchall.return_value = [("OK",)]
+        c.conn.cursor.side_effect = [cur1, cur2]
+        c.is_connected = MagicMock(return_value=False)
+        c.reconnect = MagicMock()
+
+        result = c.get_schemas()
+        assert result == ["OK"]
+        c.reconnect.assert_called_once()
+
+    def test_get_tables_uses_reconnect_helper(self):
+        c = self._make_conn()
+        c.conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = [("HBMT_TBGJME20",), ("HBMT_TBGJME30",)]
+        c.conn.cursor.return_value = cur
+
+        result = c.get_tables("NHISBASE")
+        assert result == ["HBMT_TBGJME20", "HBMT_TBGJME30"]
+
+    def test_get_tables_retries_on_session_loss(self):
+        c = self._make_conn()
+        c.conn = MagicMock()
+        cur1, cur2 = MagicMock(), MagicMock()
+        cur1.execute.side_effect = RuntimeError("session timeout")
+        cur2.fetchall.return_value = [("T1",)]
+        c.conn.cursor.side_effect = [cur1, cur2]
+        c.is_connected = MagicMock(return_value=False)
+        c.reconnect = MagicMock()
+
+        result = c.get_tables("NHISBASE")
+        assert result == ["T1"]
+        c.reconnect.assert_called_once()
+
+    def test_get_columns_uses_reconnect_helper(self):
+        c = self._make_conn()
+        c.conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = [
+            ("INDI_DSCM_NO", "DECIMAL", "FALSE"),
+            ("MDCARE_STRT_DT", "NVARCHAR", "FALSE"),
+        ]
+        c.conn.cursor.return_value = cur
+
+        result = c.get_columns("NHISBASE", "HBMT_TBGJME20")
+        assert result == [
+            {"name": "INDI_DSCM_NO", "type": "DECIMAL", "nullable": "FALSE"},
+            {"name": "MDCARE_STRT_DT", "type": "NVARCHAR", "nullable": "FALSE"},
+        ]
+
+    def test_get_columns_retries_on_session_loss(self):
+        c = self._make_conn()
+        c.conn = MagicMock()
+        cur1, cur2 = MagicMock(), MagicMock()
+        cur1.execute.side_effect = RuntimeError("session timeout")
+        cur2.fetchall.return_value = [("X", "INTEGER", "TRUE")]
+        c.conn.cursor.side_effect = [cur1, cur2]
+        c.is_connected = MagicMock(return_value=False)
+        c.reconnect = MagicMock()
+
+        result = c.get_columns("S", "T")
+        assert result == [{"name": "X", "type": "INTEGER", "nullable": "TRUE"}]
+        c.reconnect.assert_called_once()
