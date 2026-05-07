@@ -136,6 +136,67 @@ def test_model_info_exposes_schema_drift(app_client_factory, monkeypatch):
     )
 
 
+def test_lenient_env_blocked_by_sunset_health_degraded(
+    app_client_factory, monkeypatch
+):
+    """env=1 + sunset 통과 → /health 가 'env 켜졌지만 차단됨' 명시 (Codex #6-followup).
+
+    feature_schema_lenient_allowed=False + sunset_date 노출 + degraded_reasons 사유.
+    """
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT", "1")
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", "2020-01-01")  # 과거
+    pred = _make_pred(ml_loaded=True, schema_drift=[])
+    client = app_client_factory(pred)
+    try:
+        body = client.get("/health").json()
+    finally:
+        client.__exit__(None, None, None)
+    # env trail 은 그대로 (env 활성)
+    assert body["feature_schema_lenient"] is True
+    # 실제 효력은 차단
+    assert body["feature_schema_lenient_allowed"] is False, (
+        "sunset 통과 후엔 env=1 이어도 lenient 효력 차단되어야 함"
+    )
+    # sunset date 노출 — 운영자가 차단 시점 인지
+    assert body["feature_schema_lenient_sunset_date"] == "2020-01-01"
+    # status degraded + 사유
+    assert body["status"] == "degraded"
+    assert any(
+        "lenient_blocked_by_sunset" in r for r in body["degraded_reasons"]
+    ), f"sunset 차단 사유 박혀야 함: {body['degraded_reasons']}"
+
+
+def test_lenient_env_within_sunset_allowed(app_client_factory, monkeypatch):
+    """env=1 + sunset 안 → lenient_allowed=True (실제 효력)."""
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT", "1")
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", "2099-12-31")  # 미래
+    pred = _make_pred(ml_loaded=True, schema_drift=[])
+    client = app_client_factory(pred)
+    try:
+        body = client.get("/health").json()
+    finally:
+        client.__exit__(None, None, None)
+    assert body["feature_schema_lenient"] is True
+    assert body["feature_schema_lenient_allowed"] is True, (
+        "sunset 안 + env=1 → 실제 lenient 효력"
+    )
+    assert body["feature_schema_lenient_sunset_date"] == "2099-12-31"
+
+
+def test_default_sunset_date_exposed(app_client_factory, monkeypatch):
+    """env 미설정 시 코드 default sunset 노출 (운영자가 default 인지)."""
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", raising=False)
+    pred = _make_pred(ml_loaded=True, schema_drift=[])
+    client = app_client_factory(pred)
+    try:
+        body = client.get("/health").json()
+    finally:
+        client.__exit__(None, None, None)
+    # 코드 default 2026-08-01 (Codex 합의)
+    assert body["feature_schema_lenient_sunset_date"] == "2026-08-01"
+
+
 def test_multiple_drift_columns_truncated_in_reason(
     app_client_factory, monkeypatch
 ):

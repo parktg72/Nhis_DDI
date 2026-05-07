@@ -195,7 +195,23 @@ class HealthResponse(BaseModel):
     )
     feature_schema_lenient: bool = Field(
         False,
-        description="FEATURE_SCHEMA_LENIENT 환경 변수 활성 상태 (운영 escape hatch trail)",
+        description="FEATURE_SCHEMA_LENIENT 환경 변수 활성 상태 (env trail, sunset 무관)",
+    )
+    # Codex 2026-05-07 #6-followup — env 켜졌지만 sunset 으로 실제 차단된 상태 명확화
+    feature_schema_lenient_allowed: bool = Field(
+        False,
+        description=(
+            "lenient 가 실제로 효력 발휘 가능한지 (env 활성 AND sunset 안). "
+            "feature_schema_lenient=True 인데 본 값이 False 면 'env 는 켜졌지만 "
+            "sunset deadline 으로 차단됨' 의미."
+        ),
+    )
+    feature_schema_lenient_sunset_date: Optional[str] = Field(
+        None,
+        description=(
+            "lenient escape hatch sunset deadline (ISO YYYY-MM-DD). today >= 본 "
+            "값이면 차단. env FEATURE_SCHEMA_LENIENT_SUNSET_DATE 또는 코드 default."
+        ),
     )
     degraded_reasons: list[str] = Field(
         default_factory=list,

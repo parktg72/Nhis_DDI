@@ -80,10 +80,25 @@ def _collect_schema_drift(pred) -> list[str]:
 
 
 def _is_schema_lenient_active() -> bool:
-    """FEATURE_SCHEMA_LENIENT 운영 escape hatch 활성 상태 (env 기준)."""
+    """FEATURE_SCHEMA_LENIENT 운영 escape hatch 활성 상태 (env 기준).
+
+    sunset 효력은 별도 — `_is_schema_lenient_allowed()` 참고.
+    """
     return os.environ.get("FEATURE_SCHEMA_LENIENT", "").strip().lower() in (
         "1", "true", "yes",
     )
+
+
+def _lenient_sunset_date_iso() -> str:
+    """현재 적용 중인 sunset date 의 ISO 문자열 (운영자 가시성용 — Codex #6-followup)."""
+    from serving.predictor import (
+        _FEATURE_SCHEMA_LENIENT_SUNSET_DEFAULT,
+    )
+    raw = os.environ.get("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", "").strip()
+    if raw:
+        # invalid 도 그대로 노출 — 운영자가 형식 오류 인지 가능
+        return raw
+    return _FEATURE_SCHEMA_LENIENT_SUNSET_DEFAULT.isoformat()
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -94,18 +109,26 @@ async def health_check():
     전환. lenient env 가 켜져 있어도 실제 drift 가 없으면 status='ok' 유지
     ("우회 가능 상태"가 아닌 "실제 drift 모델 로드" 기준).
     """
+    from serving.predictor import _is_feature_schema_lenient_allowed
     try:
         pred = get_predictor()
         ml_loaded = bool(pred._ml.loaded)
         hier_loaded = pred._hierarchical is not None and pred._hierarchical.loaded
         schema_drift = _collect_schema_drift(pred)
         lenient = _is_schema_lenient_active()
+        lenient_allowed = lenient and _is_feature_schema_lenient_allowed()
+        sunset_iso = _lenient_sunset_date_iso()
 
         degraded_reasons: list[str] = []
         if schema_drift:
             degraded_reasons.append(
                 f"feature_schema_drift: {len(schema_drift)} unknown columns "
                 f"({', '.join(schema_drift[:5])}{'...' if len(schema_drift) > 5 else ''})"
+            )
+        # Codex #6-followup — env 켜졌지만 sunset 으로 차단된 상태 명시
+        if lenient and not lenient_allowed:
+            degraded_reasons.append(
+                f"feature_schema_lenient_blocked_by_sunset: {sunset_iso}"
             )
         status = "degraded" if degraded_reasons else "ok"
 
@@ -119,6 +142,8 @@ async def health_check():
             hierarchical_loaded=hier_loaded,
             schema_drift=schema_drift,
             feature_schema_lenient=lenient,
+            feature_schema_lenient_allowed=lenient_allowed,
+            feature_schema_lenient_sunset_date=sunset_iso,
             degraded_reasons=degraded_reasons,
         )
     except RuntimeError:
@@ -132,6 +157,8 @@ async def health_check():
             hierarchical_loaded=False,
             schema_drift=[],
             feature_schema_lenient=_is_schema_lenient_active(),
+            feature_schema_lenient_allowed=False,
+            feature_schema_lenient_sunset_date=_lenient_sunset_date_iso(),
             degraded_reasons=["predictor_not_initialized"],
         )
 
