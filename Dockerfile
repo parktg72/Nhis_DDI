@@ -1,3 +1,25 @@
+# ============================================================
+# DEPRECATED — 2026-05-07
+# ============================================================
+# 운영 배포 대상: Windows 폐쇄망 + Python 3.12 only (park 결정 2026-05-07,
+#   CLAUDE.md 의 "Python 3.12 강제" 와 정합).
+# 본 Dockerfile 은 stale artifact 로 보존 — 추후 Linux 컨테이너 부활 시
+#   starting point. 현 시점에는 빌드/배포 사용 X.
+#
+# Stale 사실 (cross-family 라운드 2026-05-07 grep 확인):
+#   - FROM python:3.11-slim — 프로젝트 기준 3.12 위반
+#   - COPY packages_linux/py311/ — 디렉터리 부재
+#   - monitoring/ 미복사 — serving/main.py:30 의 import 와 모순
+#   - 마지막 본 파일 commit 2026-04-03, 라운드 작업과 한 달+ 격차
+#
+# 부활 시 필요 작업 (docs/reports/2026-05-07-park-decisions.md 참조):
+#   - python:3.12-slim 으로 전환
+#   - packages_linux/py312/ wheelhouse 구축
+#   - monitoring/ 추가 + joblib/sklearn/torch/filelock 등 누락 deps
+#   - constraints-py312.txt 적용
+#   - 본 헤더 DEPRECATED 마크 제거
+# ============================================================
+# 본래 의도 (2026-04-03 시점, 참고용):
 # DDI 위험도 분류 API 서버
 # 빌드: docker build -t ddi-serving:1.0 .
 # 실행: docker run -p 8000:8000 -v $(pwd)/data:/app/data -v $(pwd)/models:/app/models ddi-serving:1.0
