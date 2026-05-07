@@ -10,6 +10,7 @@ POST /admin/reload - 모델 핫스왑 (운영, X-Admin-Key 헤더 필수)
                   경로를 이 디렉토리 밖으로 지정하면 거부됩니다.
 """
 import hmac
+import logging
 import os
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from pydantic import BaseModel
 from serving.predictor import get_predictor
 from serving.schemas import HealthResponse, ModelInfoResponse
 from config import settings as _settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["health"])
 
@@ -59,21 +62,64 @@ def _model_mode(pred) -> str:
     return "none"
 
 
+def _collect_schema_drift(pred) -> list[str]:
+    """단일 ML + 계층 모델의 schema drift trail 수집 (Codex 2026-05-07 #1).
+
+    현재는 단일 ML 의 `_schema_drift` 만 있음 (FEATURE_SCHEMA_LENIENT=1 로 unknown
+    feature 가 lenient 통과한 경우). 계층 모델 쪽은 schema_drift trail 없이 strict
+    reject 만 하지만, 미래 확장을 위해 helper 가 양쪽 모두 검사하는 형태로 둠.
+    """
+    drift: list[str] = []
+    ml = getattr(pred, "_ml", None)
+    if ml is not None:
+        drift.extend(getattr(ml, "_schema_drift", []) or [])
+    hier = getattr(pred, "_hierarchical", None)
+    if hier is not None:
+        drift.extend(getattr(hier, "_schema_drift", []) or [])
+    return drift
+
+
+def _is_schema_lenient_active() -> bool:
+    """FEATURE_SCHEMA_LENIENT 운영 escape hatch 활성 상태 (env 기준)."""
+    return os.environ.get("FEATURE_SCHEMA_LENIENT", "").strip().lower() in (
+        "1", "true", "yes",
+    )
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
-    """서버 및 모델 상태 확인. 계층 모드만 로드된 경우도 model_loaded=True."""
+    """서버 및 모델 상태 확인. 계층 모드만 로드된 경우도 model_loaded=True.
+
+    Codex 2026-05-07 #1 — schema_drift 가 non-empty 면 status='degraded' 자동
+    전환. lenient env 가 켜져 있어도 실제 drift 가 없으면 status='ok' 유지
+    ("우회 가능 상태"가 아닌 "실제 drift 모델 로드" 기준).
+    """
     try:
         pred = get_predictor()
         ml_loaded = bool(pred._ml.loaded)
         hier_loaded = pred._hierarchical is not None and pred._hierarchical.loaded
+        schema_drift = _collect_schema_drift(pred)
+        lenient = _is_schema_lenient_active()
+
+        degraded_reasons: list[str] = []
+        if schema_drift:
+            degraded_reasons.append(
+                f"feature_schema_drift: {len(schema_drift)} unknown columns "
+                f"({', '.join(schema_drift[:5])}{'...' if len(schema_drift) > 5 else ''})"
+            )
+        status = "degraded" if degraded_reasons else "ok"
+
         return HealthResponse(
-            status="ok",
+            status=status,
             model_loaded=ml_loaded or hier_loaded,
             rule_loaded=pred._safety_net is not None,
             version=APP_VERSION,
             uptime_sec=round(pred.uptime, 1),
             model_mode=_model_mode(pred),
             hierarchical_loaded=hier_loaded,
+            schema_drift=schema_drift,
+            feature_schema_lenient=lenient,
+            degraded_reasons=degraded_reasons,
         )
     except RuntimeError:
         return HealthResponse(
@@ -84,15 +130,23 @@ async def health_check():
             uptime_sec=0.0,
             model_mode="none",
             hierarchical_loaded=False,
+            schema_drift=[],
+            feature_schema_lenient=_is_schema_lenient_active(),
+            degraded_reasons=["predictor_not_initialized"],
         )
 
 
 @router.get("/model/info", response_model=ModelInfoResponse)
 async def model_info():
-    """로드된 모델 정보. 계층 모드만 로드된 경우 stage1/stage2 정보로 채움."""
+    """로드된 모델 정보. 계층 모드만 로드된 경우 stage1/stage2 정보로 채움.
+
+    Codex 2026-05-07 #1 — schema_drift 도 노출 (디버깅/감사용). /health 는
+    운영 알림 기준, /model/info 는 staff 가 깊이 들여다볼 때 사용.
+    """
     pred = get_predictor()
     ml = pred._ml
     hier = pred._hierarchical
+    drift = _collect_schema_drift(pred)
 
     if ml.loaded:
         return ModelInfoResponse(
@@ -100,6 +154,7 @@ async def model_info():
             partition=ml._partition,
             n_features=len(ml._feature_names) if ml._feature_names else None,
             threshold=ml._threshold,
+            schema_drift=drift,
         )
     if hier is not None and hier.loaded:
         return ModelInfoResponse(
@@ -107,12 +162,14 @@ async def model_info():
             partition=None,
             n_features=len(hier.feature_cols) if hier.feature_cols else None,
             threshold=hier._thresholds.get("tau_red"),
+            schema_drift=drift,
         )
     return ModelInfoResponse(
         model_type="none",
         partition=ml._partition,
         n_features=len(ml._feature_names) if ml._feature_names else None,
         threshold=None,
+        schema_drift=drift,
     )
 
 

@@ -185,6 +185,22 @@ class HealthResponse(BaseModel):
         None,
         description="계층 분류기(Stage1/Stage2) 로드 여부",
     )
+    # Codex 2026-05-07 #1 — feature schema drift 운영 visibility
+    schema_drift: list[str] = Field(
+        default_factory=list,
+        description=(
+            "lenient 모드로 로드된 모델의 _BUILDER_KNOWN_COLS 외 컬럼 목록. "
+            "non-empty 면 status='degraded' 자동 전환."
+        ),
+    )
+    feature_schema_lenient: bool = Field(
+        False,
+        description="FEATURE_SCHEMA_LENIENT 환경 변수 활성 상태 (운영 escape hatch trail)",
+    )
+    degraded_reasons: list[str] = Field(
+        default_factory=list,
+        description="degraded 사유 목록 (예: 'feature_schema_drift: 2 unknown columns')",
+    )
 
 
 class ModelInfoResponse(BaseModel):
@@ -194,6 +210,12 @@ class ModelInfoResponse(BaseModel):
     n_features:    Optional[int]
     threshold:     Optional[float]
     feature_names: Optional[list[str]] = None
+    # Codex 2026-05-07 #1 — model artifact 의 schema drift trail (디버깅/감사용).
+    # /health 가 운영 알림용이라면 /model/info 는 staff 가 깊이 들여다볼 때 사용.
+    schema_drift:  list[str] = Field(
+        default_factory=list,
+        description="lenient 모드로 로드된 경우 _BUILDER_KNOWN_COLS 외 컬럼 목록",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
