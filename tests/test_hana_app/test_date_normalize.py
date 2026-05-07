@@ -119,17 +119,23 @@ _T60_COLS = {
     ("fetch_t60_by_date", "t60", _T60_COLS),
 ])
 def test_fetch_by_date_normalizes_input(fetch_attr, table_key, cols):
-    """fetch_t{20,30,40,60}_by_date 4개 모두 ISO/date 입력 정규화 회귀 가드."""
+    """fetch_t{20,30,40,60}_by_date 4개 모두 ISO/date 입력 정규화 회귀 가드.
+
+    Codex 2026-05-07 #4 적용 후: fetch 가 _validate_df_columns 호출하므로
+    FakeConn 도 expected columns 채운 빈 DF 반환해야 함.
+    """
     from hana_app.core.hana_etl import HANAExtractor
 
     captured = {}
+    expected_columns = list(cols.values())  # SELECT 의 cols 와 일치
 
     class FakeConn:
         def query_df(self, sql, params):
             captured["sql"] = sql
             captured["params"] = params
             import pandas as pd
-            return pd.DataFrame()
+            # Codex #4: 새 schema validation 호환 — expected columns 채운 빈 DF
+            return pd.DataFrame(columns=expected_columns)
 
     table_cfg = {table_key: {"schema": "NHISBASE", "table": f"HBMT_TBGJME{table_key[1:]}"}}
     col_cfg = {table_key: cols}

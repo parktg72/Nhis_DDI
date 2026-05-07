@@ -29,6 +29,32 @@ from hana_app.core.db import _assert_safe_identifier
 logger = logging.getLogger(__name__)
 
 
+def _validate_df_columns(
+    df: pd.DataFrame,
+    required: "list[str] | tuple[str, ...]",
+    context: str,
+) -> None:
+    """fetch 결과 DataFrame 의 required column presence 검증 — Codex 2026-05-07 #4.
+
+    학습/서빙 contract 의 1차 boundary check. dtype 검증은 후순위 (presence 만).
+    missing column 발견 시 ValueError fast fail — silent column drift 방지.
+
+    Empty DataFrame 도 columns 계약은 유지되어야 함 (patient_ids=[] 등 빈 결과
+    경로). _query_paged_by_pid 가 expected_columns 받아 빈 DF 도 columns 채움.
+    """
+    actual = set(df.columns)
+    missing = [c for c in required if c not in actual]
+    if missing:
+        # actual 컬럼 일부만 메시지에 — 너무 길면 디버깅 어려움
+        actual_preview = list(df.columns)[:10]
+        suffix = "..." if len(df.columns) > 10 else ""
+        raise ValueError(
+            f"{context}: HANA fetch 결과 DataFrame schema drift — "
+            f"missing={missing} (expected ⊂ actual). "
+            f"actual={actual_preview}{suffix}"
+        )
+
+
 def _normalize_yyyymmdd(d: "str | date") -> str:
     """YYYYMMDD 형식 8자리 숫자 문자열로 정규화.
 
@@ -298,15 +324,18 @@ class HANAExtractor:
         pid_col: str,
         patient_ids: list[str] | None,
         pid_batch: int | None = None,
+        expected_columns: "list[str] | None" = None,
     ) -> pd.DataFrame:
         """날짜 조건 SQL에 INDI_DSCM_NO IN (...) 조건을 추가하여 조회.
 
         patient_ids=None 이면 필터 없이 그대로 실행.
-        patient_ids=[] 이면 빈 DataFrame 반환.
+        patient_ids=[] 이면 빈 DataFrame 반환 (Codex 2026-05-07 #4: expected_columns
+            전달되면 columns 계약 유지하는 빈 DF — downstream schema validation 호환).
         patient_ids 건수가 많으면 pid_batch (기본 _PID_BATCH) 단위로 분할·조합.
         """
         if patient_ids is not None and len(patient_ids) == 0:
-            return pd.DataFrame()
+            # Codex #4 — 빈 결과도 columns 계약 유지
+            return pd.DataFrame(columns=expected_columns or [])
         if not patient_ids:
             return self.conn.query_df(sql_base, params_base or None)
         batch_size = pid_batch if pid_batch is not None else self._PID_BATCH
@@ -327,17 +356,22 @@ class HANAExtractor:
                   patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t20"]
         tbl = self._tbl("t20")
+        cols = [c["bill_no"], c["patient_id"], c["institution_id"],
+                c["start_date"], c["sex"], c["age_id"], c["institution_type"]]
+        select_clause = ", ".join(f'"{x}"' for x in cols)
         placeholders = ",".join(["?" for _ in yyyymm_list])
         sql = (
-            f'SELECT "{c["bill_no"]}", "{c["patient_id"]}", "{c["institution_id"]}", '
-            f'"{c["start_date"]}", "{c["sex"]}", "{c["age_id"]}", '
-            f'"{c["institution_type"]}" '
-            f"FROM {tbl} "
+            f"SELECT {select_clause} FROM {tbl} "
             f'WHERE "{c["yyyymm"]}" IN ({placeholders})'
         )
         if progress_cb:
             progress_cb(f"T20 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self._query_paged_by_pid(sql, list(yyyymm_list), c["patient_id"], patient_ids)
+        df = self._query_paged_by_pid(
+            sql, list(yyyymm_list), c["patient_id"], patient_ids,
+            expected_columns=cols,
+        )
+        _validate_df_columns(df, cols, "fetch_t20")
+        return df
 
     # ---- T30 ----------------------------------------------------------------
 
@@ -346,21 +380,25 @@ class HANAExtractor:
                   patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t30"]
         tbl = self._tbl("t30")
+        cols = [c["bill_no"], c["patient_id"], c["start_date"],
+                c["drug_code"], c["drug_code_alt"],
+                c["edi_code"], c["efmdc"],
+                c["dose_once"], c["dose_freq"], c["total_days"]]
+        select_clause = ", ".join(f'"{x}"' for x in cols)
         placeholders = ",".join(["?" for _ in yyyymm_list])
         sql = (
-            f'SELECT "{c["bill_no"]}", "{c["patient_id"]}", "{c["start_date"]}", '
-            f'"{c["drug_code"]}", "{c["drug_code_alt"]}", '
-            f'"{c["edi_code"]}", "{c["efmdc"]}", '
-            f'"{c["dose_once"]}", "{c["dose_freq"]}", "{c["total_days"]}" '
-            f"FROM {tbl} "
+            f"SELECT {select_clause} FROM {tbl} "
             f'WHERE "{c["yyyymm"]}" IN ({placeholders})'
         )
         if progress_cb:
             progress_cb(f"T30 (원내) 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self._query_paged_by_pid(
+        df = self._query_paged_by_pid(
             sql, list(yyyymm_list), c["patient_id"], patient_ids,
             pid_batch=self._PID_BATCH_T30,
+            expected_columns=cols,
         )
+        _validate_df_columns(df, cols, "fetch_t30")
+        return df
 
     # ---- T60 ----------------------------------------------------------------
 
@@ -369,19 +407,25 @@ class HANAExtractor:
                   patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t60"]
         tbl = self._tbl("t60")
+        cols = [c["bill_no"], c["patient_id"], c["start_date"],
+                c["drug_code"], c["drug_code_alt"],
+                c["edi_code"],
+                c["dose_once"], c["dose_freq"], c["total_days"],
+                c["sick_code"], c["institution_id"]]
+        select_clause = ", ".join(f'"{x}"' for x in cols)
         placeholders = ",".join(["?" for _ in yyyymm_list])
         sql = (
-            f'SELECT "{c["bill_no"]}", "{c["patient_id"]}", "{c["start_date"]}", '
-            f'"{c["drug_code"]}", "{c["drug_code_alt"]}", '
-            f'"{c["edi_code"]}", '
-            f'"{c["dose_once"]}", "{c["dose_freq"]}", "{c["total_days"]}", '
-            f'"{c["sick_code"]}", "{c["institution_id"]}" '
-            f"FROM {tbl} "
+            f"SELECT {select_clause} FROM {tbl} "
             f'WHERE "{c["yyyymm"]}" IN ({placeholders})'
         )
         if progress_cb:
             progress_cb(f"T60 (원외) 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self._query_paged_by_pid(sql, list(yyyymm_list), c["patient_id"], patient_ids)
+        df = self._query_paged_by_pid(
+            sql, list(yyyymm_list), c["patient_id"], patient_ids,
+            expected_columns=cols,
+        )
+        _validate_df_columns(df, cols, "fetch_t60")
+        return df
 
     # ---- T40 ----------------------------------------------------------------
 
@@ -390,16 +434,22 @@ class HANAExtractor:
                   patient_ids: list[str] | None = None) -> pd.DataFrame:
         c = self.cols["t40"]
         tbl = self._tbl("t40")
+        cols = [c["bill_no"], c["patient_id"], c["start_date"],
+                c["sick_code"], c["sick_type"]]
+        select_clause = ", ".join(f'"{x}"' for x in cols)
         placeholders = ",".join(["?" for _ in yyyymm_list])
         sql = (
-            f'SELECT "{c["bill_no"]}", "{c["patient_id"]}", "{c["start_date"]}", '
-            f'"{c["sick_code"]}", "{c["sick_type"]}" '
-            f"FROM {tbl} "
+            f"SELECT {select_clause} FROM {tbl} "
             f'WHERE "{c["yyyymm"]}" IN ({placeholders})'
         )
         if progress_cb:
             progress_cb(f"T40 (상병) 조회: {yyyymm_list[0]}~{yyyymm_list[-1]}")
-        return self._query_paged_by_pid(sql, list(yyyymm_list), c["patient_id"], patient_ids)
+        df = self._query_paged_by_pid(
+            sql, list(yyyymm_list), c["patient_id"], patient_ids,
+            expected_columns=cols,
+        )
+        _validate_df_columns(df, cols, "fetch_t40")
+        return df
 
     # ---- 날짜 범위 쿼리 (일 단위 청크용) ------------------------------------
 
@@ -410,16 +460,21 @@ class HANAExtractor:
         date_to   = _normalize_yyyymmdd(date_to)
         c = self.cols["t20"]
         tbl = self._tbl("t20")
+        cols = [c["bill_no"], c["patient_id"], c["institution_id"],
+                c["start_date"], c["sex"], c["age_id"], c["institution_type"]]
+        select_clause = ", ".join(f'"{x}"' for x in cols)
         sql = (
-            f'SELECT "{c["bill_no"]}", "{c["patient_id"]}", "{c["institution_id"]}", '
-            f'"{c["start_date"]}", "{c["sex"]}", "{c["age_id"]}", '
-            f'"{c["institution_type"]}" '
-            f"FROM {tbl} "
+            f"SELECT {select_clause} FROM {tbl} "
             f'WHERE "{c["start_date"]}" BETWEEN ? AND ?'
         )
         if progress_cb:
             progress_cb(f"T20 조회: {date_from}~{date_to}")
-        return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
+        df = self._query_paged_by_pid(
+            sql, [date_from, date_to], c["patient_id"], patient_ids,
+            expected_columns=cols,
+        )
+        _validate_df_columns(df, cols, "fetch_t20_by_date")
+        return df
 
     def fetch_t30_by_date(self, date_from: "str | date", date_to: "str | date",
                           progress_cb: Callable[[str], None] | None = None,
@@ -428,20 +483,24 @@ class HANAExtractor:
         date_to   = _normalize_yyyymmdd(date_to)
         c = self.cols["t30"]
         tbl = self._tbl("t30")
+        cols = [c["bill_no"], c["patient_id"], c["start_date"],
+                c["drug_code"], c["drug_code_alt"],
+                c["edi_code"], c["efmdc"],
+                c["dose_once"], c["dose_freq"], c["total_days"]]
+        select_clause = ", ".join(f'"{x}"' for x in cols)
         sql = (
-            f'SELECT "{c["bill_no"]}", "{c["patient_id"]}", "{c["start_date"]}", '
-            f'"{c["drug_code"]}", "{c["drug_code_alt"]}", '
-            f'"{c["edi_code"]}", "{c["efmdc"]}", '
-            f'"{c["dose_once"]}", "{c["dose_freq"]}", "{c["total_days"]}" '
-            f"FROM {tbl} "
+            f"SELECT {select_clause} FROM {tbl} "
             f'WHERE "{c["start_date"]}" BETWEEN ? AND ?'
         )
         if progress_cb:
             progress_cb(f"T30 (원내) 조회: {date_from}~{date_to}")
-        return self._query_paged_by_pid(
+        df = self._query_paged_by_pid(
             sql, [date_from, date_to], c["patient_id"], patient_ids,
             pid_batch=self._PID_BATCH_T30,
+            expected_columns=cols,
         )
+        _validate_df_columns(df, cols, "fetch_t30_by_date")
+        return df
 
     def fetch_t60_by_date(self, date_from: "str | date", date_to: "str | date",
                           progress_cb: Callable[[str], None] | None = None,
@@ -450,18 +509,24 @@ class HANAExtractor:
         date_to   = _normalize_yyyymmdd(date_to)
         c = self.cols["t60"]
         tbl = self._tbl("t60")
+        cols = [c["bill_no"], c["patient_id"], c["start_date"],
+                c["drug_code"], c["drug_code_alt"],
+                c["edi_code"],
+                c["dose_once"], c["dose_freq"], c["total_days"],
+                c["sick_code"], c["institution_id"]]
+        select_clause = ", ".join(f'"{x}"' for x in cols)
         sql = (
-            f'SELECT "{c["bill_no"]}", "{c["patient_id"]}", "{c["start_date"]}", '
-            f'"{c["drug_code"]}", "{c["drug_code_alt"]}", '
-            f'"{c["edi_code"]}", '
-            f'"{c["dose_once"]}", "{c["dose_freq"]}", "{c["total_days"]}", '
-            f'"{c["sick_code"]}", "{c["institution_id"]}" '
-            f"FROM {tbl} "
+            f"SELECT {select_clause} FROM {tbl} "
             f'WHERE "{c["start_date"]}" BETWEEN ? AND ?'
         )
         if progress_cb:
             progress_cb(f"T60 (원외) 조회: {date_from}~{date_to}")
-        return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
+        df = self._query_paged_by_pid(
+            sql, [date_from, date_to], c["patient_id"], patient_ids,
+            expected_columns=cols,
+        )
+        _validate_df_columns(df, cols, "fetch_t60_by_date")
+        return df
 
     def fetch_t40_by_date(self, date_from: "str | date", date_to: "str | date",
                           progress_cb: Callable[[str], None] | None = None,
@@ -470,15 +535,21 @@ class HANAExtractor:
         date_to   = _normalize_yyyymmdd(date_to)
         c = self.cols["t40"]
         tbl = self._tbl("t40")
+        cols = [c["bill_no"], c["patient_id"], c["start_date"],
+                c["sick_code"], c["sick_type"]]
+        select_clause = ", ".join(f'"{x}"' for x in cols)
         sql = (
-            f'SELECT "{c["bill_no"]}", "{c["patient_id"]}", "{c["start_date"]}", '
-            f'"{c["sick_code"]}", "{c["sick_type"]}" '
-            f"FROM {tbl} "
+            f"SELECT {select_clause} FROM {tbl} "
             f'WHERE "{c["start_date"]}" BETWEEN ? AND ?'
         )
         if progress_cb:
             progress_cb(f"T40 (상병) 조회: {date_from}~{date_to}")
-        return self._query_paged_by_pid(sql, [date_from, date_to], c["patient_id"], patient_ids)
+        df = self._query_paged_by_pid(
+            sql, [date_from, date_to], c["patient_id"], patient_ids,
+            expected_columns=cols,
+        )
+        _validate_df_columns(df, cols, "fetch_t40_by_date")
+        return df
 
     # ---- 요양기관 -----------------------------------------------------------
 
