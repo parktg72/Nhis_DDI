@@ -300,6 +300,33 @@ class MLModel:
         logger.info("모델 해시 검증 통과: %s", path)
         return True
 
+    @staticmethod
+    def _load_sidecar(path: Path) -> "tuple[Optional[Any], bool]":
+        """sidecar pickle artifact (scaler/selector 등) hash 검증 + TOCTOU-safe 로드.
+
+        Codex 2026-05-07 #2 — 주 모델 무결성 정책을 sidecar 까지 일관 확장.
+        sidecar 도 read_bytes → _verify_hash → pickle.loads 동일 패턴.
+
+        Returns: (loaded_obj, ok). ok=False 면 호출자(MLModel.load) 가 False return.
+        """
+        if not path.exists():
+            logger.error("sidecar 파일 없음 — 로드 거부: %s", path)
+            return None, False
+        try:
+            content = path.read_bytes()
+        except Exception as e:
+            logger.error("sidecar 읽기 실패: %s — %s", path, e)
+            return None, False
+        if not MLModel._verify_hash(path, content):
+            return None, False
+        try:
+            obj = pickle.loads(content)
+        except Exception as e:
+            logger.error("sidecar pickle.loads 실패: %s — %s", path, e)
+            return None, False
+        logger.info("sidecar 로드 성공: %s", path)
+        return obj, True
+
     def load(self, path: str | Path) -> bool:
         path = Path(path)
         try:
@@ -330,26 +357,39 @@ class MLModel:
                 return False
             self._schema_drift = _missing
 
-            # Resolve scaler/selector paths relative to model file directory
-            import os
+            # Codex 2026-05-07 #2 — sidecar (scaler/selector) 무결성 검증.
+            # 직전까지: traversal continue + hash 미검증 + 파일 부재 warning 만.
+            # 정책 일관성: state 에 path 명시되면 artifact 구성요소 — 부재/불일치/
+            # traversal 모두 모델 로드 실패. 모든 검증 통과 후 instance state 반영.
             model_dir = path.parent
+            loaded_sidecars: dict[str, "Any"] = {}
             for attr, key in [("_scaler", "scaler_path"), ("_selector", "selector_path")]:
                 stored = state.get(key)
-                if stored:
-                    candidate = (model_dir / stored).resolve()
-                    # M2: path traversal 방어 — model_dir 외부 경로 거부
-                    try:
-                        candidate.relative_to(model_dir.resolve())
-                    except ValueError:
-                        logger.error("%s 경로가 model_dir 외부 — 로드 거부: %s", key, candidate)
-                        continue
-                    if candidate.exists():
-                        import pickle as _pk
-                        with open(candidate, "rb") as f:
-                            setattr(self, attr, _pk.load(f))
-                        logger.info("%s 로드: %s", key, candidate)
-                    else:
-                        logger.warning("%s 없음 — 미적용: %s", key, candidate)
+                if not stored:
+                    continue
+                candidate = (model_dir / stored).resolve()
+                # path traversal 방어 — model_dir 외부 경로 거부
+                try:
+                    candidate.relative_to(model_dir.resolve())
+                except ValueError:
+                    logger.error(
+                        "%s 경로가 model_dir 외부 — 로드 거부: %s", key, candidate
+                    )
+                    self._model = None
+                    self._feature_names = []
+                    self._schema_drift = []
+                    return False
+                obj, ok = MLModel._load_sidecar(candidate)
+                if not ok:
+                    self._model = None
+                    self._feature_names = []
+                    self._schema_drift = []
+                    return False
+                loaded_sidecars[attr] = obj
+
+            # 모든 sidecar 검증 통과 → instance state 반영 (partial state 오염 방지)
+            for attr, obj in loaded_sidecars.items():
+                setattr(self, attr, obj)
 
             # Ensemble model: load from sub-model files
             if self._model is None and state.get("trainer_class") in ("EnsembleTrainer", "EnsembleTrainer3Way"):
