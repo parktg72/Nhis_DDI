@@ -183,3 +183,53 @@ def test_legacy_total_field_still_works(app_client_for_batch):
     legacy_count = body["total"]
     # 신규 success_count 와 일치
     assert legacy_count == body["success_count"] == 2
+
+
+# ─── batch max_length=1000 boundary 회귀 가드 — Codex 2026-05-07 #5 ──────────
+
+
+def test_batch_1000_requests_allowed(app_client_for_batch):
+    """schema 상한 정확히 1000건 → 200 OK + count 정합성 + total alias.
+
+    schemas.py:145 의 max_length=1000 회귀 가드. 1001 거부와 함께 boundary 양면.
+    """
+    with patch("serving.predictor._run_safety_net") as mock_sn, \
+         patch("serving.predictor._run_duplicate_detector") as mock_dup:
+        mock_sn.return_value = (RiskLevel.NORMAL, [], [])
+        mock_dup.return_value = (0, [])
+        resp = app_client_for_batch.post("/predict/batch", json=_payload(1000))
+
+    assert resp.status_code == 200, (
+        f"1000건 요청은 schema 상한 정확히 매치 — 200 OK 예상, got {resp.status_code}"
+    )
+    body = resp.json()
+    assert body["requested_count"] == 1000
+    assert body["success_count"] == 1000
+    assert body["failed_count"] == 0
+    # backward compat alias
+    assert body["total"] == body["success_count"] == 1000
+    # 정합성 (Codex 합의 3중 검증)
+    assert body["failed_count"] == body["requested_count"] - body["success_count"]
+    assert body["failed_count"] == len(body["warnings"])
+
+
+def test_batch_1001_requests_rejected_by_schema(app_client_for_batch):
+    """1001건 → 422 + predictor 미호출 (Pydantic validation 단계 차단).
+
+    router 내부 예측 루프 진입 안 함 — _run_safety_net call 0 회 검증.
+    """
+    with patch("serving.predictor._run_safety_net") as mock_sn, \
+         patch("serving.predictor._run_duplicate_detector") as mock_dup:
+        mock_sn.return_value = (RiskLevel.NORMAL, [], [])
+        mock_dup.return_value = (0, [])
+        resp = app_client_for_batch.post("/predict/batch", json=_payload(1001))
+
+        # 422 — Pydantic ValidationError (max_length 위반)
+        assert resp.status_code == 422, (
+            f"1001건 → schema validation 거부 (422) 예상, got {resp.status_code}"
+        )
+        # router 의 for-loop 진입 안 했어야 함 — predictor 미호출
+        assert mock_sn.call_count == 0, (
+            f"1001건 거부는 schema validation 단계에서 차단되어야 함 — "
+            f"_run_safety_net 호출 횟수: {mock_sn.call_count}"
+        )
