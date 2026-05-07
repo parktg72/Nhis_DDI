@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import pickle
 import threading
 import time
@@ -48,6 +49,56 @@ _BUILDER_KNOWN_COLS: frozenset[str] = frozenset({
     "cyp_risk_score", "cyp_high_risk_pairs", "cyp_max_enzyme_risk",
     "triple_whammy", "qt_risk_count", "drug_count_7d",
 })
+
+# 학습 모델은 사용할 수 있지만 serving 에선 산출 못 하는 의도된 컬럼.
+# (DrugMaster 미로드로 dup_efmdc=0.0 고정 — predictor.py:650)
+# 본 allowlist 외의 컬럼이 모델 feature_names 에 있으면 silent 0.0 fallback drift
+# 위험 — _validate_feature_schema 가 strict fail (Codex 2026-05-07 P1).
+#
+# *provisional*: dup_efmdc allowlist 는 prod 학습 모델의 importance 측정 결과 전까지
+# 잠정 분류. ≥ 1% 면 본 allowlist 에서 제거하고 DrugMaster 로드 또는 serving 측
+# 산출 추가가 정답. ≈ 0 이면 현행 유지 (Codex 2026-05-07 후속 결정).
+_INTENTIONAL_FEATURE_ALLOWLIST: frozenset[str] = frozenset({"dup_efmdc"})
+_FEATURE_ALLOWED: frozenset[str] = _BUILDER_KNOWN_COLS | _INTENTIONAL_FEATURE_ALLOWLIST
+
+
+def _validate_feature_schema(
+    feature_names: list[str] | None,
+    model_label: str,
+) -> tuple[list[str], bool]:
+    """모델 feature_names ⊆ _FEATURE_ALLOWED 검증 — silent 0.0 drift 방지.
+
+    기본 strict: 미허용 컬럼 발견 시 logger.error + return ok=False → 모델 로드 거부.
+    FEATURE_SCHEMA_LENIENT=1 (env) 로 legacy 호환 우회 (warning + degraded 로 로드).
+
+    오늘 추가된 hana_etl `_normalize_yyyymmdd` 와 같은 input contract validation
+    패턴 — boundary 에서 strict, sunset 윈도우에 한해 lenient.
+
+    Returns: (sorted_missing, ok)
+    """
+    if not feature_names:
+        return [], True
+    missing = sorted(set(feature_names) - _FEATURE_ALLOWED)
+    if not missing:
+        return [], True
+    lenient = os.environ.get("FEATURE_SCHEMA_LENIENT", "").strip().lower() in (
+        "1", "true", "yes",
+    )
+    if lenient:
+        logger.warning(
+            "%s feature_names 중 RequestFeatureBuilder 미산출/허용 외 %d개: %s — "
+            "FEATURE_SCHEMA_LENIENT=1 로 0.0 fallback 으로 로드 (degraded). "
+            "운영에선 LENIENT 해제 후 학습/서빙 schema 정렬 필수.",
+            model_label, len(missing), missing,
+        )
+        return missing, True
+    logger.error(
+        "%s feature_names 중 RequestFeatureBuilder 미산출/허용 외 %d개 — 로드 거부 "
+        "(silent 0.0 drift 방지). 학습/서빙 schema 정렬 필요. 임시 우회: "
+        "FEATURE_SCHEMA_LENIENT=1. missing=%s",
+        model_label, len(missing), missing,
+    )
+    return missing, False
 
 # 위험 약물 판정 상수 — 단일 출처: rules/risk_drug_constants.py
 # (Codex 2026-05-06 ISSUE-3 단일화. 기준: drug_rules.yaml :123 high_risk_drugs).
@@ -225,6 +276,7 @@ class MLModel:
         self._ensemble_weights = (1/3, 1/3, 1/3)
         self._gat_trainer = None   # GATTrainer instance (EnsembleTrainer3Way용)
         self._gat_graph_age_warned = False
+        self._schema_drift: list[str] = []  # FEATURE_SCHEMA_LENIENT 로 로드된 missing 컬럼 trail
 
     @staticmethod
     def _verify_hash(path: Path, content: bytes) -> bool:
@@ -265,6 +317,18 @@ class MLModel:
             self._feature_names = state.get("feature_names", [])
             self._artifact_version = state.get("artifact_version", 1)
             self._partition = state.get("partition")
+
+            # Schema strict validation (Codex 2026-05-07 P1) — silent 0.0 drift 방지.
+            # 학습 모델이 RequestFeatureBuilder 미산출 컬럼을 사용 중이면 로드 거부.
+            _missing, _ok = _validate_feature_schema(
+                self._feature_names, "단일 ML 모델",
+            )
+            if not _ok:
+                # state 부분 적용 상태 정리
+                self._model = None
+                self._feature_names = []
+                return False
+            self._schema_drift = _missing
 
             # Resolve scaler/selector paths relative to model file directory
             import os
@@ -786,14 +850,16 @@ class HybridPredictor:
             else:
                 hp = HierarchicalPredictor()
                 if hp.load(str(_hdir)):
-                    _missing = set(hp.feature_cols or []) - _BUILDER_KNOWN_COLS
-                    if _missing:
+                    _missing, _ok = _validate_feature_schema(
+                        hp.feature_cols, "계층 모델 (init)",
+                    )
+                    if not _ok:
                         logger.warning(
-                            "계층 모델 feature_cols 중 RequestFeatureBuilder 미지원 컬럼 %d개: %s"
-                            " — 온라인 서빙 시 해당 피처는 0.0 으로 채워짐",
-                            len(_missing), sorted(_missing),
+                            "HIERARCHICAL_MODEL_DIR schema 거부 — 단일 모델 fallback: %s",
+                            hierarchical_model_dir,
                         )
-                    self._hierarchical = hp
+                    else:
+                        self._hierarchical = hp
                 else:
                     logger.warning(
                         "HIERARCHICAL_MODEL_DIR 로드 실패 — 단일 모델 fallback: %s",
@@ -842,13 +908,12 @@ class HybridPredictor:
         new_hp = HierarchicalPredictor()
         ok = new_hp.load(str(model_dir))
         if ok:
-            _missing = set(new_hp.feature_cols or []) - _BUILDER_KNOWN_COLS
-            if _missing:
-                logger.warning(
-                    "계층 모델 feature_cols 중 RequestFeatureBuilder 미지원 컬럼 %d개: %s"
-                    " — 온라인 서빙 시 해당 피처는 0.0 으로 채워짐",
-                    len(_missing), sorted(_missing),
-                )
+            _missing, _schema_ok = _validate_feature_schema(
+                new_hp.feature_cols, "계층 모델 (reload)",
+            )
+            if not _schema_ok:
+                logger.warning("계층 모델 핫스왑 schema 거부: %s", model_dir)
+                return False
             with self._hier_lock:
                 self._hierarchical = new_hp
             logger.info("계층 모델 핫스왑 완료: %s", model_dir)

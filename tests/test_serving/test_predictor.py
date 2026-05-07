@@ -33,12 +33,16 @@ def _write_model_pkl(
     threshold: float = 0.5,
     extra: dict = None,
 ) -> Path:
-    """유효한 모델 pkl + sha256 사이드카 생성. 테스트 픽스처용."""
+    """유효한 모델 pkl + sha256 사이드카 생성. 테스트 픽스처용.
+
+    feature_names 디폴트는 _BUILDER_KNOWN_COLS 의 known 컬럼 — Codex 2026-05-07 P1
+    schema strict validation 통과용. unknown 컬럼 fixture 가 필요하면 명시 전달.
+    """
     payload = {
         "model": model or _FakeSklearnModel(),
         "best_threshold": threshold,
         "trainer_class": trainer_class,
-        "feature_names": feature_names or ["f1", "f2"],
+        "feature_names": feature_names or ["drug_count", "age"],
         "artifact_version": 2,
         **(extra or {}),
     }
@@ -63,7 +67,7 @@ class TestMLModelLoad:
         assert ml.load(path) is True
         assert ml.loaded is True
         assert ml._threshold == 0.5
-        assert ml._feature_names == ["f1", "f2"]
+        assert ml._feature_names == ["drug_count", "age"]
 
     def test_load_missing_sha256_returns_false(self, tmp_path):
         """sha256 파일 없으면 로드 거부."""
@@ -105,7 +109,7 @@ class TestMLModelLoad:
             "trainer_class": "EnsembleTrainer",
             "weights": (0.5, 0.5),
             "best_threshold": 0.4,
-            "feature_names": ["f1", "f2"],
+            "feature_names": ["drug_count", "age"],
             "artifact_version": 2,
         }
         content = pickle.dumps(payload)
