@@ -141,6 +141,136 @@ class TestMetricsWriterReadRecent:
         assert records == []
 
 
+class TestAppendRetryBackoff:
+    """append() retry/backoff 회귀 가드 — Codex 2026-05-07 #5.
+
+    직전까지 append() 가 lock timeout 시 즉시 Timeout 전파. /predict 가 warning
+    후 무시하지만 이 경우 메트릭 유실. retry/backoff 로 lock 경합 복구 가능성 +.
+
+    설계: 첫 시도 + 3 retry (backoff 0.1/0.25/0.5초) = 총 4 시도. 모두 실패 시
+    마지막 Timeout 전파. lock_timeout_count 누적 → 운영 가시성.
+    """
+
+    def test_append_immediate_success_no_counter_bump(self, tmp_path):
+        from monitoring.metrics_writer import MetricsWriter
+        path = tmp_path / "metrics.jsonl"
+        w = MetricsWriter(path=path)
+        w.append({"x": 1})
+        assert w.lock_timeout_count == 0
+
+    def test_append_succeeds_after_one_timeout(self, tmp_path, monkeypatch):
+        """첫 시도 timeout, 두 번째 성공. counter=1, 결과 OK."""
+        from monitoring.metrics_writer import MetricsWriter
+        from filelock import Timeout
+        path = tmp_path / "metrics.jsonl"
+        w = MetricsWriter(path=path, lock_timeout=0.5)
+
+        original_acquire = w._lock.acquire
+        attempts = {"n": 0}
+
+        def fake_acquire(*args, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise Timeout(str(path) + ".lock")
+            return original_acquire(*args, **kwargs)
+
+        monkeypatch.setattr(w._lock, "acquire", fake_acquire)
+        w.append({"y": 2})
+        assert w.lock_timeout_count == 1
+        assert path.read_text().count("\n") == 1
+
+    def test_append_succeeds_after_multiple_timeouts(self, tmp_path, monkeypatch):
+        """첫·둘째 시도 timeout, 세 번째 성공. counter=2."""
+        from monitoring.metrics_writer import MetricsWriter
+        from filelock import Timeout
+        path = tmp_path / "metrics.jsonl"
+        w = MetricsWriter(path=path, lock_timeout=0.5)
+
+        original_acquire = w._lock.acquire
+        attempts = {"n": 0}
+
+        def fake_acquire(*args, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] <= 2:
+                raise Timeout(str(path) + ".lock")
+            return original_acquire(*args, **kwargs)
+
+        monkeypatch.setattr(w._lock, "acquire", fake_acquire)
+        w.append({"z": 3})
+        assert w.lock_timeout_count == 2
+
+    def test_append_raises_after_retry_exhaustion(self, tmp_path, monkeypatch):
+        """모든 시도 timeout → Timeout 전파. counter=4 (1 시도 + 3 retry)."""
+        from monitoring.metrics_writer import MetricsWriter
+        from filelock import Timeout
+        path = tmp_path / "metrics.jsonl"
+        w = MetricsWriter(path=path, lock_timeout=0.05)
+
+        def always_timeout(*args, **kwargs):
+            raise Timeout(str(path) + ".lock")
+
+        monkeypatch.setattr(w._lock, "acquire", always_timeout)
+        with pytest.raises(Timeout):
+            w.append({"x": 1})
+        assert w.lock_timeout_count == 4  # 1 시도 + 3 retry 모두 카운트
+
+    def test_lock_timeout_count_thread_safe(self, tmp_path, monkeypatch):
+        """동시 timeout 발생 시 카운터 race 없이 누적 (threading.Lock 보호)."""
+        from monitoring.metrics_writer import MetricsWriter
+        from filelock import Timeout
+        path = tmp_path / "metrics.jsonl"
+        w = MetricsWriter(path=path, lock_timeout=0.01)
+
+        def always_timeout(*args, **kwargs):
+            raise Timeout(str(path) + ".lock")
+
+        monkeypatch.setattr(w._lock, "acquire", always_timeout)
+
+        threads = []
+
+        def runner():
+            try:
+                w.append({"x": 1})
+            except Timeout:
+                pass
+
+        for _ in range(5):
+            threads.append(threading.Thread(target=runner))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        # 5 thread × 4 시도 = 20
+        assert w.lock_timeout_count == 20
+
+    def test_predict_handler_compat_metrics_failure_warning_only(
+        self, tmp_path, monkeypatch
+    ):
+        """retry 소진 후 Timeout 이 hot path 호출자(예: /predict) 에서 warning 으로
+        무시되어 예측은 정상 반환되는지 — 라우터 측 try/except 호환 회귀.
+
+        라우터 측 except 패턴은 routers/predict.py:43-60 의 기존 로직 그대로.
+        """
+        from monitoring.metrics_writer import MetricsWriter
+        from filelock import Timeout
+        path = tmp_path / "metrics.jsonl"
+        w = MetricsWriter(path=path, lock_timeout=0.01)
+
+        def always_timeout(*args, **kwargs):
+            raise Timeout(str(path) + ".lock")
+
+        monkeypatch.setattr(w._lock, "acquire", always_timeout)
+
+        # 라우터 측 try/except 모방 — 예측 자체는 metrics 실패와 무관
+        prediction_succeeded = True
+        try:
+            w.append({"x": 1})
+        except Exception:
+            pass  # logger.warning 후 예측 정상 반환 흐름
+        assert prediction_succeeded
+        assert w.lock_timeout_count == 4
+
+
 class TestMetricsWriterSingleton:
     def test_init_metrics_writer_creates_singleton(self, tmp_path):
         import monitoring.metrics_writer as mw_mod

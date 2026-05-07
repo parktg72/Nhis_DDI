@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -17,6 +19,10 @@ from filelock import FileLock, Timeout
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# Codex 2026-05-07 #5 — append() lock timeout 시 retry/backoff.
+# 첫 시도 + 3 retry = 총 4 시도. 각 시도가 lock_timeout 까지 대기 + 사이 sleep.
+_APPEND_RETRY_BACKOFFS: tuple[float, ...] = (0.1, 0.25, 0.5)
 
 
 class MetricsWriter:
@@ -30,17 +36,50 @@ class MetricsWriter:
         self._path = Path(path) if path is not None else settings.METRICS_JSONL_PATH
         self._lock_timeout = lock_timeout if lock_timeout is not None else settings.METRICS_JSONL_LOCK_TIMEOUT
         self._lock = FileLock(str(self._path) + ".lock")
+        # lock 경합 누적 시그널 — 운영 가시성용. /health 통합은 별도 커밋 (Codex 합의).
+        self._lock_timeout_count: int = 0
+        self._counter_lock = threading.Lock()
+
+    @property
+    def lock_timeout_count(self) -> int:
+        """누적 lock timeout 횟수 — 운영 모니터링용 (Codex 2026-05-07 #5)."""
+        with self._counter_lock:
+            return self._lock_timeout_count
+
+    def _bump_timeout_counter(self) -> None:
+        with self._counter_lock:
+            self._lock_timeout_count += 1
 
     def append(self, record: dict) -> None:
         """레코드 1건을 jsonl 파일 끝에 추가.
 
-        lock_timeout 초과 시 filelock.Timeout 예외 전파.
+        lock_timeout 시 _APPEND_RETRY_BACKOFFS 만큼 retry (총 4 시도).
+        모든 retry 소진 시 마지막 filelock.Timeout 예외 전파.
         """
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock.acquire(timeout=self._lock_timeout):
-            with open(self._path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                f.flush()
+        last_exc: Optional[Timeout] = None
+        attempts = 1 + len(_APPEND_RETRY_BACKOFFS)  # 4
+        for attempt in range(attempts):
+            if attempt > 0:
+                time.sleep(_APPEND_RETRY_BACKOFFS[attempt - 1])
+            try:
+                with self._lock.acquire(timeout=self._lock_timeout):
+                    with open(self._path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        f.flush()
+                return  # 성공
+            except Timeout as exc:
+                self._bump_timeout_counter()
+                last_exc = exc
+                logger.warning(
+                    "MetricsWriter.append() lock timeout (attempt %d/%d, "
+                    "lock_timeout=%.2fs). 누적 timeout=%d.",
+                    attempt + 1, attempts, self._lock_timeout,
+                    self._lock_timeout_count,
+                )
+        # retry 소진 → 마지막 Timeout 전파 (라우터가 warning 후 예측은 정상 반환)
+        assert last_exc is not None
+        raise last_exc
 
     def read_recent(self, hours: int = 24) -> list[dict]:
         """최근 hours 시간 이내 레코드 반환.
