@@ -24,7 +24,7 @@ import os
 import pickle
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -62,6 +62,37 @@ _INTENTIONAL_FEATURE_ALLOWLIST: frozenset[str] = frozenset({"dup_efmdc"})
 _FEATURE_ALLOWED: frozenset[str] = _BUILDER_KNOWN_COLS | _INTENTIONAL_FEATURE_ALLOWLIST
 
 
+# Codex 2026-05-07 #6 — FEATURE_SCHEMA_LENIENT escape hatch sunset.
+# env 미설정 시 코드 default deadline. today >= sunset 면 lenient 강제 차단.
+# dup_efmdc allowlist sunset 은 별도 개념 (Codex 합의 — 본 PR 범위 밖).
+_FEATURE_SCHEMA_LENIENT_SUNSET_DEFAULT: date = date(2026, 8, 1)
+
+
+def _is_feature_schema_lenient_allowed(today: "Optional[date]" = None) -> bool:
+    """FEATURE_SCHEMA_LENIENT=1 escape hatch 가 sunset deadline 안인지 확인.
+
+    today >= sunset_date 면 lenient 차단 (strict 강제). today 인자는
+    monkeypatch 가능 — 테스트 시 임의 날짜 주입.
+
+    env FEATURE_SCHEMA_LENIENT_SUNSET_DATE (YYYY-MM-DD) 미설정 → 코드 default.
+    Invalid env date → 안전 측: lenient 차단 (운영 escape hatch 정책 — Codex 권고).
+    """
+    today = today or date.today()
+    raw = os.environ.get("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", "").strip()
+    if raw:
+        try:
+            sunset = datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            logger.warning(
+                "FEATURE_SCHEMA_LENIENT_SUNSET_DATE 형식 오류 — 안전 측으로 lenient "
+                "차단 (strict 강제). input=%r (YYYY-MM-DD 필요)", raw,
+            )
+            return False
+    else:
+        sunset = _FEATURE_SCHEMA_LENIENT_SUNSET_DEFAULT
+    return today < sunset
+
+
 def _validate_feature_schema(
     feature_names: list[str] | None,
     model_label: str,
@@ -70,6 +101,8 @@ def _validate_feature_schema(
 
     기본 strict: 미허용 컬럼 발견 시 logger.error + return ok=False → 모델 로드 거부.
     FEATURE_SCHEMA_LENIENT=1 (env) 로 legacy 호환 우회 (warning + degraded 로 로드).
+    단 Codex 2026-05-07 #6 sunset: today >= FEATURE_SCHEMA_LENIENT_SUNSET_DATE 면
+    lenient 무시하고 strict 강제 (escape hatch 영구 고착 방지).
 
     오늘 추가된 hana_etl `_normalize_yyyymmdd` 와 같은 input contract validation
     패턴 — boundary 에서 strict, sunset 윈도우에 한해 lenient.
@@ -81,10 +114,11 @@ def _validate_feature_schema(
     missing = sorted(set(feature_names) - _FEATURE_ALLOWED)
     if not missing:
         return [], True
-    lenient = os.environ.get("FEATURE_SCHEMA_LENIENT", "").strip().lower() in (
+    lenient_env = os.environ.get("FEATURE_SCHEMA_LENIENT", "").strip().lower() in (
         "1", "true", "yes",
     )
-    if lenient:
+    lenient_active = lenient_env and _is_feature_schema_lenient_allowed()
+    if lenient_active:
         logger.warning(
             "%s feature_names 중 RequestFeatureBuilder 미산출/허용 외 %d개: %s — "
             "FEATURE_SCHEMA_LENIENT=1 로 0.0 fallback 으로 로드 (degraded). "
@@ -92,12 +126,19 @@ def _validate_feature_schema(
             model_label, len(missing), missing,
         )
         return missing, True
-    logger.error(
-        "%s feature_names 중 RequestFeatureBuilder 미산출/허용 외 %d개 — 로드 거부 "
-        "(silent 0.0 drift 방지). 학습/서빙 schema 정렬 필요. 임시 우회: "
-        "FEATURE_SCHEMA_LENIENT=1. missing=%s",
-        model_label, len(missing), missing,
-    )
+    if lenient_env and not lenient_active:
+        logger.error(
+            "%s feature_names 미허용 컬럼 %d개 — FEATURE_SCHEMA_LENIENT=1 이지만 "
+            "sunset deadline 경과로 차단됨 (Codex #6). 학습/서빙 schema 정렬 필수. "
+            "missing=%s", model_label, len(missing), missing,
+        )
+    else:
+        logger.error(
+            "%s feature_names 중 RequestFeatureBuilder 미산출/허용 외 %d개 — 로드 거부 "
+            "(silent 0.0 drift 방지). 학습/서빙 schema 정렬 필요. 임시 우회 "
+            "(sunset 안에서만): FEATURE_SCHEMA_LENIENT=1. missing=%s",
+            model_label, len(missing), missing,
+        )
     return missing, False
 
 # 위험 약물 판정 상수 — 단일 출처: rules/risk_drug_constants.py
