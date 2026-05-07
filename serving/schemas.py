@@ -146,15 +146,28 @@ class BatchPredictRequest(BaseModel):
 
 
 class BatchPredictResponse(BaseModel):
-    """배치 예측 응답."""
-    results:       list[PredictResponse]
-    total:         int
-    red_count:     int
-    yellow_count:  int
-    green_count:   int
-    normal_count:  int
-    elapsed_ms:    float
-    warnings:      list[str] = Field(default_factory=list, description="부분 실패 경고 목록")
+    """배치 예측 응답.
+
+    Codex 2026-05-07 #6 — 직전 `total` 이 success 건수임에도 클라이언트가 입력
+    건수로 오해 가능. 명시적 카운트 분리:
+      - requested_count: 입력된 요청 환자 수 (= len(req.requests))
+      - success_count:   예측 성공 환자 수 (= len(results))
+      - failed_count:    예측 실패 환자 수 (= len(warnings) = requested - success)
+      - total:           DEPRECATED — success_count 와 동일 값 (backward compat)
+    """
+    results:         list[PredictResponse]
+    requested_count: int = Field(description="요청된 환자 수 (입력 건수)")
+    success_count:   int = Field(description="예측 성공 환자 수")
+    failed_count:    int = Field(description="예측 실패 환자 수 (= requested_count - success_count)")
+    total:           int = Field(
+        description="DEPRECATED: success_count alias (backward compat). 신규 클라이언트는 success_count 사용"
+    )
+    red_count:       int
+    yellow_count:    int
+    green_count:     int
+    normal_count:    int
+    elapsed_ms:      float
+    warnings:        list[str] = Field(default_factory=list, description="부분 실패 경고 목록")
 
 
 class HealthResponse(BaseModel):

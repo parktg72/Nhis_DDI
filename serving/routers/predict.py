@@ -108,9 +108,15 @@ async def predict_batch(req: BatchPredictRequest):
     dist = Counter(r.risk_level for r in results)
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
+    requested_count = len(req.requests)
+    success_count = len(results)
+    failed_count = requested_count - success_count
     return BatchPredictResponse(
         results=results,
-        total=len(results),
+        requested_count=requested_count,
+        success_count=success_count,
+        failed_count=failed_count,
+        total=success_count,  # DEPRECATED alias (Codex 2026-05-07 #6)
         red_count=dist.get(RiskLevel.RED, 0),
         yellow_count=dist.get(RiskLevel.YELLOW, 0),
         green_count=dist.get(RiskLevel.GREEN, 0),
