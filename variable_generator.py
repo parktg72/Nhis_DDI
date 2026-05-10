@@ -258,49 +258,57 @@ class VariableGenerator:
             FROM cci_detail
         """)
 
+    def _apply_complete_case_strategy(self, cb=None):
+        """complete_case 결측값 처리 실행"""
+        critical_vars = [
+            'bmi',              # 보건검진 핵심
+            'income_quintile',  # 사회경제적 변수 핵심
+            'smoking_status',   # 문진 기본 변수
+        ]
+        null_conditions = ' OR '.join(f"{v} IS NULL" for v in critical_vars)
+
+        before_count = self.dm.storage.get_row_count('final_analysis')
+
+        self.dm.execute(f"""
+            CREATE OR REPLACE TABLE final_analysis AS
+            SELECT * FROM final_analysis
+            WHERE NOT ({null_conditions})
+        """)
+
+        after_count = self.dm.storage.get_row_count('final_analysis')
+        excluded = before_count - after_count
+        pct_excluded = (excluded / before_count * 100) if before_count > 0 else 0
+
+        logger.info(f"Complete-case 분석: {before_count} → {after_count} 행 ({excluded} 행={pct_excluded:.1f}% 제외)")
+        if cb: cb(f"✓ Complete-case 분석: {excluded}명 제외 ({pct_excluded:.1f}%), {after_count}명 분석 대상")
+
     def apply_missing_data_strategy(self, cb=None):
         """결측값 처리 전략 적용. Phase 1: listwise deletion (complete_case) 구현."""
         strategy = STUDY_SETTINGS.get('MISSING_DATA_STRATEGY', 'complete_case')
         if cb: cb(f"결측값 처리 중 (방식: {strategy})...")
 
         if strategy == 'complete_case':
-            # ★ 핵심 분석 변수에 결측값 있는 행 제거 (listwise deletion)
-            # 보건검진(bmi), 문진(smoking_status), 소득(income_quintile) 중 하나라도 NULL → 제외
-            # 임상 결과 변수는 결측 허용 (추후 다중대체 시 처리 가정)
-            critical_vars = [
-                'bmi',              # 보건검진 핵심
-                'income_quintile',  # 사회경제적 변수 핵심
-                'smoking_status',   # 문진 기본 변수
-            ]
-            null_conditions = ' OR '.join(f"{v} IS NULL" for v in critical_vars)
-
-            before_count = self.dm.storage.get_row_count('final_analysis')
-
-            self.dm.execute(f"""
-                CREATE OR REPLACE TABLE final_analysis AS
-                SELECT * FROM final_analysis
-                WHERE NOT ({null_conditions})
-            """)
-
-            after_count = self.dm.storage.get_row_count('final_analysis')
-            excluded = before_count - after_count
-            pct_excluded = (excluded / before_count * 100) if before_count > 0 else 0
-
-            logger.info(f"Complete-case 분석: {before_count} → {after_count} 행 ({excluded} 행={pct_excluded:.1f}% 제외)")
-            if cb: cb(f"✓ Complete-case 분석: {excluded}명 제외 ({pct_excluded:.1f}%), {after_count}명 분석 대상")
-
+            self._apply_complete_case_strategy(cb)
         elif strategy == 'multiple_imputation':
             # Phase 2: 다중대체 구현 예정
             logger.warning("Multiple imputation은 Phase 2 구현 예정. 현재는 complete_case로 처리합니다")
             if cb: cb("[주의] Multiple imputation 미구현. complete_case로 대체 처리")
-            # 재귀 호출로 complete_case 적용
-            STUDY_SETTINGS['MISSING_DATA_STRATEGY'] = 'complete_case'
-            self.apply_missing_data_strategy(cb)
+            self._apply_complete_case_strategy(cb)
         else:
             raise ValueError(f"미지원 결측값 처리 방식: {strategy}")
 
     def merge_all_variables(self, cb=None):
         if cb: cb("변수 통합 중...")
+
+        if not self.dm.storage.table_exists('med_switch'):
+            logger.warning("med_switch 테이블이 없어 빈 stub 테이블을 생성합니다")
+            self.dm.execute("""
+                CREATE TABLE med_switch (
+                    INDI_DSCM_NO VARCHAR,
+                    insulin_switch_date VARCHAR
+                )
+            """)
+
         self.dm.execute("""
             CREATE OR REPLACE TABLE final_analysis AS
             SELECT ad.*,
