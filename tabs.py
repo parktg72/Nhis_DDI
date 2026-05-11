@@ -405,8 +405,7 @@ class MemoryTab(QWidget):
             else:
                 self.lbl_gpu.setText("GPU: 미감지 (CPU 모드)")
         except Exception:
-            # 실시간 모니터링 중 발생한 예외는 로그로만 남김
-            pass
+            logger.debug("메모리 상태 갱신 실패", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1547,12 +1546,8 @@ class ResultsTab(QWidget):
             with pd.ExcelWriter(path, engine='openpyxl') as writer:
                 exp._write_df_with_sampling_header(writer, df2, sheet[:31], sampling_info)
             self.log_signal.emit(f"내보내기 완료: {path}")
-        except (duckdb.Error, pd.errors.EmptyDataError, ValueError,
-                MemoryError, CohortStepError) as e:
-            logger.exception("Excel 내보내기 실패")
-            QMessageBox.critical(self, "오류", format_error_for_user(e))
         except Exception as e:
-            logger.exception("Excel 내보내기 중 예기치 않은 오류")
+            logger.exception("Excel 내보내기 실패")
             QMessageBox.critical(self, "오류", format_error_for_user(e))
 
     def export_all(self):
@@ -1565,12 +1560,8 @@ class ResultsTab(QWidget):
         try:
             files = exp.export_all(ar, sampling_info=sampling_info)
             QMessageBox.information(self, "완료", f"{len(files)}개 파일 저장")
-        except (duckdb.Error, pd.errors.EmptyDataError, ValueError,
-                MemoryError, CohortStepError) as e:
-            logger.exception("전체 내보내기 실패")
-            QMessageBox.critical(self, "오류", format_error_for_user(e))
         except Exception as e:
-            logger.exception("전체 내보내기 중 예기치 않은 오류")
+            logger.exception("전체 내보내기 실패")
             QMessageBox.critical(self, "오류", format_error_for_user(e))
 
     def plot_km(self):
@@ -1602,12 +1593,8 @@ class ResultsTab(QWidget):
                     os.startfile(p)
                 else:
                     logger.warning(f"결과 디렉토리 외부 경로 차단: {p}")
-        except (duckdb.Error, pd.errors.EmptyDataError, ValueError,
-                MemoryError, CohortStepError) as e:
-            logger.exception("KM 곡선 생성 실패")
-            QMessageBox.warning(self, "오류", format_error_for_user(e))
         except Exception as e:
-            logger.exception("KM 곡선 생성 중 예기치 않은 오류")
+            logger.exception("KM 곡선 생성 실패")
             QMessageBox.warning(self, "오류", format_error_for_user(e))
 
     def plot_forest(self):
@@ -1622,10 +1609,6 @@ class ResultsTab(QWidget):
                         os.startfile(p)
                     else:
                         logger.warning(f"결과 디렉토리 외부 경로 차단: {p}")
-        except (duckdb.Error, pd.errors.EmptyDataError, ValueError,
-                MemoryError, CohortStepError) as e:
-            logger.exception("Forest Plot 생성 실패")
-            QMessageBox.warning(self, "오류", format_error_for_user(e))
         except Exception as e:
-            logger.exception("Forest Plot 생성 중 예기치 않은 오류")
+            logger.exception("Forest Plot 생성 실패")
             QMessageBox.warning(self, "오류", format_error_for_user(e))

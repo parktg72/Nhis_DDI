@@ -293,6 +293,18 @@ Track Codex-Claude-Hermes debugging decisions, review handoffs, and test evidenc
   - PASS.
   - Ready for Claude second review.
 
+### 2026-05-11 - Claude 2차 리뷰 수신 (tabs.py broad except cleanup 1차)
+
+- Claude second review:
+  - Decision: PASS.
+  - Blocking findings: none.
+  - ResultsTab duplicate exception-handler merge is appropriate for this round.
+  - MemoryTab debug logging is appropriate for timer-based monitoring.
+- Next sub-round candidates:
+  - `HanaBrowserTab` exception handling with HANA mocking.
+  - `AnalysisTab._confirm_sampling_if_needed` or `DataLoadTab.do_load`.
+  - Introduce a GUI error helper together with a future HANA-focused cleanup.
+
 ### 2026-05-11 - Claude 2차 리뷰 수신 (Helper 통합 follow-up)
 
 - Claude second review:
@@ -304,6 +316,26 @@ Track Codex-Claude-Hermes debugging decisions, review handoffs, and test evidenc
 - Non-blocking follow-up candidates:
   - Update thin-wrapper docstrings for `_skip_result`, `_model_failure`, and `_error_result`.
   - Proceed to `tabs.py` broad exception cleanup in a later GUI-focused round.
+
+### 2026-05-11 - tabs.py broad except cleanup 1차: ResultsTab 중복 병합
+
+- Scope agreed with Claude:
+  - Keep the first GUI cleanup round small.
+  - Do not add a helper in this round.
+  - Merge duplicate expected/unexpected exception handlers in `ResultsTab`.
+  - Replace the `MemoryTab._update_mem_status` bare `pass` with debug logging.
+- Hermes coding:
+  - Hermes job ended with timeout code `124`, but file changes were present.
+  - `ResultsTab.export`, `export_all`, `plot_km`, and `plot_forest` now each use one `except Exception as e` block with the existing user-facing `format_error_for_user(e)` message.
+  - `MemoryTab._update_mem_status` now logs debug details with `exc_info=True`.
+- Codex verification:
+  - `PYTHONPYCACHEPREFIX=/private/tmp/pycache python3 -m py_compile tabs.py` -> pass
+  - `pytest tests/test_stage_s.py -q` -> `11 passed`
+  - `pytest tests/ -q` -> `437 passed`
+  - `git diff --check` -> clean
+- Codex first-review result:
+  - PASS.
+  - Ready for Claude second review.
 
 ### 2026-05-11 - Claude 2차 리뷰 수신 (Helper 통합 mini-round)
 
