@@ -199,6 +199,7 @@ class ConnectionTab(QWidget):
             logger.exception("HANA 연결 테스트 실패")
             QMessageBox.critical(self, "패키지 오류", str(e))
         except Exception as e:
+            # intentional: HANA connection errors vary by network/auth/driver/config and are surfaced to the user.
             logger.exception("HANA 연결 테스트 실패")
             QMessageBox.critical(self, "연결 실패", f"HANA DB 연결 실패:\n\n{e}")
 
@@ -487,6 +488,7 @@ class HanaBrowserTab(QWidget):
                 self.hana_tree.addTopLevelItem(item)
             self.log_signal.emit(f"스키마 {len(schemas)}개 로드됨")
         except Exception as e:
+            # intentional: HANA UI boundary; network/auth errors are displayed to the user.
             logger.exception("HANA 스키마 로드 실패")
             QMessageBox.critical(self, "오류", format_error_for_user(e))
 
@@ -514,6 +516,7 @@ class HanaBrowserTab(QWidget):
                     self.column_table.setItem(i, 4, QTableWidgetItem(c.get('comment', '') or ''))
                 self.column_table.resizeColumnsToContents()
         except Exception as e:
+            # intentional: HANA UI boundary; tree interaction errors are surfaced via log.
             logger.exception("HANA 트리 클릭 오류")
             self.log_signal.emit(f"오류: {format_error_for_user(e)}")
 
@@ -543,6 +546,7 @@ class HanaBrowserTab(QWidget):
             parent.setExpanded(True)
             self.log_signal.emit(f"'{kw}' 검색: {len(results)}개")
         except Exception as e:
+            # intentional: HANA UI boundary; search errors are surfaced via log.
             logger.exception("HANA 검색 실패")
             self.log_signal.emit(f"검색 오류: {format_error_for_user(e)}")
 
