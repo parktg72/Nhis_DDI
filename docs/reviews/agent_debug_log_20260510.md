@@ -293,6 +293,19 @@ Track Codex-Claude-Hermes debugging decisions, review handoffs, and test evidenc
   - PASS.
   - Ready for Claude second review.
 
+### 2026-05-11 - Claude 2차 리뷰 수신 (Helper 통합 mini-round)
+
+- Claude second review:
+  - Decision: PASS.
+  - Blocking findings: none.
+  - `utils.py` is an appropriate shared location for `make_error_result`.
+  - Keeping `StatisticalAnalyzer._error_result` as a wrapper is appropriate to minimize call-site risk.
+  - Tests and updated `431 passed` baseline are accepted.
+- Non-blocking follow-up candidates:
+  - Clarify the `_error_result` wrapper docstring later.
+  - Consider `_skip_result` and `_model_failure` helper consolidation in a separate round.
+  - Handle `tabs.py` broad exception paths in a later GUI-focused round.
+
 ### 2026-05-11 - Claude 2차 리뷰 수신 (R2-3c follow-up)
 
 - Claude second review:
@@ -587,3 +600,24 @@ Track Codex-Claude-Hermes debugging decisions, review handoffs, and test evidenc
 - `AGENTS.md` 금지 사항에 `⚠️` 항목 무승인 커밋 금지 1줄 추가.
 - 변경 범위는 문서 파일(`AGENTS.md`, 본 로그)로 제한.
 - 검증: `git diff --check` 실행, 가능 시 전체 테스트 기준선(`427 passed`) 재확인.
+
+### 2026-05-11 - Helper 통합 mini-round: make_error_result 공통화
+
+- Scope agreed with Claude:
+  - Move duplicate exception-result schema creation into `utils.make_error_result`.
+  - Keep `StatisticalAnalyzer._error_result` as a thin wrapper to minimize call-site changes.
+  - Leave `_skip_result`, `_model_failure`, and GUI formatters out of scope.
+- Hermes coding:
+  - Hermes job ended with timeout code `124`, but file changes were present.
+  - Added `utils.make_error_result(reason_code, error, *, stage=None, **extra)`.
+  - Removed the local `analysis_runner.make_error_result` implementation and imported the shared helper.
+  - Updated `StatisticalAnalyzer._error_result` to delegate to the shared helper.
+  - Added `tests/test_utils.py` coverage for required fields, stage omission/inclusion, and extra fields.
+- Codex verification:
+  - `pytest tests/test_utils.py tests/test_analysis_runner.py tests/test_stage_n.py tests/test_run_selected.py -q` -> `56 passed`
+  - `PYTHONPYCACHEPREFIX=/private/tmp/pycache python3 -m py_compile utils.py analysis_runner.py statistical_analysis.py` -> pass
+  - `pytest tests/ -q` -> `431 passed`
+  - `git diff --check` -> clean
+- Codex first-review result:
+  - PASS.
+  - Ready for Claude second review.

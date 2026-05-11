@@ -13,7 +13,7 @@ from lifelines.statistics import proportional_hazard_test
 from scipy import stats
 from config import STUDY_SETTINGS, DEMENTIA_DRUG_CODES
 from memory_manager import mem_manager
-from utils import InsufficientDataError, format_error_for_user
+from utils import InsufficientDataError, format_error_for_user, make_error_result
 from dataclasses import dataclass
 import duckdb
 
@@ -111,15 +111,7 @@ class StatisticalAnalyzer:
 
     def _error_result(self, reason_code, error, *, stage=None, **extra):
         """예외 기반 분석 실패 결과의 공통 스키마."""
-        result = {
-            'reason_code': reason_code,
-            'reason': str(error),
-            'exception_type': type(error).__name__,
-        }
-        if stage is not None:
-            result['stage'] = stage
-        result.update(extra)
-        return result
+        return make_error_result(reason_code, error, stage=stage, **extra)
 
     def _load_data(self, cb=None):
         """메모리 안전 데이터 로드 — 1회 로드 후 캐시 재사용"""

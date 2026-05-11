@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils import icd_like, format_hr, format_number
+from utils import icd_like, format_hr, format_number, make_error_result
 
 
 class TestIcdLike:
@@ -79,3 +79,39 @@ class TestFormatNumber:
 
     def test_zero(self):
         assert format_number(0) == "0"
+
+
+class TestMakeErrorResult:
+    def test_includes_required_fields(self):
+        error = ValueError("bad input")
+        result = make_error_result("ANALYSIS_ERROR", error)
+
+        assert result["reason_code"] == "ANALYSIS_ERROR"
+        assert result["reason"] == "bad input"
+        assert result["exception_type"] == "ValueError"
+
+    def test_omits_stage_when_none(self):
+        error = RuntimeError("oops")
+        result = make_error_result("RUNTIME_ERROR", error, stage=None)
+
+        assert "stage" not in result
+
+    def test_includes_stage_when_provided(self):
+        error = RuntimeError("oops")
+        result = make_error_result("RUNTIME_ERROR", error, stage="stage_n")
+
+        assert result["stage"] == "stage_n"
+
+    def test_merges_extra_fields(self):
+        error = KeyError("missing")
+        result = make_error_result(
+            "MISSING_KEY",
+            error,
+            stage="stage_o",
+            failed_outcome="ad_event",
+            retryable=False,
+        )
+
+        assert result["stage"] == "stage_o"
+        assert result["failed_outcome"] == "ad_event"
+        assert result["retryable"] is False

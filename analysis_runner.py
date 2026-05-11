@@ -7,21 +7,9 @@ import gc
 import logging
 from visualization import Visualizer
 from results_exporter import ResultsExporter
+from utils import make_error_result
 
 logger = logging.getLogger(__name__)
-
-
-def make_error_result(reason_code, error, *, stage=None, **extra):
-    """예외 기반 후처리 실패 결과의 공통 스키마."""
-    result = {
-        'reason_code': reason_code,
-        'reason': str(error),
-        'exception_type': type(error).__name__,
-    }
-    if stage is not None:
-        result['stage'] = stage
-    result.update(extra)
-    return result
 
 
 def run_post_analysis(dm, analysis_results, results_dir, log=None):
