@@ -293,6 +293,17 @@ Track Codex-Claude-Hermes debugging decisions, review handoffs, and test evidenc
   - PASS.
   - Ready for Claude second review.
 
+### 2026-05-11 - Claude 2차 리뷰 수신 (HANA mocking 테스트 강화)
+
+- Claude second review:
+  - Decision: PASS.
+  - Blocking findings: none.
+  - The unbound method plus `MagicMock` self pattern is appropriate for QApplication-free tests.
+  - Prefix and original-message assertions are sufficient for this cleanup regression coverage.
+- Non-blocking follow-up:
+  - Consider using a more unique search failure message in the search test later.
+  - Wrapper docstring mini-round remains a small optional follow-up.
+
 ### 2026-05-11 - Claude 2차 리뷰 수신 (HanaBrowserTab cleanup)
 
 - Claude second review:
@@ -753,3 +764,24 @@ Track Codex-Claude-Hermes debugging decisions, review handoffs, and test evidenc
 - Next candidates:
   - Wrapper docstring mini-round.
   - HANA mocking test strengthening for `on_tree_click` and `search_hana_tables`.
+
+### 2026-05-11 - HANA mocking 테스트 강화 라운드
+
+- Scope:
+  - `tests/test_stage_s.py`에 HANA failure-path 회귀 방지 테스트 3건 추가.
+  - GUI 위젯 인스턴스 생성 없이 `HanaBrowserTab` unbound method + `MagicMock` self 패턴 사용.
+- Added tests:
+  - `test_hana_browser_on_tree_click_schema_failure_logs_user_error`
+  - `test_hana_browser_on_tree_click_table_failure_logs_user_error`
+  - `test_hana_browser_search_failure_logs_user_error`
+- Verification:
+  - `pytest tests/test_stage_s.py -q` -> `14 passed`
+  - `pytest tests/ -q` -> `440 passed`
+  - `git diff --check` -> clean
+- Codex verification:
+  - `pytest tests/test_stage_s.py -q` -> `14 passed`
+  - `pytest tests/ -q` -> `440 passed`
+  - `git diff --check` -> clean
+- Codex first-review result:
+  - PASS.
+  - Ready for Claude second review.

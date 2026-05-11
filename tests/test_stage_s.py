@@ -157,3 +157,51 @@ def test_build_step_failure_message_details_only_uses_fallback_body_and_error_fi
 def test_build_step_failure_message_both_empty_returns_none():
     tabs = __import__('pytest').importorskip("tabs")
     assert tabs._build_step_failure_message({}, {}) is None
+
+
+def test_hana_browser_on_tree_click_schema_failure_logs_user_error():
+    tabs = __import__('pytest').importorskip("tabs")
+    mock_self = MagicMock()
+    mock_self.ctx.dm.get_hana_tables.side_effect = ValueError("연결 실패")
+
+    fake_item = MagicMock()
+    fake_item.data.return_value = {'type': 'schema', 'name': 'TEST_SCHEMA'}
+    fake_item.childCount.return_value = 0
+
+    tabs.HanaBrowserTab.on_tree_click(mock_self, fake_item, 0)
+
+    mock_self.log_signal.emit.assert_called()
+    emitted = mock_self.log_signal.emit.call_args[0][0]
+    assert emitted.startswith("오류:")
+    assert "연결 실패" in emitted
+
+
+def test_hana_browser_on_tree_click_table_failure_logs_user_error():
+    tabs = __import__('pytest').importorskip("tabs")
+    mock_self = MagicMock()
+    mock_self.ctx.dm.get_hana_columns.side_effect = RuntimeError("컬럼 조회 실패")
+
+    fake_item = MagicMock()
+    fake_item.data.return_value = {'type': 'table', 'schema': 'S', 'name': 'T'}
+
+    tabs.HanaBrowserTab.on_tree_click(mock_self, fake_item, 0)
+
+    mock_self.log_signal.emit.assert_called()
+    emitted = mock_self.log_signal.emit.call_args[0][0]
+    assert emitted.startswith("오류:")
+    assert "컬럼 조회 실패" in emitted
+
+
+def test_hana_browser_search_failure_logs_user_error():
+    tabs = __import__('pytest').importorskip("tabs")
+    mock_self = MagicMock()
+    mock_self.hana_search.text.return_value = "DRUG"
+    mock_self.hana_tree.currentItem.return_value.data.return_value = {'type': 'schema', 'name': 'S'}
+    mock_self.ctx.dm.search_hana_tables.side_effect = ValueError("검색 오류")
+
+    tabs.HanaBrowserTab.search_hana_tables(mock_self)
+
+    mock_self.log_signal.emit.assert_called()
+    emitted = mock_self.log_signal.emit.call_args[0][0]
+    assert emitted.startswith("검색 오류:")
+    assert "검색 오류" in emitted
