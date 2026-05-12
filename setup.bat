@@ -76,7 +76,7 @@ if exist requirements-hana.txt (
             echo [INFO] HANA 드라이버 설치 완료.
         )
     ) else (
-        echo [INFO] HANA 드라이버 설치 건너뜀. 로컬 파일(.parquet/.sas7bdat)만 사용 가능합니다.
+        echo [INFO] HANA 드라이버 설치 건너뜀. 로컬 파일^(.parquet/.sas7bdat^)만 사용 가능합니다.
     )
 )
 
