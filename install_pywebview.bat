@@ -6,6 +6,7 @@ REM 표준 경로: install_312.bat venv (pywebview 포함)
 REM 이 스크립트는 레거시/진단용이며 install_312.bat 과 집합을 일치시킨다.
 REM ============================================================
 setlocal
+set "PYTHONUTF8=1"
 
 set ROOT=%~dp0
 set PYTHON_BIN=
@@ -21,8 +22,17 @@ echo Python  : %PYTHON_BIN%
 echo Packages: %PKG_DIR%
 echo.
 
-if not exist "%PKG_DIR%\pywebview-6.1-py3-none-any.whl" (
+dir /b "%PKG_DIR%\pywebview-*.whl" >nul 2>&1
+if errorlevel 1 (
     echo [ERROR] pywebview package not found in %PKG_DIR%
+    echo Run download_pywebview.bat on an internet-connected machine first.
+    pause
+    exit /b 1
+)
+
+dir /b "%PKG_DIR%\proxy_tools-*.whl" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] proxy_tools package not found in %PKG_DIR%
     echo Run download_pywebview.bat on an internet-connected machine first.
     pause
     exit /b 1

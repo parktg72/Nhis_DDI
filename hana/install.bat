@@ -14,6 +14,7 @@ REM   hana\install.bat 311 venv      (Python 3.11 + 가상환경 생성)
 REM ============================================================
 
 setlocal EnableDelayedExpansion
+set "PYTHONUTF8=1"
 
 set SCRIPT_DIR=%~dp0
 set REQUIREMENTS=%SCRIPT_DIR%requirements.txt

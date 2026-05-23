@@ -11,6 +11,7 @@ REM   hana_app\run.bat 8501 venv    (가상환경 사용)
 REM ============================================================
 
 setlocal EnableDelayedExpansion
+set "PYTHONUTF8=1"
 
 set SCRIPT_DIR=%~dp0
 set PROJECT_ROOT=%SCRIPT_DIR%..

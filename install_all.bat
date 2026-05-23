@@ -20,6 +20,7 @@ REM   install_all.bat 311 venv         (Python 3.11 + 가상환경 .venv)
 REM ============================================================
 
 setlocal EnableDelayedExpansion
+set "PYTHONUTF8=1"
 
 set PROJECT_ROOT=%~dp0
 set WIN_DIR=%PROJECT_ROOT%packages_win

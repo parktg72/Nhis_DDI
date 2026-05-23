@@ -53,6 +53,10 @@ torch-geometric>=2.7.0,<3.0.0  # GAT 모델 (선택적; 부재 시 GAT 테스트
 streamlit>=1.30.0
 plotly>=5.18.0
 
+# -- 데스크탑 앱 (pywebview)
+pywebview>=6.1,<7.0
+proxy_tools>=0.1.0
+
 # -- API 서빙
 # fastapi 0.136 + starlette 1.0 동시 점프 시 ResponseValidation 동작 변화 — 함께 캡
 fastapi>=0.104.0,<0.136.0

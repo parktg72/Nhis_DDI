@@ -10,6 +10,7 @@ REM   install_312.bat venv     (.venv_hana 생성 후 설치)
 REM ============================================================
 
 setlocal EnableDelayedExpansion
+set "PYTHONUTF8=1"
 
 set PROJECT_ROOT=%~dp0
 set WIN_PKG_DIR=%PROJECT_ROOT%packages_win\py312
@@ -186,6 +187,26 @@ echo [4/5] 나머지 requirements.txt 설치...
 %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% %CONSTRAINT% --upgrade -r "%PROJECT_ROOT%hana_app\requirements.txt" 2>nul ^
     || echo [경고] hana_app\requirements.txt 일부 실패
 
+REM ── 4.3단계: 운영 DL CUDA 패키지 (선택, GPU 추론용) ──────────────────
+echo.
+echo [4.3/5] 운영 DL CUDA 패키지 설치 확인...
+set CUDA_REQ=%WIN_DIR%\requirements_cuda_cu126.txt
+if exist "%CUDA_REQ%" (
+    %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade -r "%CUDA_REQ%"
+    if errorlevel 1 (
+        if /I "%DDI_REQUIRE_CUDA_DL%"=="1" (
+            echo [오류] CUDA DL 패키지 설치 실패 ^(DDI_REQUIRE_CUDA_DL=1^)
+            pause
+            exit /b 1
+        ) else (
+            echo [경고] CUDA DL 패키지 설치 실패 -- ML-only 실행은 가능, DL 추론은 비활성
+            echo        인터넷 환경에서 packages_win\download_cuda_cu126.bat 실행 후 py312 폴더를 복사하세요.
+        )
+    )
+) else (
+    echo [정보] requirements_cuda_cu126.txt 없음 -- CUDA DL 설치 건너뜀
+)
+
 REM pydotplus (tar.gz 소스 빌드) — --no-build-isolation 필요
 %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --no-build-isolation pydotplus 2>nul || echo [경고] pydotplus 설치 건너뜀 (hana-ml 선택 의존성)
 
@@ -214,6 +235,8 @@ echo [데이터 처리]
 echo [머신러닝]
 %PYTHON_BIN% -c "import sklearn, xgboost, lightgbm, shap; print('  sklearn/xgboost/lightgbm/shap OK')" 2>nul || (echo   [실패] ML 패키지 & set FAIL=1)
 %PYTHON_BIN% -c "import catboost; print('  catboost', catboost.__version__, 'OK')" 2>nul || (echo   [실패] catboost & set FAIL=1)
+%PYTHON_BIN% -c "import torch; print('  torch', torch.__version__, 'cuda=', torch.version.cuda, 'available=', torch.cuda.is_available()); raise SystemExit(0 if torch.cuda.is_available() else 1)" 2>nul || (if /I "%DDI_REQUIRE_CUDA_DL%"=="1" (echo   [실패] CUDA PyTorch ^(DDI_REQUIRE_CUDA_DL=1^) & set FAIL=1) else echo   [경고] CUDA PyTorch 비활성 -- DL 추론 전 CUDA wheel/driver 확인 필요)
+%PYTHON_BIN% -c "import torch_geometric, pyg_lib, torch_scatter, torch_sparse, torch_cluster; print('  PyG CUDA companion packages OK')" 2>nul || (if /I "%DDI_REQUIRE_CUDA_DL%"=="1" (echo   [실패] PyG companion packages ^(DDI_REQUIRE_CUDA_DL=1^) & set FAIL=1) else echo   [경고] PyG companion packages 미설치 -- DL GNN 추론 전 wheel set 보강 필요)
 
 echo [웹앱]
 %PYTHON_BIN% -c "import streamlit; print('  Streamlit', streamlit.__version__, 'OK')" 2>nul || (echo   [실패] Streamlit & set FAIL=1)
@@ -229,6 +252,10 @@ if "%FAIL%"=="0" (
     echo  모든 패키지 설치 완료!
 ) else (
     echo  일부 실패 -- 위 [실패] 항목을 확인하세요.
+    if /I "%DDI_REQUIRE_CUDA_DL%"=="1" (
+        echo  DDI_REQUIRE_CUDA_DL=1 이므로 설치 검증 실패를 hard fail 처리합니다.
+        exit /b 1
+    )
 )
 echo.
 echo  다음 단계:

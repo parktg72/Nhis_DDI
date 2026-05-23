@@ -50,3 +50,13 @@ duckdb==1.5.1
 # ── 시각화 / 보조 ─────────────────────────────────────────────────────────
 matplotlib==3.10.8
 plotly==6.6.0
+
+# ── 데스크탑 앱 (pywebview) ────────────────────────────────────────────────
+pywebview==6.1
+proxy_tools==0.1.0
+pythonnet==3.0.5
+clr_loader==0.2.10
+bottle==0.13.4
+cffi==2.0.0
+pycparser==3.0
+typing_extensions==4.15.0

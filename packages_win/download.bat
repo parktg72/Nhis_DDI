@@ -10,6 +10,7 @@ REM   packages_win\download.bat 310     (Python 3.10만)
 REM ============================================================
 
 setlocal EnableDelayedExpansion
+set "PYTHONUTF8=1"
 
 set SCRIPT_DIR=%~dp0
 set REQUIREMENTS=%SCRIPT_DIR%requirements.txt

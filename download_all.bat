@@ -13,6 +13,7 @@ REM   download_all.bat 311          (Python 3.11만)
 REM ============================================================
 
 setlocal EnableDelayedExpansion
+set "PYTHONUTF8=1"
 
 set PROJECT_ROOT=%~dp0
 set PY_VERSIONS=39 310 311 312

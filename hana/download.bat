@@ -12,6 +12,7 @@ REM 다운로드 후 폐쇄망에서 install.bat 실행
 REM ============================================================
 
 setlocal EnableDelayedExpansion
+set "PYTHONUTF8=1"
 
 set SCRIPT_DIR=%~dp0
 set REQUIREMENTS=%SCRIPT_DIR%requirements.txt
