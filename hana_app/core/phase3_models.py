@@ -112,10 +112,11 @@ class TabNetWrapper:
 
 class GNNWrapper:
     """
-    Graph Neural Network 래퍼 (실험적).
+    DEPRECATED pseudo-DL wrapper over aggregate tabular features.
 
     현재 피처 구조(환자 레벨 집계 16컬럼)에서는 MLP와 유사하게 동작합니다.
-    실제 GNN 효과를 위해서는 약물 공동처방 그래프(raw 처방 데이터) 필요.
+    운영 DL/GNN 효과를 위해서는 약물 공동처방 그래프(raw 처방 데이터)와
+    drug_vocab/edge_index/model_config를 포함한 DL artifact bundle이 필요합니다.
     여기서는 간단한 2-layer GCN을 MLP 대용으로 구현합니다.
     """
 
@@ -215,9 +216,11 @@ class GNNWrapper:
 
 class TemporalTransformerWrapper:
     """
-    Transformer 기반 분류기 래퍼 (실험적).
+    DEPRECATED pseudo-DL wrapper over aggregate tabular features.
 
     현재 피처 구조(환자 레벨 집계)에서는 피처를 시퀀스 토큰으로 취급합니다.
+    운영 Temporal DL은 환자 처방 이력 시퀀스와 mask/padding 계약을 별도
+    DL dataset으로 받아야 합니다.
     실제 시계열 효과를 위해서는 원시 처방 시퀀스 데이터 필요.
     """
 

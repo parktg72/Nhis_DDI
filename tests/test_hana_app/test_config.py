@@ -9,6 +9,17 @@ from hana_app.core.config import DEFAULT_CONFIG, load_config, save_config
 
 
 class TestValidatedFlag:
+    def test_project_hana_config_has_operational_host_without_credentials(self):
+        """프로젝트 config에는 운영 host/port만 저장하고 ID/PW는 사용자 입력으로 둔다."""
+        cfg_path = Path(__file__).resolve().parents[2] / "hana_app" / "hana_config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+
+        assert cfg["connection"]["host"] == "10.1.67.115"
+        assert cfg["connection"]["port"] == 30015
+        assert cfg["connection"].get("user", "") == ""
+        assert "password" not in cfg["connection"]
+        assert cfg["connection"].get("password_enc", "") == ""
+
     def test_default_config_has_validated_false(self):
         """DEFAULT_CONFIG에 validated=False가 있다."""
         assert DEFAULT_CONFIG.get("validated") is False

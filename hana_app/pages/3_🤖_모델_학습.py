@@ -575,14 +575,15 @@ if target == "hierarchical":
 
 with tab_p3:
     st.warning(
-        "⚠️ Phase 3 모델은 실험적 기능입니다.\n\n"
+        "⚠️ 현재 Phase 3 탭은 **환자 단위 집계 피처 기반 실험 모델**입니다.\n\n"
         "- **TabNet**: `pytorch-tabnet` 패키지 필요 (즉시 사용 가능)\n"
-        "- **GNN / Transformer**: `torch` 패키지 필요 (환자 레벨 집계 피처 기반)\n\n"
-        "Phase 3 모델의 본격적 효과를 위해서는 원시 처방 시계열 데이터가 필요합니다."
+        "- **GNN / Transformer**: `torch` 패키지 필요, 현재는 pseudo-DL 래퍼입니다.\n\n"
+        "운영 DL 추론은 별도 DL 데이터셋이 필요합니다: 처방 이력 시퀀스, "
+        "drug_vocab, edge_index, model_config, MANIFEST 해시 검증 번들."
     )
-    sel_tabnet = st.checkbox("TabNet (Attention 기반 딥러닝)", value="tabnet" in _saved_p3, key="sel_tabnet")
-    sel_gnn = st.checkbox("GNN (Graph Neural Network)", value="gnn" in _saved_p3, key="sel_gnn")
-    sel_tt = st.checkbox("Temporal Transformer", value="temporal_transformer" in _saved_p3, key="sel_tt")
+    sel_tabnet = st.checkbox("TabNet (tabular attention)", value="tabnet" in _saved_p3, key="sel_tabnet")
+    sel_gnn = st.checkbox("GNN pseudo-DL (집계 피처 기반)", value="gnn" in _saved_p3, key="sel_gnn")
+    sel_tt = st.checkbox("Temporal Transformer pseudo-DL (집계 피처 기반)", value="temporal_transformer" in _saved_p3, key="sel_tt")
 
     if sel_tabnet:
         with st.expander("⚙️ TabNet 하이퍼파라미터", expanded=False):

@@ -86,6 +86,7 @@ RISK_COLOR_MAP = {
 }
 
 GPU_MEMORY_FRACTION: float = 0.70  # GPU 메모리 최대 사용 비율 (기본 70%)
+PSEUDO_DL_MODELS = {"gnn", "temporal_transformer"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1962,6 +1963,13 @@ def _build_model(model_name: str, target: str, params: dict | None,
         )
 
     elif model_name in ("tabnet", "gnn", "temporal_transformer"):
+        if model_name in PSEUDO_DL_MODELS:
+            logger.warning(
+                "%s uses aggregate patient features and is not the operational DL "
+                "inference path. Production DL must use raw prescription history "
+                "plus a manifest-validated DL artifact bundle.",
+                model_name,
+            )
         from hana_app.core.phase3_models import build_phase3_model
         return build_phase3_model(
             model_name, n_classes=n_classes, params=params,
