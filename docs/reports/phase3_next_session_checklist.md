@@ -11,6 +11,12 @@ Last updated: 2026-05-23
 - Future outcome track: `WEAK_FEASIBLE_RESEARCH_TRACK`
 - Raw coverage currently available: `2024-10-01..2024-11-30`
 - Current blocker: no 2024-12 Raw month
+- Repo handoff state: DAG, Smoke DL serving, packaging, hana_app, and cleanup
+  slices are committed and pushed through `2a4fbe7`
+  (`chore(gitignore): ignore local artifacts`).
+- Gate 0 rechecked on 2026-05-23: local `data/Raw` still has 61 daily
+  `records_2024*.parquet` files for `2024-10-01..2024-11-30` and no
+  `records_202412*.parquet` files.
 
 Decision documents:
 
@@ -31,6 +37,10 @@ Pass criteria:
 - Required file for reference-date workflows: `data/Raw/records_20241231.parquet`
 
 If the files are absent, stop. Do not run more model experiments on the current two-month data.
+
+Next external action: acquire December 2024 daily Raw exports from HANA
+`10.1.67.115:30015`, then start at Gate 1. If only a sample arrives first,
+run `inspect_parquet_history.bat` before any dataset build.
 
 ## Gate 1: Schema And Integrity Check
 
