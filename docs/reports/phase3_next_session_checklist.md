@@ -24,6 +24,27 @@ Decision documents:
 - `data/reports/phase3_baseline_summary.json`
 - Obsidian: `mode_11_hana_2026-05-18.md`
 
+## Resume Here When 2024-12 Raw Arrives
+
+Place the December exports under `data/Raw` with these filenames:
+
+- `data/Raw/records_20241201.parquet`
+- ...
+- `data/Raw/records_20241231.parquet`
+
+Then start from **Gate 0** below. Do not skip directly to model training.
+The first successful run must prove that all 31 files exist and that
+`records_20241231.parquet` has the expected schema.
+
+First command to run:
+
+```bash
+ls data/Raw/records_202412*.parquet | wc -l
+```
+
+If the count is `31`, continue with Gate 1. If fewer than 31 files exist,
+stop and fix the export/copy before running any dataset build.
+
 ## Gate 0: Confirm 2024-12 Raw Arrived
 
 ```bash
