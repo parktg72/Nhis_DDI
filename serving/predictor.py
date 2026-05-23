@@ -32,9 +32,11 @@ import numpy as np
 import pandas as pd
 
 from .schemas import (
-    DDIAlert, DrugItem, PredictRequest, PredictResponse,
+    DDIAlert, DLPredictionResult, DrugItem, PredictRequest, PredictResponse,
     RiskLevel, Severity, INTERVENTION_MAP,
 )
+from .dl_predictor import DLModel
+from .hana_history import HANAHistoryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -884,12 +886,16 @@ class HybridPredictor:
         drug_index_path: str | Path = "data/processed/drug_name_index.parquet",
         cyp_matrix_path: str | Path = "data/processed/cyp_matrix.parquet",
         hierarchical_model_dir: Optional[str | Path] = None,
+        dl_history_provider: Optional[HANAHistoryProvider] = None,
     ):
         self._start_time = time.time()
         self._ml_lock = threading.RLock()
         self._hier_lock = threading.RLock()
+        self._dl_lock = threading.RLock()
         self._ml = MLModel()
         self._hierarchical: Optional[HierarchicalPredictor] = None
+        self._dl = DLModel()
+        self._dl_history_provider = dl_history_provider
         self._ddi_matrix: Optional[pd.DataFrame] = None
         self._cyp = None
         self._std = None
@@ -999,8 +1005,29 @@ class HybridPredictor:
                 self._hierarchical = new_hp
             logger.info("계층 모델 핫스왑 완료: %s", model_dir)
         else:
-            logger.warning("계층 모델 핫스왑 실패: %s", model_dir)
+                logger.warning("계층 모델 핫스왑 실패: %s", model_dir)
         return ok
+
+    def reload_dl(self, bundle_dir: str | Path) -> bool:
+        """DL bundle hot-swap.
+
+        Hot-swap keeps manifest/hash/lookback validation eager. Torch runtime
+        artifacts are loaded lazily by DLModel.predict().
+        """
+        new_dl = DLModel(runtime_lookback_days=self._dl.runtime_lookback_days)
+        new_dl.load(bundle_dir)
+        with self._dl_lock:
+            self._dl = new_dl
+        logger.info("DL bundle 핫스왑 완료: %s", bundle_dir)
+        return True
+
+    def set_dl_history_provider(
+        self,
+        provider: Optional[HANAHistoryProvider],
+    ) -> None:
+        """Attach or clear the provider used by DL auxiliary inference."""
+        with self._dl_lock:
+            self._dl_history_provider = provider
 
     @property
     def uptime(self) -> float:
@@ -1045,6 +1072,8 @@ class HybridPredictor:
         stage2_probs: Optional[dict[str, float]] = None
         red_suspect: bool = False
         action: Optional[str] = None
+        dl_prediction: Optional[DLPredictionResult | dict[str, object]] = None
+        dl_error: Optional[str] = None
 
         with self._hier_lock:
             _hier = self._hierarchical
@@ -1073,6 +1102,26 @@ class HybridPredictor:
                 )
                 ml_prob  = ml_snapshot.predict_proba(feat_vec)
                 ml_level = ml_snapshot.classify(ml_prob)
+
+        dl_lock = getattr(self, "_dl_lock", None)
+        if dl_lock is None:
+            dl_snapshot = getattr(self, "_dl", None)
+            history_provider = getattr(self, "_dl_history_provider", None)
+        else:
+            with dl_lock:
+                dl_snapshot = getattr(self, "_dl", None)
+                history_provider = getattr(self, "_dl_history_provider", None)
+        if dl_snapshot is not None and dl_snapshot.loaded and history_provider is not None:
+            try:
+                history_df = history_provider.fetch_patient_history(
+                    req.patient_id,
+                    ref,
+                    dl_snapshot.lookback_days or dl_snapshot.runtime_lookback_days,
+                )
+                dl_prediction = dl_snapshot.predict(history_df)
+            except Exception as e:
+                dl_error = str(e)
+                logger.warning("DL auxiliary inference failed: %s", e)
 
         # Step 4: 최종 등급 = max(Rule, ML)
         final_level = rule_level
@@ -1111,6 +1160,8 @@ class HybridPredictor:
             stage2_probs=stage2_probs,
             red_suspect=red_suspect,
             action=action,
+            dl_prediction=dl_prediction,
+            dl_error=dl_error,
         )
 
     def _build_ddi_alerts(self, drugs: list[DrugItem]) -> list[DDIAlert]:

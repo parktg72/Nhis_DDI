@@ -36,6 +36,7 @@ mlruns/
 
 # Codex / OMC 세션 파일
 .omc/
+.tri-bridge/
 
 # 가상환경
 venv/
@@ -64,6 +65,10 @@ web-user-guide.md
 # 설치 스크립트 및 요구사항 파일 추적 허용
 !install_all.bat
 !install_312.bat
+!generate_smoke_dl_bundle.bat
+!verify_smoke_dl.bat
+!run_api_smoke_dl.bat
+!inspect_parquet_history.bat
 !download_all.bat
 !hana_app/run.bat
 !packages_win/install.bat

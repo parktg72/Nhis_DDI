@@ -18,6 +18,7 @@ FEATURES_DIR    = Path(os.environ.get("DDI_FEATURES_DIR",   "/app/data/features"
 PROCESSED_DIR   = Path(os.environ.get("DDI_PROCESSED_DIR",  "/app/data/processed"))
 PREDICTIONS_DIR = Path(os.environ.get("DDI_PREDICTIONS_DIR","/app/data/predictions"))
 RAW_DATA_DIR    = Path(os.environ.get("DDI_RAW_DATA_DIR",   "/app/data/raw"))
+DL_BUNDLE_DIR   = Path(os.environ.get("DDI_DL_BUNDLE_DIR",  str(MODEL_DIR / "dl" / "current")))
 
 # 파생 경로 (MODEL_DIR 기반)
 MODEL_PROD_PATH   = MODEL_DIR / "current" / "model_prod.pkl"
@@ -51,10 +52,17 @@ OPTUNA_TRIALS    = int(os.environ.get("DDI_OPTUNA_TRIALS",      "50"))
 RECALL_THRESHOLD = float(os.environ.get("DDI_RECALL_THRESHOLD", "0.90"))
 AUC_THRESHOLD    = float(os.environ.get("DDI_AUC_THRESHOLD",    "0.85"))
 BATCH_SIZE       = max(1, min(10_000, int(os.environ.get("DDI_BATCH_SIZE", "500"))))
+HANA_HISTORY_LOOKBACK_DAYS = int(os.environ.get("DDI_HANA_HISTORY_LOOKBACK_DAYS", "365"))
 
 # ── 데이터 파생 경로 ───────────────────────────────────────────────────────────
 DDI_MATRIX_PATH = Path(os.environ.get(
     "DDI_MATRIX_PATH", "/app/data/processed/ddi_matrix_final.parquet"
+))
+DDI_DUP_GROUPS_PATH = Path(os.environ.get(
+    "DDI_DUP_GROUPS_PATH", "/app/data/processed/efcy_duplicate_groups.parquet"
+))
+DDI_DRUG_MASTER_PATH = Path(os.environ.get(
+    "DDI_DRUG_MASTER_PATH", "/app/data/processed/hira_drug_master.parquet"
 ))
 DRUG_INDEX_PATH = Path(os.environ.get(
     "DRUG_INDEX_PATH", "/app/data/processed/drug_name_index.parquet"

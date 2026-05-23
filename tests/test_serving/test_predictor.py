@@ -2,17 +2,19 @@
 import hashlib
 import pickle
 import threading
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from serving.predictor import (
     MLModel, HybridPredictor, RequestFeatureBuilder,
     _run_safety_net, _run_duplicate_detector,
 )
-from serving.schemas import DrugItem, RiskLevel
+from serving.schemas import DrugItem, PredictRequest, RiskLevel
 
 
 # ─── 헬퍼 ───────────────────────────────────────────────────────────────────
@@ -339,6 +341,89 @@ class TestHybridPredictorReloadModel:
 
         assert errors == [], f"동시 reload 오류: {errors}"
         assert predictor_no_model._ml.loaded is True
+
+
+class TestHybridPredictorDLIntegration:
+    """HybridPredictor → DLModel.predict 제한적 연결."""
+
+    def _predictor_with_dl(self) -> HybridPredictor:
+        pred = HybridPredictor.__new__(HybridPredictor)
+        pred._start_time = 0.0
+        pred._ml_lock = threading.RLock()
+        pred._hier_lock = threading.RLock()
+        pred._dl_lock = threading.RLock()
+        pred._ml = MLModel()
+        pred._hierarchical = None
+        pred._ddi_matrix = None
+        pred._cyp = None
+        pred._std = None
+        pred._builder = RequestFeatureBuilder()
+        pred._safety_net = None
+        pred._dup_detector = None
+        pred._dl = MagicMock()
+        pred._dl.loaded = True
+        pred._dl.lookback_days = 30
+        pred._dl.predict.return_value = {
+            "run_id": "dl-run-001",
+            "encoding_strategy": "multi_hot",
+            "predicted_label": "high",
+            "score": 0.75,
+            "probabilities": {"low": 0.25, "high": 0.75},
+            "known_drug_count": 2,
+            "unknown_drug_count": 0,
+        }
+        pred._dl_history_provider = MagicMock()
+        pred._dl_history_provider.fetch_patient_history.return_value = pd.DataFrame({
+            "patient_id": ["P001", "P001"],
+            "drug_code": ["D1", "D2"],
+            "prescription_date": ["20260514", "20260515"],
+        })
+        return pred
+
+    def test_predict_attaches_dl_prediction_without_changing_final_risk(self):
+        pred = self._predictor_with_dl()
+        req = PredictRequest(
+            patient_id="P001",
+            reference_date=date(2026, 5, 15),
+            drugs=[DrugItem(edi_code="D1", total_days=7)],
+        )
+
+        with patch("serving.predictor._run_safety_net") as mock_sn, \
+             patch("serving.predictor._run_duplicate_detector") as mock_dup:
+            mock_sn.return_value = (RiskLevel.NORMAL, [], [])
+            mock_dup.return_value = (0, [])
+            result = pred.predict(req)
+
+        pred._dl_history_provider.fetch_patient_history.assert_called_once_with(
+            "P001",
+            date(2026, 5, 15),
+            30,
+        )
+        pred._dl.predict.assert_called_once()
+        assert result.risk_level == RiskLevel.NORMAL
+        assert result.dl_prediction is not None
+        assert result.dl_prediction.predicted_label == "high"
+        assert result.dl_prediction.score == 0.75
+        assert result.dl_error is None
+
+    def test_predict_keeps_rule_response_when_dl_fails(self):
+        pred = self._predictor_with_dl()
+        pred._dl.predict.side_effect = RuntimeError("DL runtime failed")
+        req = PredictRequest(
+            patient_id="P001",
+            reference_date=date(2026, 5, 15),
+            drugs=[DrugItem(edi_code="D1", total_days=7)],
+        )
+
+        with patch("serving.predictor._run_safety_net") as mock_sn, \
+             patch("serving.predictor._run_duplicate_detector") as mock_dup:
+            mock_sn.return_value = (RiskLevel.NORMAL, [], [])
+            mock_dup.return_value = (0, [])
+            result = pred.predict(req)
+
+        assert result.risk_level == RiskLevel.NORMAL
+        assert result.dl_prediction is None
+        assert result.dl_error == "DL runtime failed"
 
 
 # ─── _run_duplicate_detector 테스트 ──────────────────────────────────────────

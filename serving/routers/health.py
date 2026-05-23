@@ -16,6 +16,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
+from scripts.datasets.contracts import (
+    BundleArtifactEmptyError,
+    BundleHashMismatchError,
+    LookbackMismatchError,
+)
 from serving.predictor import get_predictor
 from serving.schemas import HealthResponse, ModelInfoResponse
 from config import settings as _settings
@@ -32,10 +37,15 @@ class ReloadRequest(BaseModel):
 class HierarchicalReloadRequest(BaseModel):
     model_dir: str
 
+
+class DLReloadRequest(BaseModel):
+    bundle_dir: str
+
 APP_VERSION = "1.0.0"
 
 _ADMIN_KEY: str = _settings.ADMIN_API_KEY
 _MODEL_DIR: Path = _settings.MODEL_DIR.resolve()
+_DL_MODEL_DIR: Path = (_MODEL_DIR / "dl").resolve()
 
 
 def _require_admin(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
@@ -77,6 +87,17 @@ def _collect_schema_drift(pred) -> list[str]:
     if hier is not None:
         drift.extend(getattr(hier, "_schema_drift", []) or [])
     return drift
+
+
+def _dl_info(pred) -> dict:
+    dl = getattr(pred, "_dl", None)
+    loaded = bool(dl is not None and dl.loaded)
+    return {
+        "dl_loaded": loaded,
+        "dl_lookback_days": dl.lookback_days if loaded else None,
+        "dl_bundle_run_id": dl.run_id if loaded else None,
+        "dl_schema_version": dl.schema_version if loaded else None,
+    }
 
 
 def _is_schema_lenient_active() -> bool:
@@ -145,6 +166,7 @@ async def health_check():
             feature_schema_lenient_allowed=lenient_allowed,
             feature_schema_lenient_sunset_date=sunset_iso,
             degraded_reasons=degraded_reasons,
+            **_dl_info(pred),
         )
     except RuntimeError:
         return HealthResponse(
@@ -160,6 +182,7 @@ async def health_check():
             feature_schema_lenient_allowed=False,
             feature_schema_lenient_sunset_date=_lenient_sunset_date_iso(),
             degraded_reasons=["predictor_not_initialized"],
+            dl_loaded=False,
         )
 
 
@@ -182,6 +205,7 @@ async def model_info():
             n_features=len(ml._feature_names) if ml._feature_names else None,
             threshold=ml._threshold,
             schema_drift=drift,
+            **_dl_info(pred),
         )
     if hier is not None and hier.loaded:
         return ModelInfoResponse(
@@ -190,6 +214,7 @@ async def model_info():
             n_features=len(hier.feature_cols) if hier.feature_cols else None,
             threshold=hier._thresholds.get("tau_red"),
             schema_drift=drift,
+            **_dl_info(pred),
         )
     return ModelInfoResponse(
         model_type="none",
@@ -197,6 +222,7 @@ async def model_info():
         n_features=len(ml._feature_names) if ml._feature_names else None,
         threshold=None,
         schema_drift=drift,
+        **_dl_info(pred),
     )
 
 
@@ -246,3 +272,55 @@ async def reload_hierarchical_model(
     if not ok:
         raise HTTPException(status_code=400, detail=f"계층 모델 로드 실패: {body.model_dir}")
     return {"status": "ok", "model_dir": str(resolved)}
+
+
+@router.post("/admin/reload/dl")
+async def reload_dl_model(
+    body: DLReloadRequest,
+    _: None = Depends(_require_admin),
+):
+    """DL bundle manifest/hash/lookback 핫스왑. 실제 DL 추론은 아직 비활성."""
+    resolved = Path(body.bundle_dir).resolve()
+    try:
+        resolved.relative_to(_DL_MODEL_DIR)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "path_outside_model_dir",
+                "message": (
+                    f"DL bundle 경로는 허용된 디렉토리({_DL_MODEL_DIR}) 내부여야 합니다: "
+                    f"{body.bundle_dir}"
+                ),
+            },
+        )
+
+    pred = get_predictor()
+    try:
+        pred.reload_dl(resolved)
+    except LookbackMismatchError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "lookback_mismatch", "message": str(e)},
+        )
+    except BundleHashMismatchError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "bundle_hash_mismatch", "message": str(e)},
+        )
+    except BundleArtifactEmptyError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "bundle_artifact_empty", "message": str(e)},
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "bundle_not_found", "message": str(e)},
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "bundle_invalid", "message": str(e)},
+        )
+    return {"status": "ok", "bundle_dir": str(resolved), **_dl_info(pred)}

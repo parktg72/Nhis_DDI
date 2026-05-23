@@ -107,6 +107,20 @@ class DDIAlert(BaseModel):
     source:      str = "Unknown"  # "DrugBank" | "HIRA_DUR" | "Rule"
 
 
+class DLPredictionResult(BaseModel):
+    """운영 DL 추론 결과.
+
+    현재는 Rule/ML 최종등급을 바꾸지 않는 보조 결과로만 반환한다.
+    """
+    run_id:            Optional[str] = None
+    encoding_strategy: str
+    predicted_label:   str
+    score:             float = Field(ge=0.0, le=1.0)
+    probabilities:     dict[str, float]
+    known_drug_count:  int = Field(ge=0)
+    unknown_drug_count: int = Field(ge=0)
+
+
 class PredictResponse(BaseModel):
     """위험도 예측 응답."""
     patient_id:     str
@@ -137,6 +151,14 @@ class PredictResponse(BaseModel):
     action:         Optional[str] = Field(
         None,
         description="세부 라벨별 개입 액션 (Y_MIX/Y_DDI_MAJOR=약사 전화, Y_DDI_MOD/Y_DUP/Y_FRAG=문자 알림 등)",
+    )
+    dl_prediction:  Optional[DLPredictionResult] = Field(
+        None,
+        description="운영 DL 보조 추론 결과. 현재 최종 risk_level 결정에는 반영하지 않음",
+    )
+    dl_error:       Optional[str] = Field(
+        None,
+        description="DL 보조 추론 실패 사유. Rule/ML 응답은 계속 반환",
     )
 
 
@@ -217,6 +239,22 @@ class HealthResponse(BaseModel):
         default_factory=list,
         description="degraded 사유 목록 (예: 'feature_schema_drift: 2 unknown columns')",
     )
+    dl_loaded: Optional[bool] = Field(
+        None,
+        description="운영 DL bundle manifest/hash/lookback 검증 후 로드 여부",
+    )
+    dl_lookback_days: Optional[int] = Field(
+        None,
+        description="로드된 DL bundle 의 lookback_days",
+    )
+    dl_bundle_run_id: Optional[str] = Field(
+        None,
+        description="로드된 DL bundle MANIFEST.json run_id",
+    )
+    dl_schema_version: Optional[str] = Field(
+        None,
+        description="로드된 DL bundle schema_version",
+    )
 
 
 class ModelInfoResponse(BaseModel):
@@ -232,6 +270,10 @@ class ModelInfoResponse(BaseModel):
         default_factory=list,
         description="lenient 모드로 로드된 경우 _BUILDER_KNOWN_COLS 외 컬럼 목록",
     )
+    dl_loaded: Optional[bool] = None
+    dl_lookback_days: Optional[int] = None
+    dl_bundle_run_id: Optional[str] = None
+    dl_schema_version: Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

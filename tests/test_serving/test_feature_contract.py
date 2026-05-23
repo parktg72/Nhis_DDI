@@ -64,3 +64,54 @@ def test_builder_aligns_to_feature_names(tmp_path):
     assert len(vec) == len(feature_names)
     assert vec[0] == feat.get("age", 0.0)
     assert vec[1] == feat.get("drug_count", 0.0)
+
+
+def test_training_default_feature_cols_allowed_by_serving_schema():
+    """Page 3 training defaults are covered before a model artifact exists.
+
+    `test_feature_schema_strict.py` validates saved model artifact feature_names.
+    This test validates the default training list itself, catching drift earlier.
+    """
+    from hana_app.core.ml_runner import FEATURE_COLS
+    from serving.predictor import _FEATURE_ALLOWED
+
+    extra = set(FEATURE_COLS) - _FEATURE_ALLOWED
+    assert not extra, f"FEATURE_COLS not covered by serving allowed-set: {extra}"
+
+
+def test_builder_aligns_to_training_default_feature_cols():
+    """RequestFeatureBuilder must compute and order every default training feature."""
+    from hana_app.core.ml_runner import FEATURE_COLS
+    from serving.predictor import RequestFeatureBuilder
+    from serving.schemas import PredictRequest, DrugItem
+
+    req = PredictRequest(
+        patient_id="p1",
+        drugs=[
+            DrugItem(
+                edi_code="A001",
+                drug_name="warfarin",
+                atc_code="B01AA03",
+                total_days=30,
+                institution_id="I1",
+            ),
+            DrugItem(
+                edi_code="A002",
+                drug_name="ibuprofen",
+                atc_code="M01AE01",
+                total_days=10,
+                institution_id="I2",
+            ),
+        ],
+        patient_age=75,
+        patient_sex="M",
+    )
+    builder = RequestFeatureBuilder()
+    vec, feat = builder.build(req, feature_names=FEATURE_COLS)
+
+    assert len(vec) == len(FEATURE_COLS)
+    missing = set(FEATURE_COLS) - set(feat.keys())
+    assert not missing, f"FEATURE_COLS produced via silent 0.0 fallback: {missing}"
+    for i, name in enumerate(FEATURE_COLS):
+        assert vec[i] == feat[name]
+    assert np.isfinite(vec).all()

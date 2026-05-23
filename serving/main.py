@@ -12,6 +12,7 @@ FastAPI 애플리케이션 진입점
   LOG_LEVEL       : 로그 레벨 (기본: INFO)
   ADMIN_API_KEY   : /admin/reload 인증 키 (미설정 시 엔드포인트 비활성화)
   MODEL_DIR       : 모델 핫스왑 허용 디렉토리 (기본: /app/models)
+  DDI_SMOKE_HISTORY_PROVIDER : smoke DL 검증용 history provider opt-in (기본 OFF)
   DDI_METRICS_JSONL_PATH : 메트릭 jsonl 파일 경로 (기본: /app/data/monitoring/metrics_live.jsonl)
   DDI_METRICS_JSONL_LOCK_TIMEOUT : 락 타임아웃(초) (기본: 5.0)
 """
@@ -41,6 +42,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _dl_history_provider_from_env():
+    """Build optional DL history provider from explicit runtime env flags."""
+    if not _env_flag("DDI_SMOKE_HISTORY_PROVIDER"):
+        return None
+    from scripts.ops.smoke_history_provider import SmokeHistoryProvider
+
+    logger.warning(
+        "DDI_SMOKE_HISTORY_PROVIDER 활성 — SmokeHistoryProvider 주입됨 "
+        "(운영 HANA history provider 대체용 smoke 설정)"
+    )
+    return SmokeHistoryProvider()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 앱 생명주기
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,6 +79,7 @@ async def lifespan(app: FastAPI):
         drug_index_path=str(_settings.DRUG_INDEX_PATH),
         cyp_matrix_path=str(_settings.CYP_MATRIX_PATH),
         hierarchical_model_dir=_hier_dir,
+        dl_history_provider=_dl_history_provider_from_env(),
     )
     logger.info("예측기 초기화 완료")
     init_metrics_writer(
