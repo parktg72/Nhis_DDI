@@ -36,11 +36,25 @@ DEFAULT_ARGS = {
 }
 
 from config.settings import RAW_DATA_DIR as RAW_DIR, PROCESSED_DIR as PROC_DIR, DRUG_INDEX_PARQUET as DRUG_INDEX
+from config.settings import DDI_MATRIX_PATH, DDI_DUP_GROUPS_PATH, DDI_DRUG_MASTER_PATH
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 태스크 함수
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _feature_staging_partition(partition: str) -> str:
+    return f"staging_{partition}"
+
+
+def _feature_staging_path(partition: str):
+    from pathlib import Path
+    return (
+        Path(PROC_DIR)
+        / "staging"
+        / f"patient_features_{_feature_staging_partition(partition)}.parquet"
+    )
+
 
 def _get_partition(**context) -> str:
     """실행 날짜 기반 파티션 키 반환 (YYYYMMDD)."""
@@ -63,8 +77,9 @@ def _validate_schemas(**context) -> None:
     t40 = pd.read_parquet(f"{RAW_DIR}/t40_{partition}.parquet")
     t50 = pd.read_parquet(f"{RAW_DIR}/t50_{partition}.parquet")
 
-    results = validate_all(t20, t30, t40, t50)
-    failed = [r for r in results if not r.passed]
+    results = validate_all(t20, t30, t40=t40, yoyang=t50)
+    result_items = results.values() if isinstance(results, dict) else results
+    failed = [r for r in result_items if not r.passed]
     if failed:
         msg = "; ".join(
             f"{r.table}: missing={r.missing_cols}, errors={r.type_errors}"
@@ -156,20 +171,52 @@ def _aggregate_features(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
+    from pathlib import Path
+    from scripts.etl.drug_master import DrugMaster
+    from scripts.etl.feature_writer import write_features
     from scripts.etl.prescription_aggregator import aggregate_batch
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
     t30 = pd.read_parquet(f"{PROC_DIR}/t30_{partition}_std.parquet")
     t20 = pd.read_parquet(f"{PROC_DIR}/t20_{partition}_pseudo.parquet")
     pairs = pd.read_parquet(f"{PROC_DIR}/overlap_pairs_{partition}.parquet")
+    t40_path = f"{PROC_DIR}/t40_{partition}_pseudo.parquet"
+    t40 = pd.read_parquet(t40_path) if os.path.exists(t40_path) else None
+    ddi_matrix = pd.read_parquet(DDI_MATRIX_PATH) if os.path.exists(DDI_MATRIX_PATH) else None
+    dup_groups = pd.read_parquet(DDI_DUP_GROUPS_PATH) if os.path.exists(DDI_DUP_GROUPS_PATH) else None
+    drug_master = (
+        DrugMaster.load_parquet(Path(DDI_DRUG_MASTER_PATH), ddi_matrix_path=DDI_MATRIX_PATH)
+        if os.path.exists(DDI_DRUG_MASTER_PATH)
+        else None
+    )
 
     joined = t30.merge(
-        t20[["CMN_KEY", "INDI_DSCM_NO", "MDCARE_STRT_DT"]],
+        t20[[
+            c for c in [
+                "CMN_KEY", "INDI_DSCM_NO", "MDCARE_SYM",
+                "MDCARE_STRT_DT", "SEX_TYPE", "SUJIN_POTM_AGE_ID",
+                "YOYANG_CLSFC_CD",
+            ] if c in t20.columns
+        ]],
         on="CMN_KEY", how="left",
     )
-    features = aggregate_batch(joined, pairs)
+    features = aggregate_batch(
+        df_prescriptions=joined,
+        df_t40=t40,
+        overlap_df=pairs,
+        ddi_matrix=ddi_matrix,
+        dup_groups=dup_groups,
+        drug_master=drug_master,
+    )
+    staging_path = write_features(
+        features=features,
+        partition=_feature_staging_partition(partition),
+        base_dir=Path(PROC_DIR) / "staging",
+        overwrite=True,
+    )
     context["ti"].xcom_push(key="n_patients", value=len(features))
-    return features
+    context["ti"].xcom_push(key="features_staging_path", value=str(staging_path))
+    return str(staging_path)
 
 
 def _write_features(**context) -> None:
@@ -177,28 +224,55 @@ def _write_features(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
-    from scripts.etl.feature_writer import write_features, write_pipeline_log
+    from pathlib import Path
+    from scripts.etl.models import PipelineResult
+    from scripts.etl.feature_writer import write_pipeline_log
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
-    t30 = pd.read_parquet(f"{PROC_DIR}/t30_{partition}_std.parquet")
-    t20 = pd.read_parquet(f"{PROC_DIR}/t20_{partition}_pseudo.parquet")
-    pairs = pd.read_parquet(f"{PROC_DIR}/overlap_pairs_{partition}.parquet")
+    staging_path = context["ti"].xcom_pull(
+        key="features_staging_path",
+        task_ids="aggregate_features",
+    ) or str(_feature_staging_path(partition))
+    features_df = pd.read_parquet(staging_path)
 
-    from scripts.etl.prescription_aggregator import aggregate_batch
-    joined = t30.merge(
-        t20[["CMN_KEY", "INDI_DSCM_NO", "MDCARE_STRT_DT"]],
-        on="CMN_KEY", how="left",
-    )
-    features = aggregate_batch(joined, pairs)
+    out_path = Path(PROC_DIR) / f"patient_features_{partition}.parquet"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    features_df.to_parquet(out_path, index=False)
 
-    out_path = f"{PROC_DIR}/patient_features_{partition}.parquet"
-    write_features(features, out_path)
-    write_pipeline_log(
+    total_prescriptions = len(pd.read_parquet(
+        f"{PROC_DIR}/t20_{partition}_pseudo.parquet",
+        columns=["CMN_KEY"],
+    ))
+    total_drug_items = len(pd.read_parquet(
+        f"{PROC_DIR}/t30_{partition}_std.parquet",
+        columns=["CMN_KEY"],
+    ))
+    overlap_pairs = len(pd.read_parquet(
+        f"{PROC_DIR}/overlap_pairs_{partition}.parquet",
+        columns=["patient_id"],
+    ))
+
+    result = PipelineResult(
         partition=partition,
-        n_patients=len(features),
-        out_path=out_path,
-        log_dir=f"{PROC_DIR}/logs",
+        total_patients=len(features_df),
+        total_prescriptions=total_prescriptions,
+        total_drug_items=total_drug_items,
+        overlap_pairs=overlap_pairs,
+        features_written=len(features_df),
     )
+    if "risk_level" in features_df.columns:
+        risk_counts = features_df["risk_level"].value_counts(dropna=False)
+        result.red_count = int(risk_counts.get("Red", 0))
+        result.yellow_count = int(risk_counts.get("Yellow", 0))
+        result.green_count = int(risk_counts.get("Green", 0))
+    result.normal_count = (
+        len(features_df)
+        - result.red_count
+        - result.yellow_count
+        - result.green_count
+    )
+    write_pipeline_log(result, base_dir=Path(PROC_DIR))
+    context["ti"].xcom_push(key="features_path", value=str(out_path))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

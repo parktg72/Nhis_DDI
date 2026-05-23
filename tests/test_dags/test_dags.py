@@ -185,6 +185,190 @@ class TestETLDag:
                 # 예외 없이 통과
                 mod._validate_schemas(ti=ti)
 
+    def test_aggregate_and_write_features_aggregate_once(self, tmp_path):
+        mod = _import_dag("ddi_etl_dag")
+        import json
+        import pandas as pd
+
+        partition = "20260319"
+        pd.DataFrame({
+            "CMN_KEY": ["C1", "C2"],
+            "WK_COMPN_CD": ["D1", "D2"],
+        }).to_parquet(tmp_path / f"t30_{partition}_std.parquet", index=False)
+        pd.DataFrame({
+            "CMN_KEY": ["C1", "C2"],
+            "INDI_DSCM_NO": ["P1", "P2"],
+            "MDCARE_SYM": ["H1", "H2"],
+            "MDCARE_STRT_DT": ["20260301", "20260302"],
+            "SEX_TYPE": ["1", "2"],
+            "SUJIN_POTM_AGE_ID": ["075", "065"],
+            "YOYANG_CLSFC_CD": ["01", "02"],
+        }).to_parquet(tmp_path / f"t20_{partition}_pseudo.parquet", index=False)
+        pd.DataFrame({
+            "patient_id": ["P1"],
+            "drug_a_wk_compn": ["D1"],
+            "drug_b_wk_compn": ["D2"],
+        }).to_parquet(tmp_path / f"overlap_pairs_{partition}.parquet", index=False)
+
+        features = [
+            types.SimpleNamespace(
+                patient_id="P1",
+                window_start=date(2026, 3, 1),
+                window_end=date(2026, 3, 31),
+                drug_count=0,
+                drug_count_7d=0,
+                institution_count=0,
+                ddi_contraindicated=0,
+                ddi_major=0,
+                ddi_moderate=0,
+                ddi_minor=0,
+                triple_whammy=False,
+                qt_risk_count=0,
+                dup_same_ingredient=0,
+                dup_atc5=0,
+                dup_atc4=0,
+                dup_atc3=0,
+                age=None,
+                sex=None,
+                risk_level="Red",
+                risk_reasons=[],
+                yellow_subtype=None,
+            ),
+            types.SimpleNamespace(
+                patient_id="P2",
+                window_start=date(2026, 3, 1),
+                window_end=date(2026, 3, 31),
+                drug_count=0,
+                drug_count_7d=0,
+                institution_count=0,
+                ddi_contraindicated=0,
+                ddi_major=0,
+                ddi_moderate=0,
+                ddi_minor=0,
+                triple_whammy=False,
+                qt_risk_count=0,
+                dup_same_ingredient=0,
+                dup_atc5=0,
+                dup_atc4=0,
+                dup_atc3=0,
+                age=None,
+                sex=None,
+                risk_level="Unknown",
+                risk_reasons=[],
+                yellow_subtype=None,
+            ),
+        ]
+
+        class FakeDrugMaster:
+            @staticmethod
+            def load_parquet(*args, **kwargs):
+                return None
+
+        class FakePipelineResult:
+            def __init__(
+                self,
+                partition,
+                total_patients=0,
+                total_prescriptions=0,
+                total_drug_items=0,
+                overlap_pairs=0,
+                features_written=0,
+            ):
+                self.partition = partition
+                self.total_patients = total_patients
+                self.total_prescriptions = total_prescriptions
+                self.total_drug_items = total_drug_items
+                self.overlap_pairs = overlap_pairs
+                self.features_written = features_written
+                self.red_count = 0
+                self.yellow_count = 0
+                self.green_count = 0
+                self.normal_count = 0
+
+        def fake_write_features(features, partition, base_dir, overwrite=False):
+            base_dir.mkdir(parents=True, exist_ok=True)
+            out_path = base_dir / f"patient_features_{partition}.parquet"
+            pd.DataFrame([
+                {
+                    "patient_id": f.patient_id,
+                    "window_start": f.window_start,
+                    "window_end": f.window_end,
+                    "risk_level": f.risk_level,
+                }
+                for f in features
+            ]).to_parquet(out_path, index=False)
+            return out_path
+
+        def fake_write_pipeline_log(result, base_dir):
+            out_path = base_dir / f"pipeline_log_{result.partition}.json"
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "features_written": result.features_written,
+                    "risk_distribution": {
+                        "Red": result.red_count,
+                        "Yellow": result.yellow_count,
+                        "Green": result.green_count,
+                        "Normal": result.normal_count,
+                    },
+                }, f)
+            return out_path
+
+        fake_drug_master = types.ModuleType("scripts.etl.drug_master")
+        fake_drug_master.DrugMaster = FakeDrugMaster
+        fake_models = types.ModuleType("scripts.etl.models")
+        fake_models.PipelineResult = FakePipelineResult
+        fake_feature_writer = types.ModuleType("scripts.etl.feature_writer")
+        fake_feature_writer.write_features = fake_write_features
+        fake_feature_writer.write_pipeline_log = fake_write_pipeline_log
+        fake_aggregator = types.ModuleType("scripts.etl.prescription_aggregator")
+        fake_aggregator.aggregate_batch = MagicMock(return_value=features)
+        fake_etl_pkg = types.ModuleType("scripts.etl")
+        fake_etl_pkg.__path__ = []
+
+        class FakeTI:
+            def __init__(self):
+                self.values = {("partition", "get_partition"): partition}
+
+            def xcom_pull(self, key, task_ids):
+                return self.values.get((key, task_ids))
+
+            def xcom_push(self, key, value):
+                task_id = "aggregate_features" if key != "features_path" else "write_features"
+                self.values[(key, task_id)] = value
+
+        ti = FakeTI()
+        fake_modules = {
+            "scripts.etl": fake_etl_pkg,
+            "scripts.etl.drug_master": fake_drug_master,
+            "scripts.etl.models": fake_models,
+            "scripts.etl.feature_writer": fake_feature_writer,
+            "scripts.etl.prescription_aggregator": fake_aggregator,
+        }
+        with patch.dict(sys.modules, fake_modules):
+            with patch.object(mod, "PROC_DIR", tmp_path):
+                with patch.object(mod, "DDI_MATRIX_PATH", str(tmp_path / "missing_ddi.parquet")):
+                    with patch.object(mod, "DDI_DUP_GROUPS_PATH", str(tmp_path / "missing_dup.parquet")):
+                        with patch.object(mod, "DDI_DRUG_MASTER_PATH", str(tmp_path / "missing_master.parquet")):
+                            staging_path = mod._aggregate_features(ti=ti)
+                            mod._write_features(ti=ti)
+
+        assert fake_aggregator.aggregate_batch.call_count == 1
+        assert staging_path == str(
+            tmp_path / "staging" / f"patient_features_staging_{partition}.parquet"
+        )
+        assert (tmp_path / f"patient_features_{partition}.parquet").exists()
+
+        log_path = tmp_path / f"pipeline_log_{partition}.json"
+        with open(log_path, encoding="utf-8") as f:
+            log = json.load(f)
+        assert log["features_written"] == 2
+        assert log["risk_distribution"] == {
+            "Red": 1,
+            "Yellow": 0,
+            "Green": 0,
+            "Normal": 1,
+        }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Feature DAG 테스트

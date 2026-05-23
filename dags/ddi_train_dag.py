@@ -160,6 +160,36 @@ def _prune_old_versioned_dirs(prod_dir, keep_n: int) -> None:
         shutil.rmtree(old_dir, ignore_errors=True)
 
 
+def _fsync_dir_best_effort(path) -> None:
+    """Best-effort directory fsync.
+
+    POSIX can fsync directories to improve crash durability after rename/replace.
+    Windows does not allow `os.open(directory, os.O_RDONLY)` in the same way, so
+    the deploy must not fail there solely because the durability hint is
+    unavailable.
+    """
+    import errno
+    import logging
+    import os as _os
+    from pathlib import Path
+
+    try:
+        dirfd = _os.open(str(Path(path)), _os.O_RDONLY)
+    except OSError as exc:
+        if _os.name == "nt" or getattr(exc, "errno", None) in {
+            errno.EACCES,
+            errno.EPERM,
+            errno.EINVAL,
+        }:
+            logging.warning("디렉터리 fsync 생략: %s (%s)", path, exc)
+            return
+        raise
+    try:
+        _os.fsync(dirfd)
+    finally:
+        _os.close(dirfd)
+
+
 def _atomic_symlink_update(link_path, target_name: str) -> None:
     """POSIX 원자적 심링크 교체: tmp 심링크 생성 후 os.replace로 swap.
 
@@ -176,11 +206,7 @@ def _atomic_symlink_update(link_path, target_name: str) -> None:
     tmp_link.symlink_to(target_name)
     _os.replace(tmp_link, link_path)
     # 부모 디렉터리 fsync: 심링크 교체가 저널에 커밋됨을 보장
-    dirfd = _os.open(str(link_path.parent), _os.O_RDONLY)
-    try:
-        _os.fsync(dirfd)
-    finally:
-        _os.close(dirfd)
+    _fsync_dir_best_effort(link_path.parent)
 
 
 def _deploy_model(**context) -> None:
@@ -311,11 +337,7 @@ def _deploy_model(**context) -> None:
     versioned_dir = prod_dir / versioned_name
     os.rename(tmp_dir, versioned_dir)
     # H1: os.rename 후 prod_dir fsync — versioned_dir가 저널에 커밋됨을 보장
-    _dirfd = os.open(str(prod_dir), os.O_RDONLY)
-    try:
-        os.fsync(_dirfd)
-    finally:
-        os.close(_dirfd)
+    _fsync_dir_best_effort(prod_dir)
     _atomic_symlink_update(current_link, versioned_name)
 
     # ── Serving 핫스왑 (SERVING_URLS 다중 인스턴스 브로드캐스트) ─────────────
