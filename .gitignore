@@ -37,6 +37,15 @@ mlruns/
 # Codex / OMC 세션 파일
 .omc/
 .tri-bridge/
+/.antigravitycli/
+
+# Graphify generated outputs
+/.graphify_python
+/graphify-out/
+
+# Local review/debug artifacts
+/debug_logs/
+/reviews/
 
 # 가상환경
 venv/
@@ -85,3 +94,6 @@ web-user-guide.md
 !install_pywebview.bat
 !download_pywebview.bat
 !web-user-guide.md
+
+# Binary report exports
+/docs/reports/*.docx
