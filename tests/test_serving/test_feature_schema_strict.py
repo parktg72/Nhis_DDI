@@ -180,19 +180,13 @@ def test_reload_hierarchical_accepts_known(monkeypatch):
     assert pred._hierarchical is fake_hp
 
 
-def test_hierarchical_predictor_load_rejects_unknown_feature_strict(tmp_path, monkeypatch):
-    """HierarchicalPredictor.load 자체도 unknown feature_cols 를 거부해야 한다.
-
-    HybridPredictor init/reload 경유가 아닌 직접 load 경로도 운영/테스트에서 쓰일 수
-    있으므로, MLModel.load 와 같은 내부 schema guard 를 가져야 한다.
-    """
-    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
-
+def _write_hier_artifact(root: Path, feature_cols: list[str], *, corrupt_stage1_hash: bool = False) -> Path:
     import json
     import joblib
 
-    stage1_path = tmp_path / "stage1_red.joblib"
-    stage2_path = tmp_path / "stage2_yellow.joblib"
+    root.mkdir(parents=True, exist_ok=True)
+    stage1_path = root / "stage1_red.joblib"
+    stage2_path = root / "stage2_yellow.joblib"
     joblib.dump(_FakeSklearnModel(), stage1_path)
     joblib.dump(
         {
@@ -202,16 +196,52 @@ def test_hierarchical_predictor_load_rejects_unknown_feature_strict(tmp_path, mo
         },
         stage2_path,
     )
+    stage1_sha = hashlib.sha256(stage1_path.read_bytes()).hexdigest()
+    if corrupt_stage1_hash:
+        stage1_sha = "0" * 64
     meta = {
         "thresholds": {"tau_red": 0.7, "tau_review": 0.3},
-        "feature_cols": ["drug_count", "fake_unknown_col"],
-        "stage1_sha256": hashlib.sha256(stage1_path.read_bytes()).hexdigest(),
+        "feature_cols": feature_cols,
+        "stage1_sha256": stage1_sha,
         "stage2_sha256": hashlib.sha256(stage2_path.read_bytes()).hexdigest(),
     }
-    (tmp_path / "stage_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    (root / "stage_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    return root
+
+
+def test_hierarchical_predictor_load_rejects_unknown_feature_strict(tmp_path, monkeypatch):
+    """HierarchicalPredictor.load 자체도 unknown feature_cols 를 거부해야 한다.
+
+    HybridPredictor init/reload 경유가 아닌 직접 load 경로도 운영/테스트에서 쓰일 수
+    있으므로, MLModel.load 와 같은 내부 schema guard 를 가져야 한다.
+    """
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    artifact_dir = _write_hier_artifact(
+        tmp_path / "unknown_schema",
+        ["drug_count", "fake_unknown_col"],
+    )
 
     hp = HierarchicalPredictor()
-    assert hp.load(tmp_path) is False, (
+    assert hp.load(artifact_dir) is False, (
         "HierarchicalPredictor.load() 직접 호출도 strict schema drift 를 거부해야 함"
     )
     assert hp.loaded is False
+
+
+def test_hierarchical_predictor_load_hash_failure_clears_previous_state(tmp_path, monkeypatch):
+    """이미 로드된 인스턴스도 다음 load 실패 시 stale loaded 상태를 남기면 안 된다."""
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    good_dir = _write_hier_artifact(tmp_path / "good", ["drug_count", "age"])
+    bad_dir = _write_hier_artifact(
+        tmp_path / "bad_hash",
+        ["drug_count", "age"],
+        corrupt_stage1_hash=True,
+    )
+
+    hp = HierarchicalPredictor()
+    assert hp.load(good_dir) is True
+    assert hp.loaded is True
+
+    assert hp.load(bad_dir) is False
+    assert hp.loaded is False
+    assert hp.feature_cols == []

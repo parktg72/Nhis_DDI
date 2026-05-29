@@ -618,6 +618,16 @@ class HierarchicalPredictor:
         self._feature_cols: list[str] = []
         self._meta: dict = {}
 
+    def _clear_state(self) -> None:
+        """Clear loaded/partial hierarchical model state after a failed load."""
+        self._stage1 = None
+        self._stage2 = None
+        self._encoder = None
+        self._classes_present = []
+        self._thresholds = {}
+        self._feature_cols = []
+        self._meta = {}
+
     def load(self, model_dir: str | Path) -> bool:
         model_dir = Path(model_dir)
         meta_path = model_dir / "stage_meta.json"
@@ -628,6 +638,7 @@ class HierarchicalPredictor:
                 "계층 모델 파일 누락 — 로드 실패: meta=%s stage1=%s stage2=%s",
                 meta_path.exists(), p1.exists(), p2.exists(),
             )
+            self._clear_state()
             return False
         try:
             import json
@@ -643,13 +654,7 @@ class HierarchicalPredictor:
                     "계층 모델 feature schema 검증 실패 — 로드 거부: %s (missing=%s)",
                     model_dir, _missing,
                 )
-                self._stage1 = None
-                self._stage2 = None
-                self._encoder = None
-                self._classes_present = []
-                self._thresholds = {}
-                self._feature_cols = []
-                self._meta = {}
+                self._clear_state()
                 return False
 
             for p, key in ((p1, "stage1_sha256"), (p2, "stage2_sha256")):
@@ -663,6 +668,7 @@ class HierarchicalPredictor:
                         "계층 모델 해시 불일치 — 로드 거부: %s (expected=%s, actual=%s)",
                         p.name, expected[:16] + "…", actual[:16] + "…",
                     )
+                    self._clear_state()
                     return False
 
             self._stage1 = joblib.load(p1)
@@ -680,6 +686,7 @@ class HierarchicalPredictor:
             return True
         except Exception as e:
             logger.warning("계층 모델 로드 실패: %s", e)
+            self._clear_state()
             return False
 
     @property
