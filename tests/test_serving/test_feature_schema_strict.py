@@ -228,6 +228,49 @@ def test_hierarchical_predictor_load_rejects_unknown_feature_strict(tmp_path, mo
     assert hp.loaded is False
 
 
+def test_hierarchical_predictor_load_rejects_empty_feature_cols(tmp_path, monkeypatch):
+    """계층 stage_meta.json 의 빈 feature_cols 는 명시적 로드 거부 대상이다.
+
+    기존 good artifact 가 로드된 인스턴스에서도 empty artifact 실패 후 stale state 를
+    남기면 안 된다.
+    """
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    good_dir = _write_hier_artifact(tmp_path / "good_schema", ["drug_count", "age"])
+    empty_dir = _write_hier_artifact(tmp_path / "empty_schema", [])
+
+    hp = HierarchicalPredictor()
+    assert hp.load(good_dir) is True
+    assert hp.loaded is True
+
+    assert hp.load(empty_dir) is False, (
+        "빈 feature_cols 는 0-width 입력/학습-서빙 contract 붕괴라 로드 거부해야 함"
+    )
+    assert hp.loaded is False
+    assert hp.feature_cols == []
+
+
+def test_reload_hierarchical_rejects_empty_feature_cols(monkeypatch):
+    """계층 모델 reload 도 빈 feature_cols 를 핫스왑하지 않아야 한다.
+
+    이미 로드된 기존 계층 모델은 실패한 reload 후에도 그대로 보존되어야 한다.
+    """
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    pred = _make_hier_predictor()
+    existing_hp = MagicMock(spec=HierarchicalPredictor)
+    pred._hierarchical = existing_hp
+
+    fake_hp = MagicMock()
+    fake_hp.load = MagicMock(return_value=True)
+    fake_hp.feature_cols = []
+
+    import serving.predictor as P
+    monkeypatch.setattr(P, "HierarchicalPredictor", MagicMock(return_value=fake_hp))
+
+    ok = pred.reload_hierarchical("/tmp/fake-empty-schema")
+    assert ok is False, "빈 feature_cols 거부 시 reload 는 False"
+    assert pred._hierarchical is existing_hp, "빈 feature_cols 거부 시 기존 _hierarchical 보존"
+
+
 def test_hierarchical_predictor_load_hash_failure_clears_previous_state(tmp_path, monkeypatch):
     """이미 로드된 인스턴스도 다음 load 실패 시 stale loaded 상태를 남기면 안 된다."""
     monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)

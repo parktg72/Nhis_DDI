@@ -646,6 +646,13 @@ class HierarchicalPredictor:
             self._meta = json.loads(meta_path.read_text())
             self._thresholds = self._meta["thresholds"]
             self._feature_cols = self._meta["feature_cols"]
+            if not self._feature_cols:
+                logger.error(
+                    "계층 모델 feature_cols 비어 있음 — 로드 거부: %s",
+                    model_dir,
+                )
+                self._clear_state()
+                return False
             _missing, _schema_ok = _validate_feature_schema(
                 self._feature_cols, "계층 모델 (load)",
             )
@@ -1018,6 +1025,9 @@ class HybridPredictor:
         new_hp = HierarchicalPredictor()
         ok = new_hp.load(str(model_dir))
         if ok:
+            if not new_hp.feature_cols:
+                logger.warning("계층 모델 핫스왑 feature_cols 비어 있음 — 거부: %s", model_dir)
+                return False
             _missing, _schema_ok = _validate_feature_schema(
                 new_hp.feature_cols, "계층 모델 (reload)",
             )
