@@ -635,6 +635,22 @@ class HierarchicalPredictor:
             self._meta = json.loads(meta_path.read_text())
             self._thresholds = self._meta["thresholds"]
             self._feature_cols = self._meta["feature_cols"]
+            _missing, _schema_ok = _validate_feature_schema(
+                self._feature_cols, "계층 모델 (load)",
+            )
+            if not _schema_ok:
+                logger.error(
+                    "계층 모델 feature schema 검증 실패 — 로드 거부: %s (missing=%s)",
+                    model_dir, _missing,
+                )
+                self._stage1 = None
+                self._stage2 = None
+                self._encoder = None
+                self._classes_present = []
+                self._thresholds = {}
+                self._feature_cols = []
+                self._meta = {}
+                return False
 
             for p, key in ((p1, "stage1_sha256"), (p2, "stage2_sha256")):
                 expected = self._meta.get(key)

@@ -24,6 +24,7 @@ import pytest
 from serving.predictor import (
     MLModel,
     HybridPredictor,
+    HierarchicalPredictor,
     _FEATURE_ALLOWED,
     _BUILDER_KNOWN_COLS,
     _INTENTIONAL_FEATURE_ALLOWLIST,
@@ -177,3 +178,40 @@ def test_reload_hierarchical_accepts_known(monkeypatch):
     ok = pred.reload_hierarchical("/tmp/fake")
     assert ok is True
     assert pred._hierarchical is fake_hp
+
+
+def test_hierarchical_predictor_load_rejects_unknown_feature_strict(tmp_path, monkeypatch):
+    """HierarchicalPredictor.load 자체도 unknown feature_cols 를 거부해야 한다.
+
+    HybridPredictor init/reload 경유가 아닌 직접 load 경로도 운영/테스트에서 쓰일 수
+    있으므로, MLModel.load 와 같은 내부 schema guard 를 가져야 한다.
+    """
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+
+    import json
+    import joblib
+
+    stage1_path = tmp_path / "stage1_red.joblib"
+    stage2_path = tmp_path / "stage2_yellow.joblib"
+    joblib.dump(_FakeSklearnModel(), stage1_path)
+    joblib.dump(
+        {
+            "model": _FakeSklearnModel(),
+            "encoder": None,
+            "classes_present": [0, 1],
+        },
+        stage2_path,
+    )
+    meta = {
+        "thresholds": {"tau_red": 0.7, "tau_review": 0.3},
+        "feature_cols": ["drug_count", "fake_unknown_col"],
+        "stage1_sha256": hashlib.sha256(stage1_path.read_bytes()).hexdigest(),
+        "stage2_sha256": hashlib.sha256(stage2_path.read_bytes()).hexdigest(),
+    }
+    (tmp_path / "stage_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    hp = HierarchicalPredictor()
+    assert hp.load(tmp_path) is False, (
+        "HierarchicalPredictor.load() 직접 호출도 strict schema drift 를 거부해야 함"
+    )
+    assert hp.loaded is False

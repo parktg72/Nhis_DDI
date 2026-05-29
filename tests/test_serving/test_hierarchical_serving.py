@@ -184,9 +184,9 @@ def test_hierarchical_predictor_load_real_artifact(tmp_path):
     n = 500
     df = pd.DataFrame({
         "patient_id": [f"P{i}" for i in range(n)],
-        "feat_a": rng.random(n),
-        "feat_b": rng.random(n),
-        "feat_c": rng.random(n),
+        "drug_count": rng.integers(1, 12, size=n),
+        "age": rng.integers(45, 90, size=n),
+        "sex_m": rng.integers(0, 2, size=n),
         "risk_level": (["Red"] * 25 + ["Yellow"] * 100
                        + ["Green"] * 150 + ["Normal"] * 225),
         "yellow_subtype": (
@@ -198,7 +198,7 @@ def test_hierarchical_predictor_load_real_artifact(tmp_path):
     })
     train_hierarchical(
         df=df,
-        feature_cols=["feat_a", "feat_b", "feat_c"],
+        feature_cols=["drug_count", "age", "sex_m"],
         output_dir=tmp_path,
         seed=42,
     )
@@ -207,7 +207,7 @@ def test_hierarchical_predictor_load_real_artifact(tmp_path):
     ok = hp.load(tmp_path)
     assert ok, "HierarchicalPredictor.load() 실패"
     assert hp.loaded
-    assert hp.feature_cols == ["feat_a", "feat_b", "feat_c"]
+    assert hp.feature_cols == ["drug_count", "age", "sex_m"]
     assert "tau_red" in hp._thresholds
     assert "tau_review" in hp._thresholds
     assert hp._thresholds["tau_review"] < hp._thresholds["tau_red"]
@@ -223,9 +223,9 @@ def test_hierarchical_predictor_sha_mismatch_rejects(tmp_path):
     n = 500
     df = pd.DataFrame({
         "patient_id": [f"P{i}" for i in range(n)],
-        "feat_a": rng.random(n),
-        "feat_b": rng.random(n),
-        "feat_c": rng.random(n),
+        "drug_count": rng.integers(1, 12, size=n),
+        "age": rng.integers(45, 90, size=n),
+        "sex_m": rng.integers(0, 2, size=n),
         "risk_level": (["Red"] * 25 + ["Yellow"] * 100
                        + ["Green"] * 150 + ["Normal"] * 225),
         "yellow_subtype": (
@@ -237,7 +237,7 @@ def test_hierarchical_predictor_sha_mismatch_rejects(tmp_path):
     })
     train_hierarchical(
         df=df,
-        feature_cols=["feat_a", "feat_b", "feat_c"],
+        feature_cols=["drug_count", "age", "sex_m"],
         output_dir=tmp_path,
         seed=42,
     )
