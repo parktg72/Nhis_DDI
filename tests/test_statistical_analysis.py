@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 import logging
+import pandas as pd
 from db_connector import DataManager
 from statistical_analysis import StatisticalAnalyzer
 
@@ -410,3 +411,39 @@ class TestPhase2SubgroupAnalysis:
         except Exception as e:
             logger.warning(f"run_subgroup() 실행 중 오류: {e}")
             # 테스트 데이터로 실패 가능, 통과 처리
+
+
+class TestSensitivitySqlSafety:
+    """민감도 분석 동적 SQL 안전성 회귀 테스트"""
+
+    def test_run_sensitivity_escapes_dementia_drug_codes(self, monkeypatch):
+        """항치매약 코드 IN-list는 작은따옴표를 SQL 리터럴로 escape한다."""
+        import statistical_analysis as sa_module
+
+        class FakeDataManager:
+            def __init__(self):
+                self.queries = []
+
+            def query(self, sql):
+                self.queries.append(sql)
+                return pd.DataFrame({'n': [0]})
+
+        fake_dm = FakeDataManager()
+        monkeypatch.setattr(
+            sa_module,
+            'DEMENTIA_DRUG_CODES',
+            ["372701' OR 1=1 --", '390701'],
+        )
+
+        analyzer = StatisticalAnalyzer(fake_dm)
+        analyzer.run_sensitivity(
+            df_prepared=pd.DataFrame({
+                'follow_up_years': [0.5],
+                'dementia_event': [0],
+            })
+        )
+
+        executed_sql = fake_dm.queries[0]
+        assert "'372701'' OR 1=1 --'" in executed_sql
+        assert "'390701'" in executed_sql
+        assert "'372701' OR 1=1 --'" not in executed_sql

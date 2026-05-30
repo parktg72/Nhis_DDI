@@ -46,19 +46,52 @@
   - `table_name`, `outcome_{oname.lower()}`, suffix 기반 테이블명이 동적으로 삽입됨.
   - 현재 값은 내부 호출/상수에서 오지만, public method 인자로 확장될 경우 `_quote_identifier()` 계열 helper 사용 권장.
 
+## P2 SQL helper 확장 inventory (2026-05-30)
+
+AST 기반으로 `dist/`, `tests/`, `.venv/venv`, `build`, `__pycache__`를 제외한 애플리케이션 Python 코드의 f-string SQL 후보를 재점검했다. 총 87개 후보 중 대부분은 내부 상수/숫자 검증/이미 적용된 helper 기반이다.
+
+### P2-완료
+
+- `cohort_builder.py` 약물/질병 코드 IN-list
+  - `DM_CODES`, `DEMENTIA_CODES`, `OHA_CODES`, `INSULIN_CODES`, `INSULIN_EFMDC`, `DEMENTIA_DRUG_CODES`는 `icd_like()`, `sql_in_list()`, `sql_literal()`, `sql_identifier()` 경로로 정리됨.
+- `statistical_analysis.py:run_sensitivity()` 항치매약 코드 IN-list
+  - 기존 수동 join(`"'" + "','".join(...) + "'"`)을 `sql_in_list(DEMENTIA_DRUG_CODES)`로 교체.
+  - 작은따옴표 포함 코드가 SQL 리터럴로 escape되는 회귀 테스트 추가.
+- `db_connector.py` 식별자 경로
+  - `_quote_identifier()` 적용부와 `_validate_table_name()` 적용부는 현 상태 유지.
+
+### P2-추적 유지(현재는 내부 상수/검증 경로)
+
+- `cohort_builder.py:_create_t40_filtered()`
+  - `LOOKBACK_YEARS`는 정수 변환 후 산술 표현식에 삽입됨.
+- `variable_generator.py` comorbidity/complication/CCI SELECT 생성
+  - 컬럼명은 config dict key 기반, 조건은 `icd_like()` 기반. 향후 외부 설정 파일로 열릴 경우 `sql_identifier()` 검증을 추가할 것.
+- `variable_generator.py:_apply_complete_case_strategy()`
+  - `critical_vars`는 함수 내부 고정 리스트. 향후 UI/설정값으로 열릴 경우 식별자 검증 필요.
+- `analysis_runner.py`, `statistical_analysis.py`, `tabs.py`의 `SELECT setseed(...)`
+  - `SAMPLING_SEED`는 설정 검증 후 0-99 정수/실수 표현으로만 삽입됨.
+
+### P3 후보(기능 변경 없이 별도 TDD 권장)
+
+- `db_connector.py`의 대형 HANA/DuckDB 적재 SQL 생성부
+  - `read_parquet(...)`, HANA schema/table/column 조합, GJ 통합 테이블 생성은 기존 테스트가 있으나 코드 크기가 커 별도 회귀 스캐너/리팩터링 단위로 분리 권장.
+- `cohort_builder.py` 동적 outcome/exposure/med_pattern 테이블명
+  - 현재 내부 enum/suffix 기반이며 `sql_identifier(..., allow_qualified=False)`가 적용된 주요 경로는 유지. 공개 인자로 확장 시 추가 테스트 필요.
+
 ## 권장 후속 개선
 
-1. 공통 SQL literal helper 추가
-   - 예: `_quote_sql_literal(value)` 또는 DuckDB/HANA별 parameter binding wrapper.
-   - 우선 대상: `INPATIENT_FORM_CD`, 날짜 문자열, 설정 문자열.
+1. SQL helper 적용 규칙 유지
+   - 값: `sql_literal()` 또는 `sql_in_list()`.
+   - 식별자: `sql_identifier()` 또는 DuckDB 전용 `_quote_identifier()`.
+   - 가능하면 DB 파라미터 바인딩 우선.
 
 2. 공통 SQL identifier helper 적용 범위 확대
    - 이미 `db_connector.py`에 `_quote_identifier()`가 있음.
-   - `cohort_builder.py`, `variable_generator.py`의 동적 테이블명/컬럼명 생성부에도 내부 상수임을 assert하거나 helper를 사용하는 방식 권장.
+   - `variable_generator.py`의 동적 컬럼 alias/critical vars가 외부 설정화되면 즉시 `sql_identifier()` 검증을 추가.
 
 3. 회귀 스캐너 유지
    - f-string SQL 호출 목록은 AST 기반으로 주기 점검.
-   - `dist/`, `tests/`, `.venv/`는 제외하고 애플리케이션 코드만 감사.
+   - `dist/`, `tests/`, `.venv/venv`는 제외하고 애플리케이션 코드만 감사.
 
 ## 이번 P1 처리 상태
 

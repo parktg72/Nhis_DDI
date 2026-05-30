@@ -19,6 +19,7 @@ from utils import (
     make_error_result,
     make_skip_result,
     make_model_failure,
+    sql_in_list,
 )
 from dataclasses import dataclass
 import duckdb
@@ -1471,7 +1472,7 @@ class StatisticalAnalyzer:
         try:
             # T30(진료내역) + T60(처방전내역) 모두에서 항치매약 처방 확인
             # (step5 제외 로직과 동일한 소스 범위 유지)
-            dl = "'" + "','".join(DEMENTIA_DRUG_CODES) + "'"
+            dl = sql_in_list(DEMENTIA_DRUG_CODES)
             r = self.dm.query(f"""
                 WITH drug_patients AS (
                     SELECT DISTINCT INDI_DSCM_NO FROM T30
