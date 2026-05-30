@@ -58,6 +58,52 @@ import re as _re
 
 _SAFE_COL_RE = _re.compile(r'^[A-Za-z_][A-Za-z0-9_.]*$')
 _SAFE_CODE_RE = _re.compile(r'^[A-Za-z0-9]+$')
+_SAFE_IDENTIFIER_PART_RE = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+def sql_literal(value):
+    """DuckDB SQL 문자열 리터럴 생성.
+
+    동적 SQL에 값을 직접 끼워 넣어야 하는 기존 코드 경로에서 사용한다.
+    가능하면 DB 파라미터 바인딩을 우선하되, DDL/동적 테이블 SQL에서는 이 헬퍼로
+    작은 설정값/코드값을 escape한다.
+    """
+    if value is None:
+        return "NULL"
+    text = str(value)
+    if "\x00" in text:
+        raise ValueError(f"SQL 문자열 리터럴에 NUL 문자는 허용되지 않습니다: {value!r}")
+    return "'" + text.replace("'", "''") + "'"
+
+
+def sql_in_list(values):
+    """SQL IN (...) 내부에 넣을 안전한 문자열 리터럴 목록을 생성한다."""
+    if values is None:
+        raise ValueError("SQL IN 목록이 비어 있습니다.")
+    if isinstance(values, (str, bytes)):
+        raise ValueError("SQL IN 목록은 문자열 하나가 아니라 반복 가능한 목록이어야 합니다.")
+    values = list(values)
+    if not values:
+        raise ValueError("SQL IN 목록이 비어 있습니다.")
+    if any(value is None for value in values):
+        raise ValueError("SQL IN 목록에는 NULL 값을 허용하지 않습니다.")
+    return ",".join(sql_literal(value) for value in values)
+
+
+def sql_identifier(name, *, allow_qualified=True):
+    """동적 SQL 식별자 검증.
+
+    테이블/컬럼명은 값 리터럴처럼 escape할 수 없으므로 allowlist 정규식으로만 허용한다.
+    기본적으로 schema.table 형태의 qualified identifier를 허용한다.
+    """
+    text = str(name)
+    parts = text.split(".") if allow_qualified else [text]
+    if not parts or any(not part for part in parts):
+        raise ValueError(f"유효하지 않은 SQL 식별자: {name!r}")
+    for part in parts:
+        if not _SAFE_IDENTIFIER_PART_RE.match(part):
+            raise ValueError(f"유효하지 않은 SQL 식별자: {name!r}")
+    return text
 
 
 def icd_like(col, codes):
@@ -67,7 +113,7 @@ def icd_like(col, codes):
     for c in codes:
         if not _SAFE_CODE_RE.match(c):
             raise ValueError(f"유효하지 않은 ICD 코드: {c!r}")
-    return '(' + ' OR '.join(f"{col} LIKE '{c}%'" for c in codes) + ')'
+    return '(' + ' OR '.join(f"{col} LIKE {sql_literal(c + '%')}" for c in codes) + ')'
 
 
 def make_skip_result(reason_code, reason, *, stage=None, **extra):

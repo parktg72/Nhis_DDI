@@ -12,7 +12,7 @@ from config import (
     OHA_CODES, INSULIN_EFMDC, INSULIN_CODES, STUDY_SETTINGS
 )
 from memory_manager import mem_manager
-from utils import icd_like, CohortStepError
+from utils import icd_like, CohortStepError, sql_identifier, sql_in_list, sql_literal
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ class CohortBuilder:
         """의료 코드 allowlist 검증 — 영숫자와 하이픈만 허용 (SQL 인젝션 방지)"""
         _valid = re.compile(r'^[A-Za-z0-9\-]+$')
         for code in codes:
-            if not _valid.match(str(code)):
+            if code is None or not _valid.match(str(code)):
                 raise ValueError(f"유효하지 않은 {label} 코드: {code!r}")
 
     def step3_dm_medications(self, cb=None):
@@ -178,9 +178,9 @@ class CohortBuilder:
         self._validate_medical_codes(oha_codes, 'OHA')
         self._validate_medical_codes(INSULIN_CODES, 'INSULIN_CODES')
         self._validate_medical_codes(INSULIN_EFMDC, 'INSULIN_EFMDC')
-        oha = "'" + "','".join(oha_codes) + "'"
-        ins = "'" + "','".join(INSULIN_CODES) + "'"
-        ief = "'" + "','".join(INSULIN_EFMDC) + "'"
+        oha = sql_in_list(oha_codes)
+        ins = sql_in_list(INSULIN_CODES)
+        ief = sql_in_list(INSULIN_EFMDC)
 
         self.dm.execute(f"""
             CREATE OR REPLACE TABLE dm_medications AS
@@ -223,7 +223,10 @@ class CohortBuilder:
             lookback_days: 기저선 기간 (진단일로부터 며칠까지 포함)
             table_suffix: 테이블명 접미사 (민감도 분석용, 예: "_60day")
         """
-        table_name = f"med_pattern{table_suffix}"
+        table_name = sql_identifier(f"med_pattern{table_suffix}", allow_qualified=False)
+        lookback_days = int(lookback_days)
+        if lookback_days < 0:
+            raise ValueError(f"lookback_days는 0 이상이어야 합니다: {lookback_days!r}")
         self.dm.execute(f"""
             CREATE OR REPLACE TABLE {table_name} AS
             SELECT m.INDI_DSCM_NO,
@@ -247,10 +250,10 @@ class CohortBuilder:
         mi = int(self.settings.get('MIN_DM_CLAIMS_INPATIENT', 1))
 
         # 입원 CMN_KEY 사전 추출 (T20 반복 서브쿼리 방지)
-        inpt_form = self.settings.get('INPATIENT_FORM_CD', '02')
+        inpt_form = sql_literal(self.settings.get('INPATIENT_FORM_CD', '02'))
         self.dm.execute(f"""
             CREATE OR REPLACE TABLE _inpatient_keys AS
-            SELECT DISTINCT CMN_KEY FROM T20 WHERE FORM_CD='{inpt_form}'
+            SELECT DISTINCT CMN_KEY FROM T20 WHERE FORM_CD={inpt_form}
         """)
 
         self.dm.execute(f"""
@@ -400,7 +403,7 @@ class CohortBuilder:
             )
         """)
 
-        dl = "'" + "','".join(DEMENTIA_DRUG_CODES) + "'"
+        dl = sql_in_list(DEMENTIA_DRUG_CODES)
 
         # 약물 제외: T30(진료내역) + T60(처방전내역) UNION으로 통합 중복 제거
         self.dm.execute(f"""
@@ -449,8 +452,9 @@ class CohortBuilder:
         for oname, codes in DEMENTIA_CODES.items():
             cond40 = icd_like('t40.MCEX_SICK_SYM', codes)
             cond20 = icd_like('t20.SICK_SYM1', codes)
+            outcome_table = sql_identifier(f"outcome_{oname.lower()}", allow_qualified=False)
             self.dm.execute(f"""
-                CREATE OR REPLACE TABLE outcome_{oname.lower()} AS
+                CREATE OR REPLACE TABLE {outcome_table} AS
                 WITH events_t40 AS (
                     SELECT t40.INDI_DSCM_NO, t40.MDCARE_STRT_DT AS event_date
                     FROM T40 t40
@@ -516,20 +520,25 @@ class CohortBuilder:
                 GROUP BY INDI_DSCM_NO
             )"""
 
+        age65_censor_month = str(self.settings.get("AGE65_CENSOR_MONTH", "0101"))
+        if not re.fullmatch(r"\d{4}", age65_censor_month):
+            raise ValueError(f"AGE65_CENSOR_MONTH는 MMDD 형식 숫자 4자리여야 합니다: {age65_censor_month!r}")
+        age65_censor_month_sql = sql_literal(age65_censor_month)
+
         self.dm.execute(f"""
             CREATE OR REPLACE TABLE analysis_data AS
             WITH {last_eligible_sql},
             -- censor_date를 먼저 산출하여 이벤트 플래그 판정에 재사용
             base AS (
                 SELECT sc.*,
-                       CAST((CAST(sc.BYEAR AS INT) + {yod}) || '{self.settings.get("AGE65_CENSOR_MONTH", "0101")}' AS VARCHAR) AS age65_date,
+                       CAST((CAST(sc.BYEAR AS INT) + {yod}) || {age65_censor_month_sql} AS VARCHAR) AS age65_date,
                        oa.event_date AS dementia_date,
                        ad.event_date AS ad_date,
                        vd.event_date AS vad_date,
                        le.death_date,
                        LEAST(
                            COALESCE(oa.event_date, '{ey}1231'),
-                           CAST((CAST(sc.BYEAR AS INT) + {yod}) || '{self.settings.get("AGE65_CENSOR_MONTH", "0101")}' AS VARCHAR),
+                           CAST((CAST(sc.BYEAR AS INT) + {yod}) || {age65_censor_month_sql} AS VARCHAR),
                            '{ey}1231',
                            COALESCE(le.death_date, le.withdrawal_date, '{ey}1231')
                        ) AS censor_date
@@ -747,9 +756,10 @@ class CohortBuilder:
                 self._create_med_pattern(days, suffix)
 
                 # exposure_groups 재생성 (해당 med_pattern 사용)
-                med_pattern_table = f"med_pattern{suffix}"
+                med_pattern_table = sql_identifier(f"med_pattern{suffix}", allow_qualified=False)
+                exposure_table = sql_identifier(f"exposure_groups{suffix}", allow_qualified=False)
                 self.dm.execute(f"""
-                    CREATE OR REPLACE TABLE exposure_groups{suffix} AS
+                    CREATE OR REPLACE TABLE {exposure_table} AS
                     SELECT bp.INDI_DSCM_NO, bp.SEX_TYPE, bp.BYEAR,
                            CASE
                              WHEN t1.INDI_DSCM_NO IS NOT NULL THEN 'T1DM'
@@ -768,7 +778,7 @@ class CohortBuilder:
                 # 각 기간별 분포 조회
                 dist_df = self.dm.query(f"""
                     SELECT exposure_group, COUNT(*) AS n
-                    FROM exposure_groups{suffix}
+                    FROM {exposure_table}
                     GROUP BY exposure_group
                     ORDER BY exposure_group
                 """)

@@ -670,6 +670,47 @@ class TestMedSwitch:
             "med_switch 테이블이 생성되어야 함"
 
 
+class TestSqlSafetyGuards:
+    def test_inpatient_form_cd_is_sql_literal_escaped(self, dm):
+        """INPATIENT_FORM_CD 값은 SQL 문자열 리터럴로 escape되어야 한다."""
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.settings = dict(cb.settings)
+            cb.settings['INPATIENT_FORM_CD'] = "0'2"
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            cb.step4_classify_groups()
+
+        assert not cb.dm.storage.table_exists('_inpatient_keys')
+
+    def test_med_pattern_table_suffix_rejects_identifier_injection(self, dm):
+        """민감도 분석 table_suffix는 SQL 식별자로 검증되어야 한다."""
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.step1_base_population()
+            cb.step2_dm_claims()
+            cb.step3_dm_medications()
+            with pytest.raises(ValueError, match="식별자"):
+                cb._create_med_pattern(90, "; DROP TABLE dm_medications; --")
+
+    def test_age65_censor_month_rejects_non_mmdd_literal(self, dm):
+        """AGE65_CENSOR_MONTH는 SQL에 넣기 전 MMDD 숫자 형식으로 검증한다."""
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            cb.settings = dict(cb.settings)
+            cb.settings['AGE65_CENSOR_MONTH'] = "0101'; DROP TABLE JK; --"
+            _run_steps_up_to(cb, 5)
+            with pytest.raises(ValueError, match="AGE65_CENSOR_MONTH"):
+                cb.step6_outcomes()
+
+    def test_medical_code_validation_rejects_none(self, dm):
+        with patch('cohort_builder.mem_manager'):
+            cb = CohortBuilder(dm)
+            with pytest.raises(ValueError, match="유효하지 않은 TEST 코드"):
+                cb._validate_medical_codes([None], 'TEST')
+
+
 # ===========================================================================
 # Step 5: 기존 치매 진단 + 항치매약 사용자 제외
 # ===========================================================================

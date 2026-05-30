@@ -13,7 +13,52 @@ from utils import (
     make_error_result,
     make_skip_result,
     make_model_failure,
+    sql_identifier,
+    sql_in_list,
+    sql_literal,
 )
+
+
+class TestSqlHelpers:
+    def test_sql_literal_escapes_single_quotes(self):
+        assert sql_literal("O'Brien") == "'O''Brien'"
+
+    def test_sql_literal_null(self):
+        assert sql_literal(None) == "NULL"
+
+    def test_sql_literal_rejects_nul_byte(self):
+        with pytest.raises(ValueError, match="NUL"):
+            sql_literal("abc\x00def")
+
+    def test_sql_in_list_uses_literal_escaping(self):
+        assert sql_in_list(["A", "O'Brien"]) == "'A','O''Brien'"
+
+    def test_sql_in_list_rejects_empty_values(self):
+        with pytest.raises(ValueError, match="비어"):
+            sql_in_list([])
+
+    def test_sql_in_list_rejects_bare_string(self):
+        with pytest.raises(ValueError, match="반복 가능한 목록"):
+            sql_in_list("148801")
+
+    def test_sql_in_list_rejects_none_member(self):
+        with pytest.raises(ValueError, match="NULL"):
+            sql_in_list(["A", None])
+
+    def test_sql_in_list_rejects_none_container(self):
+        with pytest.raises(ValueError, match="비어|반복 가능한 목록"):
+            sql_in_list(None)
+
+    def test_sql_identifier_allows_qualified_names(self):
+        assert sql_identifier("schema.table_name") == "schema.table_name"
+
+    def test_sql_identifier_rejects_injection(self):
+        with pytest.raises(ValueError, match="식별자"):
+            sql_identifier("safe; DROP TABLE JK")
+
+    def test_sql_identifier_rejects_empty_part(self):
+        with pytest.raises(ValueError, match="식별자"):
+            sql_identifier("schema..table")
 
 
 class TestIcdLike:
