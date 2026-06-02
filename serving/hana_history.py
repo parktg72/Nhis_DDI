@@ -156,30 +156,30 @@ class HANAExtractorHistoryProvider:
 
         patient_col = cols["patient_id"]
         date_col = cols["start_date"]
-        drug_col = cols["drug_code"]
-        alt_col = cols.get("drug_code_alt")
         edi_col = cols.get("edi_code")
         total_days_col = cols.get("total_days")
 
-        required = [patient_col, date_col, drug_col]
+        # 학습↔서빙 인코더 정합(약물코드 네임스페이스): DL drug_vocab 은 EDI 코드
+        # (MCARE_DIV_CD) 빈도로 구축되고, 학습 history 로더(full_cohort_history_loader/
+        # multi_day_parquet_provider)도 drug_code 컬럼에 edi_code 값을 담는다. 따라서 서빙
+        # 도 drug_code 를 EDI 네임스페이스로 채워야 dl_predictor._encode_history 가 vocab 에
+        # 정확히 매칭된다. WK_COMPN_CD/GNL_NM_CD(주성분/일반명코드)를 쓰면 거의 전부 OOV.
+        # edi_col 미설정/부재는 silent 빈 인코딩을 막기 위해 에러로 처리한다.
+        if not edi_col:
+            raise ValueError(f"{source} history config has no edi_code (MCARE_DIV_CD) mapping")
+        required = [patient_col, date_col, edi_col]
         missing = [col for col in required if col not in df.columns]
         if missing:
             raise ValueError(f"{source} history missing columns: {missing}")
 
-        drug_code = df[drug_col].astype(str).str.strip()
-        if alt_col and alt_col in df.columns:
-            alt_code = df[alt_col].astype(str).str.strip()
-            drug_code = drug_code.where(drug_code != "", alt_code)
-
+        edi_code = df[edi_col].astype(str).str.strip()
         events = pd.DataFrame({
             "patient_id": df[patient_col].astype(str),
-            "drug_code": drug_code,
+            "drug_code": edi_code,
             "prescription_date": df[date_col].astype(str),
             "source": source.upper(),
         })
-        events["edi_code"] = (
-            df[edi_col].astype(str) if edi_col and edi_col in df.columns else None
-        )
+        events["edi_code"] = edi_code
         events["total_days"] = (
             df[total_days_col] if total_days_col and total_days_col in df.columns else None
         )
