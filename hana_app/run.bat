@@ -53,6 +53,10 @@ echo URL: http://localhost:%PORT%
 echo 종료: Ctrl+C
 echo.
 
+echo [보조] 대용량 학습용 임시 디렉터리(선택)
+echo   파일이 많으면 여유 10GB+ 드라이브를 HANA_FEAT_TMP 로 지정하세요. 예: set HANA_FEAT_TMP=D:\hana_tmp
+echo   미설정 시 시스템 임시 드라이브가 가득 차면 피처 빌드가 디스크풀로 중단됩니다.
+echo.
 REM Streamlit 설치 확인
 %PYTHON_BIN% -c "import streamlit" 2>nul
 if errorlevel 1 (
