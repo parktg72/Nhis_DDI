@@ -191,12 +191,19 @@ def test_encode_stage2_for_eval_handles_red():
     assert out[3] == STAGE2_LABELS.index("No_Alert")
 
 
-def test_encode_stage2_for_eval_handles_y_other_fallback():
-    """Yellow + Y_OTHER 또는 알 수 없는 subtype → No_Alert 로 폴백."""
+def test_encode_stage2_for_eval_masks_y_other_and_invalid_yellow():
+    """Yellow + Y_OTHER / 무효 / null subtype → -1 (mask out).
+
+    학습(`stratified_sample_stage2`)이 Y_OTHER·무효 subtype Yellow 를 제외하므로
+    평가도 동일하게 마스킹해야 Stage 2 메트릭이 학습 분포와 정합한다.
+    (이전엔 No_Alert 로 폴백 — 2026-06-02 RCA B1 에서 학습/평가 불일치로 확정.
+    `docs/reports/2026-06-02_ml_dl_and_diskfull_review.md`.)
+    """
     df = pd.DataFrame({
-        "risk_level": ["Yellow", "Yellow"],
-        "yellow_subtype": ["Y_OTHER", "Y_INVALID"],
+        "risk_level": ["Yellow", "Yellow", "Yellow"],
+        "yellow_subtype": ["Y_OTHER", "Y_INVALID", None],
     })
     out = _encode_stage2_for_eval(df)
-    assert out[0] == STAGE2_LABELS.index("No_Alert")
-    assert out[1] == STAGE2_LABELS.index("No_Alert")
+    assert out[0] == -1  # Y_OTHER → mask (학습 제외)
+    assert out[1] == -1  # 무효 subtype → mask
+    assert out[2] == -1  # null subtype Yellow → mask

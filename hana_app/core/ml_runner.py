@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import pickle
 import sys
 from collections import defaultdict
@@ -283,6 +284,10 @@ def _duckdb_available() -> bool:
     except ImportError:
         return False
 
+class InsufficientDiskSpaceError(RuntimeError):
+    """임시 디스크 공간 부족 시 발생하는 예외."""
+    pass
+
 
 @contextlib.contextmanager
 def _duck_con(
@@ -308,6 +313,12 @@ def _duck_con(
     try:
         con.execute(f"SET memory_limit='{memory_limit_mb}MB'")
         con.execute(f"SET temp_directory='{_tmp.as_posix()}'")
+        try:
+            free_bytes = shutil.disk_usage(str(_tmp.anchor)).free
+            max_temp_mb = max(256, int((free_bytes * 0.8) / (1024 * 1024)))
+            con.execute(f"SET max_temp_directory_size='{max_temp_mb}MB'")
+        except Exception:
+            pass
         yield con
     finally:
         try:
@@ -704,6 +715,7 @@ def build_patient_features(
     ddi_matrix = _load_ddi_matrix()
     dup_groups = _load_dup_groups()
     age_map = _load_age_map()
+    demographics = _load_demographics()
     cyp_ext = _load_cyp_extractor()
 
     # 환자별 그룹화
@@ -732,6 +744,7 @@ def build_patient_features(
             continue
 
         overlaps = calculate_overlaps_for_patient(precs, window_days=window_days)
+        demo = demographics.get(pid, {})
         feat = aggregate_patient_features(
             patient_id=pid,
             prescriptions=precs,
@@ -739,6 +752,8 @@ def build_patient_features(
             ddi_matrix=ddi_matrix,
             dup_groups=dup_groups,
             age=age_map.get(pid),
+            sex=demo.get("sex_type"),
+            addr_cd=demo.get("addr_cd"),
             cyp_extractor=cyp_ext,
         )
         features_list.append(feat)
@@ -749,6 +764,134 @@ def build_patient_features(
             f"전체 {total:,}명"
         )
     return features_list
+
+
+def _resolve_feat_tmp_base() -> Path:
+    """피처 빌드 임시 디렉터리의 베이스 경로.
+
+    `HANA_FEAT_TMP` 우선 → 없으면 `HANA_TMP_DIR` → 없으면 설정 파일(`hana_config.json`)의 `hana_feat_tmp` 혹은 `hana_tmp_dir` → 없으면 Python `tempfile.gettempdir()` 순서로 결정한다.
+    유효하지 않은 경로 지정 시 친절한 에러 메시지와 함께 대안 드라이브 목록을 출력한다.
+    """
+    import string
+    import shutil
+    import tempfile
+
+    base = os.environ.get("HANA_FEAT_TMP", "").strip()
+    if not base:
+        base = os.environ.get("HANA_TMP_DIR", "").strip()
+    if not base:
+        # 하위 호환성을 위해 기존 변수도 체크
+        base = os.environ.get("HANA_FEAT_TMPDIR", "").strip()
+    if not base:
+        try:
+            from hana_app.core.config import load_config
+            cfg = load_config()
+            base = cfg.get("hana_feat_tmp") or cfg.get("hana_tmp_dir") or cfg.get("training", {}).get("hana_feat_tmp") or cfg.get("training", {}).get("hana_tmp_dir")
+            if base:
+                base = str(base).strip()
+        except Exception:
+            base = ""
+
+    if not base:
+        return Path(tempfile.gettempdir())
+
+    from pathlib import PureWindowsPath
+    p = Path(base)
+    win_p = PureWindowsPath(base)
+    anchor = win_p.drive + "\\" if win_p.drive else p.anchor
+    if anchor and not os.path.exists(anchor):
+        drives = []
+        for letter in string.ascii_uppercase:
+            drive = f"{letter}:\\"
+            if os.path.exists(drive):
+                try:
+                    usage = shutil.disk_usage(drive)
+                    drives.append(f"{letter}:\\ (여유 {usage.free / 1e9:.1f} GB / 전체 {usage.total / 1e9:.1f} GB)")
+                except OSError:
+                    drives.append(f"{letter}:\\ (정보 없음)")
+        drives_str = ", ".join(drives)
+        raise RuntimeError(
+            f"지정된 임시 경로 '{base}'의 드라이브 '{anchor}'가 존재하지 않거나 유효하지 않습니다.\n"
+            f"현재 시스템에서 가용한 대안 드라이브 목록: [{drives_str}]\n"
+            f"HANA_FEAT_TMP 또는 HANA_TMP_DIR 환경변수를 유효한 경로로 다시 지정해주세요."
+        )
+
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        drives = []
+        for letter in string.ascii_uppercase:
+            drive = f"{letter}:\\"
+            if os.path.exists(drive):
+                try:
+                    usage = shutil.disk_usage(drive)
+                    drives.append(f"{letter}:\\ (여유 {usage.free / 1e9:.1f} GB / 전체 {usage.total / 1e9:.1f} GB)")
+                except OSError:
+                    drives.append(f"{letter}:\\ (정보 없음)")
+        drives_str = ", ".join(drives)
+        raise RuntimeError(
+            f"임시 디렉터리 '{base}'를 생성할 수 없습니다: {e}.\n"
+            f"현재 시스템에서 가용한 대안 드라이브 목록: [{drives_str}]\n"
+            f"HANA_FEAT_TMP 또는 HANA_TMP_DIR 환경변수를 유효한 경로로 다시 지정해주세요."
+        ) from e
+    return p
+
+
+def _preflight_temp_space(
+    parquet_paths: list,
+    tmp_dir: Path,
+    *,
+    headroom: float = 10.0,
+    min_free_mb: int = 512,
+    progress_cb: Callable[[str], None] | None = None,
+) -> None:
+    """대량 피처 빌드 시작 전 임시 디스크 공간을 사전 점검한다.
+
+    `COPY (SELECT * ...) TO ... (PARTITION_BY)` 가 전체 raw Parquet 를 임시
+    디렉터리에 한 번 복제하므로, 소스 총 크기 × headroom 만큼 여유가 없으면
+    복제 도중 디스크가 차서 IOException 으로 실패한다.
+    시작 전에 추정 필요량 vs 가용량을 비교해 부족 시 InsufficientDiskSpaceError 를 발생시킨다.
+    """
+    import shutil as _shutil
+    import string
+
+    try:
+        src_bytes = sum(Path(p).stat().st_size for p in parquet_paths)
+    except OSError:
+        return
+    required = int(src_bytes * headroom) + min_free_mb * 1024 * 1024
+    from pathlib import PureWindowsPath
+    win_tmp = PureWindowsPath(str(tmp_dir))
+    anchor = win_tmp.drive + "\\" if win_tmp.drive else tmp_dir.anchor
+    try:
+        free = _shutil.disk_usage(anchor).free
+    except OSError:
+        return
+    if progress_cb:
+        progress_cb(
+            f"임시공간 사전점검: 필요 ~{required / 1e9:.2f} GB / "
+            f"가용 {free / 1e9:.2f} GB ({anchor})"
+        )
+    if free < required:
+        drives = []
+        for letter in string.ascii_uppercase:
+            drive = f"{letter}:\\"
+            if os.path.exists(drive):
+                try:
+                    usage = _shutil.disk_usage(drive)
+                    rec_flag = " (권장)" if usage.free >= required else ""
+                    drives.append(
+                        f"{letter}:\\ (여유 {usage.free / 1e9:.2f} GB / 전체 {usage.total / 1e9:.2f} GB){rec_flag}"
+                    )
+                except OSError:
+                    drives.append(f"{letter}:\\ (정보 없음)")
+        drives_str = "\n  - ".join(drives)
+        raise InsufficientDiskSpaceError(
+            f"임시 디스크 공간 부족: 피처 빌드에 약 {required / 1e9:.2f} GB 가 "
+            f"필요하나 '{anchor}' 드라이브 여유는 {free / 1e9:.2f} GB 입니다.\n"
+            f"현재 시스템에서 가용한 대안 드라이브 목록:\n  - {drives_str}\n"
+            f"HANA_FEAT_TMP 또는 HANA_TMP_DIR 환경변수를 여유 있는 드라이브 경로로 지정해주세요."
+        )
 
 
 def build_patient_features_from_parquet(
@@ -793,6 +936,7 @@ def build_patient_features_from_parquet(
     ddi_matrix = _load_ddi_matrix()
     dup_groups = _load_dup_groups()
     age_map = _load_age_map()
+    demographics = _load_demographics()
     cyp_ext = _load_cyp_extractor()
 
     # ── Phase 1: 행 수 파악 (patient_id 컬럼만) ──────────────────
@@ -834,7 +978,18 @@ def build_patient_features_from_parquet(
     # 메모리가 적을수록 파티션을 많이 나눠 파티션당 크기를 줄임
     _rows_per_part = max(20_000, mem_limit * 25)  # ~100B/row 가정
     num_partitions = max(4, min(256, total_rows // _rows_per_part + 1))
-    tmp_dir = Path(tempfile.mkdtemp(prefix="hana_feat_"))
+    _tmp_base = _resolve_feat_tmp_base()
+    # 전체 raw 를 임시폴더에 복제하기 전에 디스크 여유 사전 점검(디스크풀 IOException 예방).
+    # mkdtemp 전에 대상 드라이브로 점검 → 부족 시 빈 임시폴더를 남기지 않는다.
+    _preflight_temp_space(
+        parquet_paths,
+        _tmp_base,
+        progress_cb=progress_cb,
+    )
+    tmp_dir = Path(tempfile.mkdtemp(
+        prefix="hana_feat_",
+        dir=str(_tmp_base),
+    ))
 
     if progress_cb:
         progress_cb(
@@ -956,6 +1111,7 @@ def build_patient_features_from_parquet(
                             overlaps = calculate_overlaps_for_patient(
                                 precs, window_days=window_days,
                             )
+                            demo = demographics.get(pid, {})
                             feat = aggregate_patient_features(
                                 patient_id=pid,
                                 prescriptions=precs,
@@ -963,6 +1119,8 @@ def build_patient_features_from_parquet(
                                 ddi_matrix=ddi_matrix,
                                 dup_groups=dup_groups,
                                 age=age_map.get(pid),
+                                sex=demo.get("sex_type"),
+                                addr_cd=demo.get("addr_cd"),
                                 cyp_extractor=cyp_ext,
                             )
                             _flush_buf.append(feat)
@@ -1006,6 +1164,7 @@ def build_patient_features_from_parquet(
                     overlaps = calculate_overlaps_for_patient(
                         precs, window_days=window_days,
                     )
+                    demo = demographics.get(pid, {})
                     feat = aggregate_patient_features(
                         patient_id=pid,
                         prescriptions=precs,
@@ -1013,6 +1172,8 @@ def build_patient_features_from_parquet(
                         ddi_matrix=ddi_matrix,
                         dup_groups=dup_groups,
                         age=age_map.get(pid),
+                        sex=demo.get("sex_type"),
+                        addr_cd=demo.get("addr_cd"),
                         cyp_extractor=cyp_ext,
                     )
                     _flush_buf.append(feat)
@@ -1062,6 +1223,7 @@ def _build_features_simple(
     from hana_app.core.hana_etl import df_row_to_record
 
     age_map = _load_age_map()
+    demographics = _load_demographics()
     cyp_ext = _load_cyp_extractor()
     mem_limit = memory_limit_mb if memory_limit_mb > 0 else PROCESS_MEMORY_LIMIT_MB
     duck_mem = max(256, mem_limit // 2)
@@ -1154,6 +1316,7 @@ def _build_features_simple(
             overlaps = calculate_overlaps_for_patient(
                 precs, window_days=window_days,
             )
+            demo = demographics.get(pid, {})
             feat = aggregate_patient_features(
                 patient_id=pid,
                 prescriptions=precs,
@@ -1161,6 +1324,8 @@ def _build_features_simple(
                 ddi_matrix=ddi_matrix,
                 dup_groups=dup_groups,
                 age=age_map.get(pid),
+                sex=demo.get("sex_type"),
+                addr_cd=demo.get("addr_cd"),
                 cyp_extractor=cyp_ext,
             )
             _flush_buf.append(feat)

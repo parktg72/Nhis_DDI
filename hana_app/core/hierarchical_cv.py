@@ -27,7 +27,11 @@ from hana_app.core.hierarchical_metrics import (
     compute_stage1_metrics,
     compute_stage2_metrics,
 )
-from hana_app.core.hierarchical_runner import STAGE2_LABELS, train_hierarchical
+from hana_app.core.hierarchical_runner import (
+    STAGE2_LABELS,
+    YELLOW_SUBTYPE_LABELS,
+    train_hierarchical,
+)
 
 
 def _encode_stage2_for_eval(
@@ -35,10 +39,17 @@ def _encode_stage2_for_eval(
 ) -> np.ndarray:
     """각 행의 (risk_level, yellow_subtype) → STAGE2_LABELS 인덱스.
 
-    Red 는 Stage 2 대상 아님 → -1.
-    Yellow + yellow_subtype 이 STAGE2_LABELS 에 있으면 해당 인덱스.
-    Yellow + Y_OTHER 등 매핑 불가 → No_Alert 인덱스로 폴백.
-    Green / Normal → No_Alert.
+    학습 분포(`stratified_sample_stage2` + `build_stage2_label`)와 정합되게 인코딩한다.
+    학습은 Red·Y_OTHER·subtype 이 유효 YELLOW_SUBTYPE_LABELS 가 아닌 Yellow 를 전부
+    제외(prefilter + ValueError)하고 Green/Normal 만 No_Alert 로 둔다. 평가도 동일해야
+    Stage 2 메트릭이 왜곡되지 않는다.
+
+    - Red → -1 (Stage 1 영역, Stage 2 대상 아님).
+    - Yellow + yellow_subtype ∈ YELLOW_SUBTYPE_LABELS → 해당 인덱스.
+    - Yellow + Y_OTHER / None / 무효 subtype → -1 (mask out). 학습셋에 없는 부류이므로
+      평가에서도 제외한다. (이전: No_Alert 로 폴백 → 학습/평가 분포 불일치 버그.
+      2026-06-02 RCA `docs/reports/2026-06-02_ml_dl_and_diskfull_review.md` B1.)
+    - Green / Normal → No_Alert.
     """
     labels_list = list(stage2_labels)
     no_alert_idx = labels_list.index("No_Alert")
@@ -49,8 +60,10 @@ def _encode_stage2_for_eval(
             return -1
         if rl == "Yellow":
             ys = row.get("yellow_subtype")
-            if ys in labels_list:
+            if ys in YELLOW_SUBTYPE_LABELS:
                 return labels_list.index(ys)
+            # Y_OTHER / None / 무효 subtype 인 Yellow 는 학습이 제외 → 평가도 mask out.
+            return -1
         return no_alert_idx
 
     return df.apply(_enc, axis=1).to_numpy()
