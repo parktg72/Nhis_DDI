@@ -183,16 +183,21 @@ def test_reload_hierarchical_accepts_known(monkeypatch):
 def _write_hier_artifact(root: Path, feature_cols: list[str], *, corrupt_stage1_hash: bool = False) -> Path:
     import json
     import joblib
+    import types
+    import numpy as np
+    from hana_app.core.hierarchical_runner import STAGE2_LABELS
 
     root.mkdir(parents=True, exist_ok=True)
     stage1_path = root / "stage1_red.joblib"
     stage2_path = root / "stage2_yellow.joblib"
     joblib.dump(_FakeSklearnModel(), stage1_path)
+    # 인코더는 학습 관례대로 full STAGE2_LABELS 를 classes_ 로 가진다(라벨 공간 가드 통과용).
+    _encoder = types.SimpleNamespace(classes_=np.array(list(STAGE2_LABELS)))
     joblib.dump(
         {
             "model": _FakeSklearnModel(),
-            "encoder": None,
-            "classes_present": [0, 1],
+            "encoder": _encoder,
+            "classes_present": list(range(len(STAGE2_LABELS))),
         },
         stage2_path,
     )
@@ -202,6 +207,7 @@ def _write_hier_artifact(root: Path, feature_cols: list[str], *, corrupt_stage1_
     meta = {
         "thresholds": {"tau_red": 0.7, "tau_review": 0.3},
         "feature_cols": feature_cols,
+        "stage2_labels": list(STAGE2_LABELS),
         "stage1_sha256": stage1_sha,
         "stage2_sha256": hashlib.sha256(stage2_path.read_bytes()).hexdigest(),
     }
