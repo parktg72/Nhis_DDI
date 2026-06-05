@@ -29,6 +29,7 @@ DEFAULT_OUT = Path("data/processed/edi_to_wk.parquet")
 
 EDI_COL = "제품코드"
 WK_COL = "주성분코드"
+EFMDC_COL = "분류"   # 약효분류번호 (records efmdc_clsf_no 와 99.9% 동일 — dup_efmdc 정합용)
 
 
 def normalize_edi(value) -> str | None:
@@ -64,10 +65,14 @@ def build_edi_wk_map(xlsx_path: str | Path) -> tuple[pd.DataFrame, dict]:
             f"xlsx 에 '{EDI_COL}'/'{WK_COL}' 컬럼 없음. 실제 컬럼: {list(raw.columns)}"
         )
 
-    rows: dict[str, str] = {}
+    has_efmdc = EFMDC_COL in raw.columns
+    efmdc_series = raw[EFMDC_COL] if has_efmdc else [None] * len(raw)
+
+    rows: dict[str, str] = {}            # edi → wk
+    efmdc: dict[str, str] = {}           # edi → efmdc(분류, nullable)
     conflicts: list[tuple[str, str, str]] = []
     n_raw = 0
-    for edi_raw, wk_raw in zip(raw[EDI_COL], raw[WK_COL]):
+    for edi_raw, wk_raw, ef_raw in zip(raw[EDI_COL], raw[WK_COL], efmdc_series):
         edi = normalize_edi(edi_raw)
         wk = normalize_wk(wk_raw)
         if edi is None or wk is None:
@@ -78,6 +83,11 @@ def build_edi_wk_map(xlsx_path: str | Path) -> tuple[pd.DataFrame, dict]:
             rows[edi] = wk
         elif prev != wk:
             conflicts.append((edi, prev, wk))
+        ef = normalize_wk(ef_raw)        # 숫자/문자 그대로, .0 만 정리
+        if ef is not None and ef.endswith(".0"):
+            ef = ef[:-2]
+        if ef is not None:
+            efmdc.setdefault(edi, ef)
 
     if conflicts:
         sample = conflicts[:10]
@@ -85,16 +95,20 @@ def build_edi_wk_map(xlsx_path: str | Path) -> tuple[pd.DataFrame, dict]:
             f"edi→wk 함수 위반: {len(conflicts)}개 edi 가 복수 wk 로 충돌. 예: {sample}"
         )
 
-    df = (
-        pd.DataFrame(sorted(rows.items()), columns=["edi_code", "wk_compn_cd"])
-        if rows else pd.DataFrame(columns=["edi_code", "wk_compn_cd"])
-    )
+    if rows:
+        df = pd.DataFrame(
+            [(edi, wk, efmdc.get(edi)) for edi, wk in sorted(rows.items())],
+            columns=["edi_code", "wk_compn_cd", "efmdc_clsf_no"],
+        )
+    else:
+        df = pd.DataFrame(columns=["edi_code", "wk_compn_cd", "efmdc_clsf_no"])
     meta = {
         "source_xlsx": str(xlsx),
         "source_sha256": hashlib.sha256(xlsx.read_bytes()).hexdigest(),
         "valid_rows": n_raw,
         "unique_edi": len(df),
         "unique_wk": int(df["wk_compn_cd"].nunique()) if len(df) else 0,
+        "edi_with_efmdc": int(df["efmdc_clsf_no"].notna().sum()) if len(df) else 0,
     }
     return df, meta
 

@@ -44,6 +44,20 @@ def test_build_maps_edi_to_wk(tmp_path):
     assert meta["unique_edi"] == 4
     assert meta["unique_wk"] == 3
     assert "source_sha256" in meta
+    assert "efmdc_clsf_no" in df.columns
+
+
+def test_build_captures_efmdc(tmp_path):
+    """분류(약효분류) 컬럼이 있으면 edi→efmdc 도 매핑 (dup_efmdc 정합용)."""
+    xlsx = _write_xlsx(tmp_path, [
+        {"제품코드": 660700010, "주성분코드": "421001ATB", "분류": 239},
+        {"제품코드": 642902720, "주성분코드": "480600ATB", "분류": 114},
+    ])
+    df, meta = B.build_edi_wk_map(xlsx)
+    e = dict(zip(df["edi_code"], df["efmdc_clsf_no"]))
+    assert e["660700010"] == "239"
+    assert e["642902720"] == "114"
+    assert meta["edi_with_efmdc"] == 2
 
 
 def test_build_rejects_edi_conflict(tmp_path):

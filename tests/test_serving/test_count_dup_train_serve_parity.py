@@ -45,7 +45,7 @@ SCENARIOS = [
 ]
 
 _KEYS = ("drug_count", "drug_count_7d", "dup_same_ingredient",
-         "dup_atc5", "dup_atc4", "dup_atc3")
+         "dup_atc5", "dup_atc4", "dup_atc3", "dup_efmdc")
 
 _need_data = pytest.mark.skipif(
     not (MASTER.exists() and DDIMTX.exists() and EDIWK.exists()),
@@ -59,14 +59,20 @@ def _training_feats(drugs) -> dict:
     from scripts.etl.overlap_calculator import calculate_overlaps_for_patient
     from scripts.etl.prescription_aggregator import aggregate_patient_features
 
+    import pandas as pd
+    from scripts.etl.code_standardizer import CodeStandardizer
     M._DRUG_MASTER_CACHE.update({"obj": None, "loaded": False})
     dm = M._load_drug_master()
     ddi_matrix = M._load_ddi_matrix()
     dup_groups = M._load_dup_groups()
+    # 프로덕션 records 는 efmdc_clsf_no 보유(df_row_to_record). HIRA 분류=records efmdc
+    # (99.9% 동일)로 채워 dup_efmdc 가 프로덕션을 반영하게 한다.
+    _emap = pd.read_parquet(EDIWK).set_index("edi_code")["efmdc_clsf_no"].to_dict()
+    _ef = lambda edi: _emap.get(CodeStandardizer._normalize_edi(edi))
     recs = [
         PrescriptionRecord(
             patient_id="P", institution_id="I1", bill_no=f"B{i}",
-            wk_compn_cd=wk, edi_code=edi, start_date=sd,
+            wk_compn_cd=wk, edi_code=edi, efmdc_clsf_no=_ef(edi), start_date=sd,
             end_date=sd + timedelta(days=td - 1), total_days=td, source="T30",
         )
         for i, (wk, edi, sd, td) in enumerate(drugs)

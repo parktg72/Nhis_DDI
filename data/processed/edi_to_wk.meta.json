@@ -3,5 +3,6 @@
   "source_sha256": "c62750cc36f6b9086547a8021d08212200c4d74e99d78a5b2baacc12ca325a43",
   "valid_rows": 21770,
   "unique_edi": 21770,
-  "unique_wk": 4426
+  "unique_wk": 4426,
+  "edi_with_efmdc": 21770
 }
