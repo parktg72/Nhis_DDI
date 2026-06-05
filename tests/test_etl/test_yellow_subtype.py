@@ -75,24 +75,50 @@ def test_single_frag_is_y_frag():
     assert f.yellow_subtype == "Y_FRAG"
 
 
-def test_two_triggers_is_y_mix():
-    """DDI_MAJOR + DUP → Y_MIX (Red 조건은 모두 미충족)."""
+def test_two_dimensions_is_y_double():
+    """상호작용 + 중복 = 2 위험차원 → Y_DOUBLE (Red 조건 미충족)."""
     f = _make(ddi_major=1, dup_same_ingredient=1)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)
     assert f.risk_level == "Yellow"
-    assert f.yellow_subtype == "Y_MIX"
+    assert f.yellow_subtype == "Y_DOUBLE"
 
 
-def test_three_triggers_is_y_mix():
+def test_three_dimensions_is_y_triple():
+    """상호작용 + 중복 + 다기관 = 3 위험차원 → Y_TRIPLE."""
+    f = _make(ddi_major=1, dup_same_ingredient=1, institution_count=3)
+    _assign_risk_level(f)
+    _assign_yellow_subtype(f)
+    assert f.yellow_subtype == "Y_TRIPLE"
+
+
+def test_major_and_mod_collapse_to_one_dimension():
+    """DDI_MAJOR + DDI_MOD 는 같은 '상호작용' 차원 → 1차원 → 단일 Y_DDI_MAJOR
+    (major 우선). 트리거 2개지만 차원은 1개이므로 Y_DOUBLE 아님."""
+    f = _make(ddi_major=1, ddi_moderate=2)
+    _assign_risk_level(f)
+    _assign_yellow_subtype(f)
+    assert f.yellow_subtype == "Y_DDI_MAJOR"
+
+
+def test_interaction_with_frag_is_double_not_triple():
+    """상호작용(major+mod) + 다기관 = 2 차원 → Y_DOUBLE (상호작용 2트리거는 1차원)."""
     f = _make(ddi_major=1, ddi_moderate=2, institution_count=3)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)
-    assert f.yellow_subtype == "Y_MIX"
+    assert f.yellow_subtype == "Y_DOUBLE"
 
 
-def test_y_mix_excluded_when_red():
-    """Red 조건 충족 시 Y_MIX 아닌 None (Red 가 흡수)."""
+def test_all_dimensions_is_y_triple():
+    """4 트리거(상호작용 major+mod + 중복 + 다기관) = 3 차원 → Y_TRIPLE."""
+    f = _make(ddi_major=1, ddi_moderate=2, dup_same_ingredient=1, institution_count=3)
+    _assign_risk_level(f)
+    _assign_yellow_subtype(f)
+    assert f.yellow_subtype == "Y_TRIPLE"
+
+
+def test_count_label_excluded_when_red():
+    """Red 조건 충족 시 계수 라벨 아닌 None (Red 가 흡수)."""
     f = _make(ddi_contraindicated=1, ddi_major=1, dup_same_ingredient=1)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)

@@ -365,9 +365,12 @@ def _assign_risk_level(features: PatientFeatures) -> None:
 def _assign_yellow_subtype(features: PatientFeatures) -> None:
     """Yellow 세분화 (risk_level == 'Yellow' 인 환자 전용).
 
-    Y_MIX 가 Y_DDI_MAJOR 보다 우선한다: 2개 이상 trigger 가 발동하면 '복합 위험'
-    으로 보고 즉시 개입 경로에 올린다. Red 조건이 충족된 환자는 _assign_risk_level
-    이 이미 Red 로 결정했으므로 이 함수가 실행되어도 Yellow 가 아니기에 None.
+    계수(複合) 라벨이 단일 라벨보다 우선한다: **위험 차원** 개수로 분류한다
+    (4대 위험 중 yellow 레벨 = 상호작용·중복·다기관 3차원; 금기는 Red).
+    상호작용(DDI_MAJOR|DDI_MOD)은 한 차원으로 묶는다 → major+mod 동시발동도 1차원.
+    3차원=Y_TRIPLE, 2차원=Y_DOUBLE, 1차원=해당 단일 라벨로 개입 강도를 구분.
+    Red 조건이 충족된 환자는 _assign_risk_level 이 이미 Red 로 결정했으므로
+    이 함수가 실행되어도 Yellow 가 아니기에 None.
 
     규칙 드리프트 엣지 (risk_level=Yellow 인데 trigger 집합이 빔) 는 RuntimeError
     대신 Y_OTHER 폴백 + 경고 로그로 처리 (ETL 파이프라인 중단 방지).
@@ -379,20 +382,27 @@ def _assign_yellow_subtype(features: PatientFeatures) -> None:
         return
 
     triggers = collect_yellow_triggers(features)
-    if len(triggers) >= 2:
-        features.yellow_subtype = "Y_MIX"
+    # 계수는 trigger 가 아니라 **위험 차원** 개수로 센다(4대 위험 기준).
+    # 상호작용(DDI_MAJOR|DDI_MOD)은 한 차원으로 묶이므로 major+mod 동시발동도 1.
+    interaction = "DDI_MAJOR" in triggers or "DDI_MOD" in triggers
+    duplication = "DUP" in triggers
+    multi_inst = "FRAG" in triggers
+    dim_count = int(interaction) + int(duplication) + int(multi_inst)
+
+    if dim_count >= 3:
+        features.yellow_subtype = "Y_TRIPLE"
         return
-    if triggers == {"DDI_MAJOR"}:
-        features.yellow_subtype = "Y_DDI_MAJOR"
+    if dim_count == 2:
+        features.yellow_subtype = "Y_DOUBLE"
         return
-    if triggers == {"DDI_MOD"}:
-        features.yellow_subtype = "Y_DDI_MOD"
-        return
-    if triggers == {"DUP"}:
-        features.yellow_subtype = "Y_DUP"
-        return
-    if triggers == {"FRAG"}:
-        features.yellow_subtype = "Y_FRAG"
+    if dim_count == 1:
+        if interaction:
+            # 상호작용 단일 차원 — major 가 mod 보다 우선(더 중한 신호).
+            features.yellow_subtype = "Y_DDI_MAJOR" if "DDI_MAJOR" in triggers else "Y_DDI_MOD"
+        elif duplication:
+            features.yellow_subtype = "Y_DUP"
+        else:  # multi_inst
+            features.yellow_subtype = "Y_FRAG"
         return
 
     logging.getLogger(__name__).warning(

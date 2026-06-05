@@ -138,7 +138,7 @@ class PredictResponse(BaseModel):
     # 계층 분류 (Stage 1 Red + Stage 2 Yellow-subtype) 확장 필드
     yellow_subtype: Optional[str]         = Field(
         None,
-        description="Yellow 세부 라벨 (Y_MIX/Y_DDI_MAJOR/Y_DDI_MOD/Y_DUP/Y_FRAG/Y_OTHER) — 계층 모드에서만 채워짐",
+        description="Yellow 세부 라벨 (Y_TRIPLE/Y_DOUBLE/Y_DDI_MAJOR/Y_DDI_MOD/Y_DUP/Y_FRAG/Y_OTHER) — 계층 모드에서만 채워짐",
     )
     stage2_probs:   Optional[dict[str, float]] = Field(
         None,
@@ -150,7 +150,7 @@ class PredictResponse(BaseModel):
     )
     action:         Optional[str] = Field(
         None,
-        description="세부 라벨별 개입 액션 (Y_MIX/Y_DDI_MAJOR=약사 전화, Y_DDI_MOD/Y_DUP/Y_FRAG=문자 알림 등)",
+        description="세부 라벨별 개입 액션 (Y_TRIPLE/Y_DDI_MAJOR=의료인 전화, Y_DOUBLE/Y_DDI_MOD/Y_FRAG=문자 알림, Y_DUP=문서+문자 등)",
     )
     dl_prediction:  Optional[DLPredictionResult] = Field(
         None,

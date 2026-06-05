@@ -26,7 +26,7 @@ if str(_ROOT) not in sys.path:
 from scripts.etl.clinical_rules import CLINICAL_STANDARDS_VERSION  # noqa: E402
 
 YELLOW_SUBTYPE_LABELS: tuple[str, ...] = (
-    "Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG",
+    "Y_TRIPLE", "Y_DOUBLE", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG",
 )
 STAGE2_LABELS: tuple[str, ...] = YELLOW_SUBTYPE_LABELS + ("No_Alert",)
 
@@ -625,9 +625,19 @@ def train_hierarchical(
     }
 
 
+# Red 권장 개입 — Red 는 stage2 라벨이 아니라 risk_level/Stage1 로 분기하므로
+# ACTION_BY_LABEL 에 없고, _dispatch_result(확정 Red)와 결과분석 개입 분포가 공유한다.
+RED_ACTION: str = "즉각 개입"
+
+# Yellow 세부 라벨별 권장 개입.
+# 계수 기반(Y_TRIPLE/Y_DOUBLE)은 위험 차원 개수로 개입 강도를 구분한다:
+#   Y_TRIPLE(3차원) → 의료인 전화, Y_DOUBLE(2차원) → 문자 알림.
+# 단일 차원이라도 major 상호작용(Y_DDI_MAJOR)은 임상 중대성이 커 의료인 전화로
+# 상향(단일 major 가 Y_DOUBLE 보다 약해지는 역전 방지). 나머지 단일 라벨은 문자/문서.
 ACTION_BY_LABEL: dict[str, str] = {
-    "Y_MIX":        "약사 전화 (즉시)",
-    "Y_DDI_MAJOR":  "약사 전화",
+    "Y_TRIPLE":     "의료인 전화",
+    "Y_DOUBLE":     "문자 알림",
+    "Y_DDI_MAJOR":  "의료인 전화",
     "Y_DDI_MOD":    "문자 알림",
     "Y_DUP":        "문서 + 문자 알림",
     "Y_FRAG":       "문자 알림",
@@ -654,7 +664,7 @@ def _dispatch_result(
             "p_red": float(p_red),
             "stage2_probs": None,
             "red_suspect": False,
-            "action": "응급 개입",
+            "action": RED_ACTION,
         }
     if stage2_probs is None:
         raise ValueError(

@@ -20,7 +20,7 @@ def _make_parquet(tmp_path: Path) -> Path:
     for i in range(10):
         rows.append({"patient_id": f"R{i}", "risk_level": "Red",
                      "yellow_subtype": None, "feat1": 0.5})
-    for sub in ("Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"):
+    for sub in ("Y_TRIPLE", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"):
         for i in range(20):
             rows.append({"patient_id": f"{sub}_{i}", "risk_level": "Yellow",
                          "yellow_subtype": sub, "feat1": 0.5})
@@ -53,14 +53,14 @@ def test_stage2_sampling_covers_all_yellow_subtypes(tmp_path):
     sample = stratified_sample_stage2(parquet, sample_size=100, seed=42)
     subtypes_in_sample = set(sample["stage2_label"].unique()) - {"No_Alert"}
     # 5 Yellow 서브라벨 모두 최소 1건 이상 (각 20건 모집단에서 층화 추출)
-    assert subtypes_in_sample == {"Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"}
+    assert subtypes_in_sample == {"Y_TRIPLE", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"}
 
 
 def test_stage2_sampling_excludes_y_other(tmp_path):
     """Y_OTHER 는 학습셋에서 제외."""
     df = pd.DataFrame([
         {"patient_id": f"Y{i}", "risk_level": "Yellow",
-         "yellow_subtype": "Y_OTHER" if i < 5 else "Y_MIX",
+         "yellow_subtype": "Y_OTHER" if i < 5 else "Y_TRIPLE",
          "feat1": 0.5}
         for i in range(20)
     ])

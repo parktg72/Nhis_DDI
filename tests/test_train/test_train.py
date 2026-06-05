@@ -152,7 +152,7 @@ class TestTrainDataset:
             "window_start":  ["2026-01-01"] * 20,
             "window_end":    ["2026-03-31"] * 20,
             "risk_level":    (["Red"] * 5 + ["Yellow"] * 10 + ["Normal"] * 5),
-            "yellow_subtype": ([None] * 5 + ["Y_DDI_MAJOR"] * 5 + ["Y_MIX"] * 5 + [None] * 5),
+            "yellow_subtype": ([None] * 5 + ["Y_DDI_MAJOR"] * 5 + ["Y_TRIPLE"] * 5 + [None] * 5),
             "drug_count":    [5] * 20,
             "ddi_major":     [1] * 20,
         })

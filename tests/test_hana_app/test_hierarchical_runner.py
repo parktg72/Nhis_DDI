@@ -22,16 +22,16 @@ from hana_app.core.hierarchical_runner import (
 
 
 def test_yellow_subtype_labels_constant():
-    assert YELLOW_SUBTYPE_LABELS == ("Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG")
+    assert YELLOW_SUBTYPE_LABELS == ("Y_TRIPLE", "Y_DOUBLE", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG")
 
 
 def test_stage2_labels_includes_no_alert():
-    assert STAGE2_LABELS == ("Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG", "No_Alert")
-    assert len(STAGE2_LABELS) == 6
+    assert STAGE2_LABELS == ("Y_TRIPLE", "Y_DOUBLE", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG", "No_Alert")
+    assert len(STAGE2_LABELS) == 7
 
 
 def test_build_stage2_label_yellow_subtype():
-    assert build_stage2_label(risk_level="Yellow", yellow_subtype="Y_MIX") == "Y_MIX"
+    assert build_stage2_label(risk_level="Yellow", yellow_subtype="Y_TRIPLE") == "Y_TRIPLE"
     assert build_stage2_label(risk_level="Yellow", yellow_subtype="Y_DDI_MAJOR") == "Y_DDI_MAJOR"
 
 
@@ -52,7 +52,7 @@ def test_build_stage2_label_unknown_risk_level_raises():
         build_stage2_label(risk_level="Unknown", yellow_subtype=None)
 
     with pytest.raises(ValueError, match="유효하지 않은 risk_level"):
-        build_stage2_label(risk_level="yellow", yellow_subtype="Y_MIX")  # 대소문자 오염
+        build_stage2_label(risk_level="yellow", yellow_subtype="Y_TRIPLE")  # 대소문자 오염
 
     with pytest.raises(ValueError, match="유효하지 않은 risk_level"):
         build_stage2_label(risk_level="", yellow_subtype=None)
@@ -65,7 +65,7 @@ def test_build_stage2_label_y_other_is_excluded():
 
 
 def test_encode_decode_roundtrip():
-    labels = ["Y_MIX", "No_Alert", "Y_DUP", "Y_MIX", "Y_FRAG"]
+    labels = ["Y_TRIPLE", "No_Alert", "Y_DUP", "Y_TRIPLE", "Y_FRAG"]
     y, encoder = encode_stage2_labels(labels)
     assert y.dtype.kind == "i"
     assert len(y) == 5
@@ -77,7 +77,7 @@ def test_encode_decode_roundtrip():
 
 def test_encode_preserves_class_order_across_inputs():
     """입력 분포가 달라도 classes_ 순서는 STAGE2_LABELS 고정."""
-    y1, enc1 = encode_stage2_labels(["Y_MIX", "No_Alert"])
+    y1, enc1 = encode_stage2_labels(["Y_TRIPLE", "No_Alert"])
     y2, enc2 = encode_stage2_labels(["No_Alert", "Y_DUP"])
     assert list(enc1.classes_) == list(STAGE2_LABELS)
     assert list(enc2.classes_) == list(STAGE2_LABELS)
@@ -197,7 +197,7 @@ def test_train_hierarchical_returns_two_models(tmp_path):
                        ["Green"] * 150 + ["Normal"] * 225),
         "yellow_subtype": (
             [None] * 25
-            + ["Y_MIX"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
+            + ["Y_TRIPLE"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
             + ["Y_DUP"] * 25 + ["Y_FRAG"] * 20
             + [None] * 375
         ),
@@ -237,7 +237,7 @@ def test_train_hierarchical_excludes_y_other_from_stage2(tmp_path):
         "yellow_subtype": (
             [None] * 10
             + ["Y_OTHER"] * 20   # 학습셋에서 빠져야 함
-            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_TRIPLE"] * 20 + ["Y_DDI_MAJOR"] * 20
             + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 20
             + [None] * 190
         ),
@@ -271,7 +271,7 @@ def test_train_hierarchical_local_global_remapping_roundtrip(tmp_path):
         "risk_level": (["Red"] * 10 + ["Yellow"] * 80 + ["Normal"] * 110),
         "yellow_subtype": (
             [None] * 10
-            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_TRIPLE"] * 20 + ["Y_DDI_MAJOR"] * 20
             + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 20  # Y_FRAG 없음
             + [None] * 110
         ),
@@ -284,8 +284,8 @@ def test_train_hierarchical_local_global_remapping_roundtrip(tmp_path):
     bundle = joblib.load(tmp_path / "stage2_yellow.joblib")
     assert "classes_present" in bundle
     classes_present = bundle["classes_present"]
-    # Y_FRAG 의 global index(4) 는 포함되지 않아야 함
-    assert 4 not in classes_present
+    # Y_FRAG 의 global index(5, STAGE2_LABELS 재정렬 후) 는 포함되지 않아야 함
+    assert 5 not in classes_present
 
     # 로컬 인덱스 → 전역 라벨 복원
     local_to_global_labels = [STAGE2_LABELS[g] for g in classes_present]
@@ -307,7 +307,7 @@ def test_train_hierarchical_cost_sensitive_with_missing_class(tmp_path):
         "risk_level": (["Red"] * 10 + ["Yellow"] * 80 + ["Normal"] * 110),
         "yellow_subtype": (
             [None] * 10
-            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_TRIPLE"] * 20 + ["Y_DDI_MAJOR"] * 20
             + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 20  # Y_FRAG 없음
             + [None] * 110
         ),
@@ -328,8 +328,8 @@ def test_train_hierarchical_cost_sensitive_with_missing_class(tmp_path):
 
 def test_dispatch_no_alert_action():
     from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
-    # 마지막 원소 No_Alert 가 가장 높음
-    probs = np.array([0.05, 0.05, 0.05, 0.05, 0.05, 0.75])
+    # 마지막 원소 No_Alert 가 가장 높음 (STAGE2_LABELS 7-class)
+    probs = np.array([0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.70])
     r = _dispatch_result(
         p_red=0.05, stage2_probs=probs, stage2_labels=STAGE2_LABELS,
         tau_red=0.7, tau_review=0.3,
@@ -346,21 +346,21 @@ def test_dispatch_red_confirmed_above_tau_red():
     )
     assert r["risk_level"] == "Red"
     assert r["red_suspect"] is False
-    assert r["action"] == "응급 개입"
+    assert r["action"] == "즉각 개입"
     assert r["stage2_probs"] is None
 
 
 def test_dispatch_red_suspect_between_thresholds():
     """τ_review ≤ P(Red) < τ_red → Stage 2 출력 + red_suspect=True."""
     from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
-    probs = np.array([0.6, 0.1, 0.1, 0.1, 0.05, 0.05])  # Y_MIX
+    probs = np.array([0.6, 0.1, 0.1, 0.05, 0.05, 0.05, 0.05])  # index0 = Y_TRIPLE
     r = _dispatch_result(
         p_red=0.5, stage2_probs=probs, stage2_labels=STAGE2_LABELS,
         tau_red=0.7, tau_review=0.3,
     )
-    assert r["risk_level"] == "Y_MIX"
+    assert r["risk_level"] == "Y_TRIPLE"
     assert r["red_suspect"] is True
-    assert "약사 전화" in r["action"]
+    assert "의료인 전화" in r["action"]
 
 
 def test_predict_risk_end_to_end(tmp_path):
@@ -378,8 +378,8 @@ def test_predict_risk_end_to_end(tmp_path):
                        ["Green"] * 150 + ["Normal"] * 225),
         "yellow_subtype": (
             [None] * 25
-            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20 + ["Y_DDI_MOD"] * 20
-            + ["Y_DUP"] * 20 + ["Y_FRAG"] * 20
+            + ["Y_TRIPLE"] * 20 + ["Y_DOUBLE"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 10 + ["Y_FRAG"] * 10
             + [None] * 375
         ),
     })
@@ -419,7 +419,7 @@ def test_predict_risk_with_missing_class_uses_classes_present(tmp_path):
         "risk_level": (["Red"] * 10 + ["Yellow"] * 100 + ["Normal"] * 190),
         "yellow_subtype": (
             [None] * 10
-            + ["Y_MIX"] * 25 + ["Y_DDI_MAJOR"] * 25
+            + ["Y_TRIPLE"] * 25 + ["Y_DDI_MAJOR"] * 25
             + ["Y_DDI_MOD"] * 25 + ["Y_DUP"] * 25  # Y_FRAG 없음
             + [None] * 190
         ),
@@ -431,8 +431,8 @@ def test_predict_risk_with_missing_class_uses_classes_present(tmp_path):
     # 저장된 번들에서 classes_present 복원
     stage2_bundle = joblib.load(tmp_path / "stage2_yellow.joblib")
     classes_present = stage2_bundle["classes_present"]
-    # Y_FRAG 의 global index=4 는 포함되지 않아야 함
-    assert 4 not in classes_present
+    # Y_FRAG 의 global index=5 (STAGE2_LABELS 재정렬 후) 는 포함되지 않아야 함
+    assert 5 not in classes_present
 
     # 명시적 classes_present 로 predict_risk 호출
     X = df[["feat_a", "feat_b"]].iloc[:20].to_numpy()
@@ -496,9 +496,13 @@ def test_end_to_end_train_predict(tmp_path):
     # Red (30)
     for _ in range(30):
         features.append(_ft(ddi_contraindicated=1, drug_count=rng.randint(3, 8)))
-    # Y_MIX (30)
+    # Y_DOUBLE (30) — yellow 요소 2개 (DDI_MAJOR + DUP)
     for _ in range(30):
         features.append(_ft(ddi_major=1, dup_same_ingredient=1,
+                             drug_count=rng.randint(3, 8)))
+    # Y_TRIPLE (30) — 3 위험차원 (상호작용 + 중복 + 다기관)
+    for _ in range(30):
+        features.append(_ft(ddi_major=1, dup_same_ingredient=1, institution_count=3,
                              drug_count=rng.randint(3, 8)))
     # Y_DDI_MAJOR (30)
     for _ in range(30):
@@ -527,7 +531,8 @@ def test_end_to_end_train_predict(tmp_path):
     # 검증: risk_level 과 yellow_subtype 이 올바르게 채워졌는지
     assert (df["risk_level"] == "Red").sum() == 30
     assert df.loc[df["risk_level"] == "Yellow", "yellow_subtype"].notna().all()
-    assert (df["yellow_subtype"] == "Y_MIX").sum() == 30
+    assert (df["yellow_subtype"] == "Y_DOUBLE").sum() == 30
+    assert (df["yellow_subtype"] == "Y_TRIPLE").sum() == 30
 
     feature_cols = ["drug_count", "ddi_major", "ddi_moderate",
                     "dup_same_ingredient", "institution_count"]
@@ -572,7 +577,7 @@ def test_end_to_end_meta_has_clinical_standards_version(tmp_path):
         "risk_level": (["Red"] * 10 + ["Yellow"] * 80 + ["Normal"] * 110),
         "yellow_subtype": (
             [None] * 10
-            + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_TRIPLE"] * 20 + ["Y_DDI_MAJOR"] * 20
             + ["Y_DDI_MOD"] * 20 + ["Y_DUP"] * 20
             + [None] * 110
         ),
@@ -596,7 +601,7 @@ def _no_red_df(n=400, seed=0):
     rng = np.random.default_rng(seed)
     n_green = 40
     n_yellow = n - n_green
-    ysub = (["Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"] * ((n_yellow // 5) + 1))[:n_yellow]
+    ysub = (["Y_TRIPLE", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"] * ((n_yellow // 5) + 1))[:n_yellow]
     return pd.DataFrame({
         "patient_id": [f"P{i}" for i in range(n)],
         "feat_a": rng.random(n),
