@@ -384,22 +384,38 @@ def _flush_features_to_parquet(
 
 
 def load_features_from_parquet(
-    parquet_path: "str | Path",
+    parquet_path: "str | Path | list[str | Path]",
     columns: list[str] | None = None,
     memory_limit_mb: int = 0,
 ) -> pd.DataFrame:
-    """DuckDB로 피처 Parquet 읽기 (디스크 스필 지원). 단일 파일 또는 glob."""
-    p = Path(parquet_path)
+    """DuckDB로 피처 Parquet 읽기 (디스크 스필 지원).
+
+    `parquet_path` 는 단일 파일/ glob 문자열, 또는 **여러 파일 경로의 리스트**를
+    받는다 (다운로드 Raw / 디스크기반 피처빌드는 배치당 Parquet 한 개씩 → list 반환).
+    DuckDB `read_parquet([...])` 는 파일 목록을 네이티브로 지원한다.
+    """
     mem = max(256, (memory_limit_mb // 2) if memory_limit_mb > 0 else PROCESS_MEMORY_LIMIT_MB // 2)
     cols = ", ".join(columns) if columns else "*"
 
+    is_list = isinstance(parquet_path, (list, tuple))
+    if is_list and not parquet_path:
+        raise ValueError("load_features_from_parquet: 빈 경로 리스트")
+
     if _duckdb_available():
-        # glob 패턴 또는 단일 파일
-        pattern = p.as_posix()
+        if is_list:
+            posix = [Path(x).as_posix() for x in parquet_path]
+            src = "[" + ", ".join(f"'{x}'" for x in posix) + "]"  # read_parquet(['a','b'])
+        else:
+            src = f"'{Path(parquet_path).as_posix()}'"            # 단일 파일/glob
         with _duck_con(memory_limit_mb=mem) as con:
-            return con.execute(f"SELECT {cols} FROM read_parquet('{pattern}')").df()
+            return con.execute(f"SELECT {cols} FROM read_parquet({src})").df()
     else:
-        return pd.read_parquet(p, columns=columns)
+        if is_list:
+            return pd.concat(
+                [pd.read_parquet(x, columns=columns) for x in parquet_path],
+                ignore_index=True,
+            )
+        return pd.read_parquet(Path(parquet_path), columns=columns)
 
 
 # ── 피처 Parquet 디렉토리 ────────────────────────────────────────────────
