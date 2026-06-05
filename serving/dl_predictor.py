@@ -14,6 +14,8 @@ import pickle
 from pathlib import Path
 from typing import Any, Optional
 
+import pandas as pd
+
 from config import settings
 from scripts.datasets.contracts import (
     validate_dl_bundle_manifest,
@@ -24,7 +26,9 @@ from serving.hana_history import validate_history_frame
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_ENCODING_STRATEGIES = {"multi_hot", "count"}
+# 학습측 인코더는 multi_hot 만 존재한다(scripts/ops/multihot_encoder). "count" 는
+# 학습 경로가 전무한 dead infra 였어 오설정 번들이 조용히 수용되는 것을 막기 위해 제거.
+_SUPPORTED_ENCODING_STRATEGIES = {"multi_hot"}
 _GRAPH_ARCHITECTURES = {"gat", "gcn"}
 
 
@@ -267,6 +271,16 @@ class DLModel:
                     f"drug_vocab index out of range for {code!r}: {idx}"
                 )
             vocab[str(code)] = idx
+        # 운영 vocab(scripts/ops/build_drug_vocab)은 항상 "_unk"(index 0)를 포함한다.
+        # _unk 가 없으면 _encode_history 가 OOV 약물을 조용히 드롭하므로(하위호환 경로),
+        # 적어도 1회 경고를 남겨 silent train/serve skew 를 가시화한다. raise 하지 않는 이유:
+        # _unk 없는 구형/토이 번들 하위호환을 유지(테스트 명시)하기 위함.
+        if "_unk" not in vocab:
+            logger.warning(
+                "drug_vocab has no '_unk' token (%s): OOV drugs will be dropped "
+                "silently instead of mapped to the _unk dimension",
+                path,
+            )
         return vocab
 
     def _encode_history(self, history_df) -> tuple[list[float], int, int]:
@@ -276,18 +290,29 @@ class DLModel:
         features = [0.0] * int(self._model_config["input_dim"])
         known_count = 0
         unknown_count = 0
+        # train/serve OOV 정합: 학습 인코더(scripts/ops/multihot_encoder.encode_patient_history)는
+        # 미지 약물을 vocab["_unk"] 차원에 반영한다. _unk 가 vocab 에 있으면 서빙도 동일하게
+        # 반영해 silent skew 를 막는다. _unk 없는 구형/토이 번들은 종전처럼 무시(하위호환).
+        unk_idx = self._drug_vocab.get("_unk")
         for raw_code in history_df["drug_code"]:
+            # 학습 인코더(_normalized_drug_codes)는 dropna 후 strip·빈값 제거한다.
+            # None/np.nan/pd.NA 를 pd.isna 로 정확히 걸러 동일 동작을 보장한다.
+            if pd.isna(raw_code):
+                continue
             code = str(raw_code).strip()
+            if not code:
+                continue
             idx = self._drug_vocab.get(code)
             if idx is None:
                 unknown_count += 1
-                continue
-            known_count += 1
+                idx = unk_idx
+                if idx is None:
+                    continue  # 구형 번들(_unk 미포함): 미지 약물 무시
+            else:
+                known_count += 1
             if strategy == "multi_hot":
                 features[idx] = 1.0
-            elif strategy == "count":
-                features[idx] += 1.0
-            else:  # defensive; validated when loading model_config.
+            else:  # defensive; _load_model_config 가 encoding_strategy 를 검증한다.
                 raise ValueError(f"unsupported DL encoding_strategy: {strategy!r}")
         return features, known_count, unknown_count
 
