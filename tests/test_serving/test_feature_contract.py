@@ -21,6 +21,7 @@ def _write_model(tmp_path, feature_names):
     # Codex 2026-05-07 #2 — sidecar hash 검증 정책 적용 후 scaler_path/selector_path
     # 명시 시 sidecar 무결성 검증 필수. 본 테스트는 feature_names 정렬만 보는 거라
     # sidecar 의존성 제거 (정상 sidecar 케이스는 test_sidecar_hash.py 별도 검증).
+    from scripts.etl.prescription_aggregator import DDI_FEATURE_SEMANTICS_VERSION
     payload = {
         "model": _FakeModel(),
         "params": {},
@@ -29,6 +30,8 @@ def _write_model(tmp_path, feature_names):
         "trainer_class": "XGBoostTrainer",
         "artifact_version": 2,
         "feature_names": feature_names,
+        # Q5: ddi_* 피처 모델은 DDI 시맨틱 버전 스탬프 필요(없으면 로드 거부).
+        "ddi_feature_semantics_version": DDI_FEATURE_SEMANTICS_VERSION,
     }
     content = pickle.dumps(payload)
     path.write_bytes(content)
