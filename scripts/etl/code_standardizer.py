@@ -134,6 +134,34 @@ class CodeStandardizer:
             return None, None
         return entry.get("atc_code"), entry.get("drug_name")
 
+    def lookup_wk(self, wk_compn_cd: str) -> tuple[Optional[str], Optional[str]]:
+        """WK_COMPN_CD 기반으로 ATC 코드 및 약물명 조회 (EDI 매핑 실패 시 폴백)."""
+        if not wk_compn_cd:
+            return None, None
+
+        # 1. 주성분코드 → DDI ID(들) 조회
+        ddi_ids = self._master.get_ddi_ids(wk_compn_cd)
+        if not ddi_ids:
+            return None, None
+
+        # 2. 모든 ddi_id에 대해 매핑되는 ATC 및 약물명 수집
+        atc_list = []
+        name_list = []
+        for dbid in ddi_ids:
+            entry = self._edi_map.get(dbid)
+            if entry:
+                atc = entry.get("atc_code")
+                name = entry.get("drug_name")
+                if atc:
+                    atc_list.append(atc)
+                if name:
+                    name_list.append(name)
+
+        if atc_list:
+            return ",".join(atc_list), name_list[0] if name_list else None
+
+        return None, None
+
     def standardize(self, df: pd.DataFrame, edi_col: str = "MCARE_DIV_CD") -> pd.DataFrame:
         """
         DataFrame에 atc_code, drug_name 컬럼 추가 (EDI→ATC 레거시 경로).
@@ -141,11 +169,29 @@ class CodeStandardizer:
         """
         if edi_col not in df.columns:
             raise ValueError(f"컬럼 '{edi_col}' 없음")
+
+        wk_col = None
+        for col in ("WK_COMPN_CD", "RVSN_WK_COMPN_CD"):
+            if col in df.columns:
+                wk_col = col
+                break
+
         atc_codes, drug_names = [], []
-        for code in df[edi_col].astype(str):
-            atc, name = self.lookup_edi(code)
-            atc_codes.append(atc)
-            drug_names.append(name)
+        if wk_col:
+            for edi, wk in zip(df[edi_col].astype(str), df[wk_col].astype(str)):
+                atc, name = self.lookup_edi(edi)
+                if not atc or atc == "None" or atc == "nan":
+                    atc_fb, name_fb = self.lookup_wk(wk)
+                    if atc_fb:
+                        atc, name = atc_fb, name_fb
+                atc_codes.append(atc)
+                drug_names.append(name)
+        else:
+            for code in df[edi_col].astype(str):
+                atc, name = self.lookup_edi(code)
+                atc_codes.append(atc)
+                drug_names.append(name)
+
         out = df.copy()
         out["atc_code"] = atc_codes
         out["drug_name"] = drug_names
