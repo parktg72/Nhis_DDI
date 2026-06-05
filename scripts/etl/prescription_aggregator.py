@@ -365,9 +365,10 @@ def _assign_risk_level(features: PatientFeatures) -> None:
 def _assign_yellow_subtype(features: PatientFeatures) -> None:
     """Yellow 세분화 (risk_level == 'Yellow' 인 환자 전용).
 
-    Y_MIX 가 Y_DDI_MAJOR 보다 우선한다: 2개 이상 trigger 가 발동하면 '복합 위험'
-    으로 보고 즉시 개입 경로에 올린다. Red 조건이 충족된 환자는 _assign_risk_level
-    이 이미 Red 로 결정했으므로 이 함수가 실행되어도 Yellow 가 아니기에 None.
+    계수(複合) 라벨이 단일 라벨보다 우선한다: yellow trigger 가 3개 이상이면
+    Y_TRIPLE, 정확히 2개면 Y_DOUBLE 로 분류해 개입 강도를 개수로 구분한다.
+    Red 조건이 충족된 환자는 _assign_risk_level 이 이미 Red 로 결정했으므로
+    이 함수가 실행되어도 Yellow 가 아니기에 None.
 
     규칙 드리프트 엣지 (risk_level=Yellow 인데 trigger 집합이 빔) 는 RuntimeError
     대신 Y_OTHER 폴백 + 경고 로그로 처리 (ETL 파이프라인 중단 방지).
@@ -379,8 +380,11 @@ def _assign_yellow_subtype(features: PatientFeatures) -> None:
         return
 
     triggers = collect_yellow_triggers(features)
-    if len(triggers) >= 2:
-        features.yellow_subtype = "Y_MIX"
+    if len(triggers) >= 3:
+        features.yellow_subtype = "Y_TRIPLE"
+        return
+    if len(triggers) == 2:
+        features.yellow_subtype = "Y_DOUBLE"
         return
     if triggers == {"DDI_MAJOR"}:
         features.yellow_subtype = "Y_DDI_MAJOR"

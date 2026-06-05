@@ -26,7 +26,7 @@ if str(_ROOT) not in sys.path:
 from scripts.etl.clinical_rules import CLINICAL_STANDARDS_VERSION  # noqa: E402
 
 YELLOW_SUBTYPE_LABELS: tuple[str, ...] = (
-    "Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG",
+    "Y_TRIPLE", "Y_DOUBLE", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG",
 )
 STAGE2_LABELS: tuple[str, ...] = YELLOW_SUBTYPE_LABELS + ("No_Alert",)
 
@@ -625,8 +625,14 @@ def train_hierarchical(
     }
 
 
+# Yellow 세부 라벨별 권장 개입.
+# 계수 기반(Y_TRIPLE/Y_DOUBLE)은 yellow 요소 개수로 개입 강도를 구분한다:
+#   Y_TRIPLE(요소 3개+) → 의료인 전화, Y_DOUBLE(요소 2개) → 문자 알림.
+# 단일 요소 라벨(Y_DDI_MAJOR 등)은 기존 임상 매핑 유지 — Red 는 stage2 라벨이
+# 아니라 risk_level 로 분기하므로 여기 없고, 표시단에서 "즉각 개입"(RED_ACTION)으로 합산.
 ACTION_BY_LABEL: dict[str, str] = {
-    "Y_MIX":        "약사 전화 (즉시)",
+    "Y_TRIPLE":     "의료인 전화",
+    "Y_DOUBLE":     "문자 알림",
     "Y_DDI_MAJOR":  "약사 전화",
     "Y_DDI_MOD":    "문자 알림",
     "Y_DUP":        "문서 + 문자 알림",

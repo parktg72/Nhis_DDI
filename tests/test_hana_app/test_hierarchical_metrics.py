@@ -122,7 +122,7 @@ def test_compute_hierarchical_metrics_merges():
     y1_true = np.array([0, 1, 0, 1])
     p1_red = np.array([0.1, 0.9, 0.2, 0.85])
     # non-Red 서브셋 (y1_true==0) 에 대해서만 Stage 2
-    y2_true = np.array([5, 0])  # No_Alert, Y_MIX
+    y2_true = np.array([5, 0])  # No_Alert, Y_TRIPLE
     y2_pred = np.array([5, 0])
     rep = compute_hierarchical_metrics(y1_true, p1_red, y2_true, y2_pred)
     assert "stage1" in rep
@@ -235,7 +235,7 @@ def test_evaluate_hierarchical_bundle_roundtrip(tmp_path):
                        + ["Green"] * 150 + ["Normal"] * 225),
         "yellow_subtype": (
             [None] * 25
-            + ["Y_MIX"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
+            + ["Y_TRIPLE"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
             + ["Y_DUP"] * 25 + ["Y_FRAG"] * 20
             + [None] * 375
         ),

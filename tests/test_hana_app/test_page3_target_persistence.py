@@ -41,7 +41,7 @@ def _make_saved_dataset(tmp_name: str) -> Path:
     levels = rng.choice(["Red", "Yellow", "Green", "Normal"], size=n, p=[0.15, 0.35, 0.25, 0.25])
     ysub = np.where(
         levels == "Yellow",
-        rng.choice(["Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG", "Y_OTHER"], size=n),
+        rng.choice(["Y_TRIPLE", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG", "Y_OTHER"], size=n),
         None,
     )
     data = {c: rng.integers(0, 10, size=n).astype(float) for c in FEATURE_COLS}

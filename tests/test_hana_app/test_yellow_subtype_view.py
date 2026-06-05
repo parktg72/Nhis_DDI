@@ -11,8 +11,10 @@ import pytest
 
 from hana_app.core.hierarchical_runner import ACTION_BY_LABEL
 from hana_app.core.yellow_subtype_view import (
+    RED_ACTION,
     YELLOW_SUBTYPE_COLORS,
     count_red_suspect,
+    summarize_actions,
     summarize_yellow_subtypes,
 )
 
@@ -37,7 +39,7 @@ def test_summarize_empty_when_all_null():
 def test_summarize_counts_and_actions():
     df = pd.DataFrame({
         "yellow_subtype": (
-            ["Y_MIX"] * 3
+            ["Y_TRIPLE"] * 3
             + ["Y_DDI_MAJOR"] * 2
             + ["Y_DDI_MOD"] * 5
             + ["Y_DUP"] * 1
@@ -49,7 +51,7 @@ def test_summarize_counts_and_actions():
     assert len(out) == 4
     counts_by_label = dict(zip(out["yellow_subtype"], out["count"]))
     assert counts_by_label == {
-        "Y_MIX": 3,
+        "Y_TRIPLE": 3,
         "Y_DDI_MAJOR": 2,
         "Y_DDI_MOD": 5,
         "Y_DUP": 1,
@@ -63,14 +65,51 @@ def test_summarize_counts_and_actions():
 
 def test_summarize_includes_y_other_when_present():
     """Y_OTHER 는 학습 제외지만 분포 표시 시점에는 포함되어야 (드리프트 가시화)."""
-    df = pd.DataFrame({"yellow_subtype": ["Y_OTHER"] * 3 + ["Y_MIX"] * 1})
+    df = pd.DataFrame({"yellow_subtype": ["Y_OTHER"] * 3 + ["Y_TRIPLE"] * 1})
     out = summarize_yellow_subtypes(df)
     labels = set(out["yellow_subtype"])
     assert "Y_OTHER" in labels
-    assert "Y_MIX" in labels
+    assert "Y_TRIPLE" in labels
     # ACTION_BY_LABEL 에 Y_OTHER 없음 → 기본값 "알림 없음"
     action_by_label = dict(zip(out["yellow_subtype"], out["action"]))
     assert action_by_label["Y_OTHER"] == "알림 없음"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# summarize_actions — Red("즉각 개입") + Yellow 개입 합산
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_summarize_actions_includes_red():
+    """Red(risk_level=='Red') 가 '즉각 개입' 으로 개입 분포에 합산된다."""
+    df = pd.DataFrame({
+        "risk_level": (["Red"] * 4 + ["Yellow"] * 3 + ["Green"] * 2),
+        "yellow_subtype": ([None] * 4 + ["Y_TRIPLE"] * 3 + [None] * 2),
+    })
+    out = summarize_actions(df)
+    actions = dict(zip(out["action"], out["count"]))
+    assert actions[RED_ACTION] == 4               # Red → 즉각 개입
+    assert actions["의료인 전화"] == 3            # Y_TRIPLE → 의료인 전화
+    # count 내림차순 정렬 보장
+    assert list(out["count"]) == sorted(out["count"], reverse=True)
+
+
+def test_summarize_actions_merges_same_action():
+    """같은 action(Y_DOUBLE/Y_DDI_MOD/Y_FRAG = '문자 알림')은 합산된다."""
+    df = pd.DataFrame({
+        "risk_level": ["Yellow"] * 5,
+        "yellow_subtype": ["Y_DOUBLE", "Y_DDI_MOD", "Y_FRAG", "Y_DOUBLE", "Y_DUP"],
+    })
+    out = summarize_actions(df)
+    actions = dict(zip(out["action"], out["count"]))
+    assert actions["문자 알림"] == 4              # Y_DOUBLE×2 + Y_DDI_MOD + Y_FRAG
+    assert actions["문서 + 문자 알림"] == 1       # Y_DUP
+
+
+def test_summarize_actions_empty_without_red_or_yellow():
+    df = pd.DataFrame({"risk_level": ["Green", "Normal"]})
+    out = summarize_actions(df)
+    assert out.empty
+    assert list(out.columns) == ["action", "count"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

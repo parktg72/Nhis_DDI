@@ -1893,7 +1893,7 @@ if run_btn:
         st.markdown("**Stage 2 라벨 분포**")
         _lc_cols = st.columns(len(label_counts) or 1)
         _label_emoji = {
-            "Y_MIX": "🟡", "Y_DDI_MAJOR": "🔴", "Y_DDI_MOD": "🟠",
+            "Y_TRIPLE": "🟥", "Y_DOUBLE": "🟡", "Y_DDI_MAJOR": "🔴", "Y_DDI_MOD": "🟠",
             "Y_DUP": "🟣", "Y_FRAG": "🔵", "No_Alert": "⚪",
         }
         for _lc_col, (_lbl, _cnt) in zip(_lc_cols, label_counts.items()):

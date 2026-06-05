@@ -104,7 +104,7 @@ def test_hierarchical_red_confirmed(req_normal):
     """p_red ≥ τ_red → Red 확정, Stage 2 skip, stage2_probs=None."""
     hp = _make_hierarchical_predictor(
         p_red=0.95,
-        stage2_probs_local=np.array([0.2, 0.2, 0.15, 0.15, 0.15, 0.15]),
+        stage2_probs_local=np.array([0.2, 0.2, 0.15, 0.15, 0.1, 0.1, 0.1]),
     )
     pred = _make_hybrid_with_hierarchical(hp)
     resp = pred.predict(req_normal)
@@ -122,17 +122,17 @@ def test_hierarchical_red_suspect_band(req_normal):
     """τ_review ≤ p_red < τ_red → Stage 2 라벨 + red_suspect=True."""
     hp = _make_hierarchical_predictor(
         p_red=0.50,  # 0.30 ≤ 0.50 < 0.70
-        # Y_MIX 최고 확률
-        stage2_probs_local=np.array([0.6, 0.1, 0.1, 0.05, 0.05, 0.1]),
+        # Y_TRIPLE 최고 확률
+        stage2_probs_local=np.array([0.6, 0.1, 0.1, 0.05, 0.05, 0.05, 0.05]),
     )
     pred = _make_hybrid_with_hierarchical(hp)
     resp = pred.predict(req_normal)
 
-    assert resp.yellow_subtype == "Y_MIX"
+    assert resp.yellow_subtype == "Y_TRIPLE"
     assert resp.red_suspect is True
     assert resp.stage2_probs is not None
     assert set(resp.stage2_probs.keys()) == set(STAGE2_LABELS)
-    assert resp.action == "약사 전화 (즉시)"
+    assert resp.action == "의료인 전화"
     # 운영팀 검수 큐 reason 포함
     assert any("Red 의심" in r for r in resp.risk_reasons)
 
@@ -141,8 +141,8 @@ def test_hierarchical_yellow_subtype_clean(req_normal):
     """p_red < τ_review + Yellow subtype 선택 → yellow_subtype 매핑."""
     hp = _make_hierarchical_predictor(
         p_red=0.10,  # 0.10 < 0.30 (τ_review)
-        # Y_DDI_MOD 최고 확률
-        stage2_probs_local=np.array([0.1, 0.1, 0.5, 0.1, 0.1, 0.1]),
+        # Y_DDI_MOD 최고 확률 (STAGE2_LABELS index 3)
+        stage2_probs_local=np.array([0.1, 0.1, 0.1, 0.5, 0.05, 0.05, 0.1]),
     )
     pred = _make_hybrid_with_hierarchical(hp)
     resp = pred.predict(req_normal)
@@ -158,8 +158,8 @@ def test_hierarchical_no_alert(req_normal):
     """p_red < τ_review + No_Alert 선택 → risk_level=Normal (rule 도 Normal 전제)."""
     hp = _make_hierarchical_predictor(
         p_red=0.05,
-        # No_Alert (index 5) 최고 확률
-        stage2_probs_local=np.array([0.05, 0.05, 0.05, 0.05, 0.05, 0.75]),
+        # No_Alert (index 6) 최고 확률
+        stage2_probs_local=np.array([0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.70]),
     )
     pred = _make_hybrid_with_hierarchical(hp)
     resp = pred.predict(req_normal)
@@ -191,7 +191,7 @@ def test_hierarchical_predictor_load_real_artifact(tmp_path):
                        + ["Green"] * 150 + ["Normal"] * 225),
         "yellow_subtype": (
             [None] * 25
-            + ["Y_MIX"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
+            + ["Y_TRIPLE"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
             + ["Y_DUP"] * 25 + ["Y_FRAG"] * 20
             + [None] * 375
         ),
@@ -230,7 +230,7 @@ def test_hierarchical_predictor_sha_mismatch_rejects(tmp_path):
                        + ["Green"] * 150 + ["Normal"] * 225),
         "yellow_subtype": (
             [None] * 25
-            + ["Y_MIX"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
+            + ["Y_TRIPLE"] * 10 + ["Y_DDI_MAJOR"] * 15 + ["Y_DDI_MOD"] * 30
             + ["Y_DUP"] * 25 + ["Y_FRAG"] * 20
             + [None] * 375
         ),
@@ -273,7 +273,7 @@ def test_hierarchical_http_roundtrip_serializes_new_fields():
 
     hp = _make_hierarchical_predictor(
         p_red=0.50,  # Red 의심 구간
-        stage2_probs_local=np.array([0.6, 0.1, 0.1, 0.05, 0.05, 0.1]),
+        stage2_probs_local=np.array([0.6, 0.1, 0.1, 0.05, 0.05, 0.05, 0.05]),
     )
     pred = _make_hybrid_with_hierarchical(hp)
 
@@ -297,9 +297,9 @@ def test_hierarchical_http_roundtrip_serializes_new_fields():
             assert resp.status_code == 200, resp.text
             body = resp.json()
             # 신규 필드 직렬화 검증
-            assert body["yellow_subtype"] == "Y_MIX"
+            assert body["yellow_subtype"] == "Y_TRIPLE"
             assert body["red_suspect"] is True
-            assert body["action"] == "약사 전화 (즉시)"
+            assert body["action"] == "의료인 전화"
             assert isinstance(body["stage2_probs"], dict)
             assert set(body["stage2_probs"].keys()) == set(STAGE2_LABELS)
             assert all(isinstance(v, float) for v in body["stage2_probs"].values())

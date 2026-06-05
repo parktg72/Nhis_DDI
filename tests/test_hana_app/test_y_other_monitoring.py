@@ -41,7 +41,7 @@ def test_snapshot_empty_df():
 def test_snapshot_correct_counts_and_percentages():
     df = pd.DataFrame({
         "yellow_subtype": (
-            ["Y_MIX"] * 10
+            ["Y_TRIPLE"] * 10
             + ["Y_DDI_MAJOR"] * 5
             + ["Y_OTHER"] * 5
             + [None] * 80   # Green/Normal/Red 등 — yellow 아님

@@ -75,24 +75,33 @@ def test_single_frag_is_y_frag():
     assert f.yellow_subtype == "Y_FRAG"
 
 
-def test_two_triggers_is_y_mix():
-    """DDI_MAJOR + DUP → Y_MIX (Red 조건은 모두 미충족)."""
+def test_two_triggers_is_y_double():
+    """DDI_MAJOR + DUP → Y_DOUBLE (yellow 요소 2개, Red 조건 미충족)."""
     f = _make(ddi_major=1, dup_same_ingredient=1)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)
     assert f.risk_level == "Yellow"
-    assert f.yellow_subtype == "Y_MIX"
+    assert f.yellow_subtype == "Y_DOUBLE"
 
 
-def test_three_triggers_is_y_mix():
+def test_three_triggers_is_y_triple():
+    """DDI_MAJOR + DDI_MOD + FRAG → Y_TRIPLE (yellow 요소 3개)."""
     f = _make(ddi_major=1, ddi_moderate=2, institution_count=3)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)
-    assert f.yellow_subtype == "Y_MIX"
+    assert f.yellow_subtype == "Y_TRIPLE"
 
 
-def test_y_mix_excluded_when_red():
-    """Red 조건 충족 시 Y_MIX 아닌 None (Red 가 흡수)."""
+def test_four_triggers_is_y_triple():
+    """yellow 요소 4개(DDI_MAJOR+DDI_MOD+DUP+FRAG)도 Y_TRIPLE(3개+)."""
+    f = _make(ddi_major=1, ddi_moderate=2, dup_same_ingredient=1, institution_count=3)
+    _assign_risk_level(f)
+    _assign_yellow_subtype(f)
+    assert f.yellow_subtype == "Y_TRIPLE"
+
+
+def test_count_label_excluded_when_red():
+    """Red 조건 충족 시 계수 라벨 아닌 None (Red 가 흡수)."""
     f = _make(ddi_contraindicated=1, ddi_major=1, dup_same_ingredient=1)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)

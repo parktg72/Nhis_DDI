@@ -34,7 +34,7 @@ def cv_dataset():
     )
     yellow_subtypes = (
         [None] * 30
-        + ["Y_MIX"] * 20 + ["Y_DDI_MAJOR"] * 25 + ["Y_DDI_MOD"] * 30
+        + ["Y_TRIPLE"] * 20 + ["Y_DDI_MAJOR"] * 25 + ["Y_DDI_MOD"] * 30
         + ["Y_DUP"] * 25 + ["Y_FRAG"] * 20
         + [None] * 450
     )
@@ -182,11 +182,11 @@ def test_cv_pooled_macro_f1_derived_from_pooled_cm(cv_dataset):
 def test_encode_stage2_for_eval_handles_red():
     df = pd.DataFrame({
         "risk_level": ["Red", "Yellow", "Green", "Normal"],
-        "yellow_subtype": [None, "Y_MIX", None, None],
+        "yellow_subtype": [None, "Y_TRIPLE", None, None],
     })
     out = _encode_stage2_for_eval(df)
     assert out[0] == -1   # Red
-    assert out[1] == STAGE2_LABELS.index("Y_MIX")
+    assert out[1] == STAGE2_LABELS.index("Y_TRIPLE")
     assert out[2] == STAGE2_LABELS.index("No_Alert")
     assert out[3] == STAGE2_LABELS.index("No_Alert")
 
