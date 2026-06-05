@@ -37,6 +37,28 @@ _STAGE2_LABEL_TO_INT: dict[str, int] = {
 }
 
 
+class _ConstantNegativeStage1:
+    """Red 표본이 없을 때 쓰는 '상수 비-Red' Stage 1 더미.
+
+    predict_proba(X)[:, 1] 가 항상 0.0 (= 절대 Red 아님) → predict_risk 에서
+    모든 샘플이 Stage 2(Yellow 세분화)로 분기된다. 번들 구조(stage1_red.joblib)와
+    predict_risk·serving(HierarchicalModel) 인터페이스를 그대로 유지하기 위한 장치.
+
+    ⚠️ 이 더미가 들어간 모델을 배포하면 Red 를 절대 탐지하지 못한다.
+    stage_meta.stage1_trained=False 로 투명 기록되며, 운영 서빙 전 cross-family
+    검토가 필요하다. (module-level 클래스라 joblib 직렬화/로드 가능.)
+    """
+
+    def predict_proba(self, X):
+        n = len(np.asarray(X))
+        proba = np.zeros((n, 2), dtype=float)
+        proba[:, 0] = 1.0
+        return proba
+
+    def predict(self, X):
+        return np.zeros(len(np.asarray(X)), dtype=int)
+
+
 def build_stage2_label(risk_level: str, yellow_subtype: str | None) -> str:
     """Stage 2 학습용 라벨 변환.
 
@@ -425,6 +447,7 @@ def train_hierarchical(
     review_recall_target: float = 0.98,
     cost_sensitive: bool = False,
     cost_ratio_by_class: dict[str, float] | None = None,
+    log_cb=None,
 ) -> dict:
     """Stage 1 (Red 이진) + Stage 2 (Yellow 서브라벨 6-class) 계층 학습.
 
@@ -451,30 +474,61 @@ def train_hierarchical(
     X = df[feature_cols].to_numpy()
     y1 = (df["risk_level"] == "Red").astype(int).to_numpy()
 
-    X_tr, X_val, y_tr, y_val = train_test_split(
-        X, y1, test_size=0.2, random_state=seed, stratify=y1,
-    )
+    # Red(양성)·비Red(음성) 둘 다 충분해야 실제 Stage 1 학습·PR 임계값 선택이 가능하다.
+    # 데이터에 Red 가 거의/전혀 없는 경우(예: 다운로드 Raw same-window 표본)는
+    # 학습을 죽이는 대신 '상수 비-Red' Stage 1 더미로 degrade 하고 Stage 2(Yellow
+    # 세분화) 만 학습한다. 번들 구조(stage1_red.joblib)·predict_risk·serving
+    # 인터페이스를 그대로 유지하기 위함이며, stage_meta.stage1_trained=False 로
+    # 투명하게 기록한다. (이 모델 배포 시 Red 미탐지 한계 — UI/메타에서 경고.)
+    _n_red = int(y1.sum())
+    _n_non = int(y1.size - _n_red)
+    _dist = df["risk_level"].value_counts().to_dict()
+    _MIN_RED_FOR_STAGE1 = 10
 
-    pos = int(y_tr.sum())
-    neg = int(len(y_tr) - pos)
-    scale_pos_weight = neg / max(pos, 1)
+    def _degrade_stage1(reason: str) -> tuple:
+        # p_red 가 항상 0 → 모두 Stage 2 로 분기. tau_red=1.0(아무도 Red 안 됨),
+        # tau_review=0.5(p_red=0 < 0.5 → red_suspect=False). 불변식 τ_review<τ_red 유지.
+        if log_cb:
+            log_cb(f"⚠️ Stage 1(Red) 건너뜀 — {reason}. 상수 비-Red 더미로 대체, Stage 2 만 학습.")
+        return _ConstantNegativeStage1(), {"tau_red": 1.0, "tau_review": 0.5}
 
-    defaults1 = dict(
-        n_estimators=200, max_depth=6, learning_rate=0.1,
-        subsample=0.8, colsample_bytree=0.8,
-        objective="binary:logistic", eval_metric="logloss",
-        scale_pos_weight=scale_pos_weight, random_state=seed, verbosity=0,
-    )
-    if stage1_params:
-        defaults1.update(stage1_params)
-    m1 = XGBClassifier(**defaults1)
-    m1.fit(X_tr, y_tr)
-    proba_val = m1.predict_proba(X_val)[:, 1]
-    thresholds = select_thresholds_from_pr(
-        y_val, proba_val,
-        recall_floor=recall_floor,
-        review_recall_target=review_recall_target,
-    )
+    stage1_trained = False
+    if _n_red >= _MIN_RED_FOR_STAGE1 and _n_non >= _MIN_RED_FOR_STAGE1:
+        X_tr, X_val, y_tr, y_val = train_test_split(
+            X, y1, test_size=0.2, random_state=seed, stratify=y1,
+        )
+        if np.unique(y_val).size < 2:
+            # 층화해도 양성이 적으면 검증셋이 단일 클래스가 될 수 있다 → degrade.
+            m1, thresholds = _degrade_stage1(
+                f"검증셋이 단일 클래스 (Red {_n_red}건으로 부족)"
+            )
+        else:
+            pos = int(y_tr.sum())
+            neg = int(len(y_tr) - pos)
+            scale_pos_weight = neg / max(pos, 1)
+
+            defaults1 = dict(
+                n_estimators=200, max_depth=6, learning_rate=0.1,
+                subsample=0.8, colsample_bytree=0.8,
+                objective="binary:logistic", eval_metric="logloss",
+                scale_pos_weight=scale_pos_weight, random_state=seed, verbosity=0,
+            )
+            if stage1_params:
+                defaults1.update(stage1_params)
+            m1 = XGBClassifier(**defaults1)
+            m1.fit(X_tr, y_tr)
+            proba_val = m1.predict_proba(X_val)[:, 1]
+            thresholds = select_thresholds_from_pr(
+                y_val, proba_val,
+                recall_floor=recall_floor,
+                review_recall_target=review_recall_target,
+            )
+            stage1_trained = True
+    else:
+        m1, thresholds = _degrade_stage1(
+            f"Red {_n_red}건 / 비Red {_n_non}건 (Red 최소 {_MIN_RED_FOR_STAGE1}건 필요) "
+            f"— 위험도 분포 {_dist}"
+        )
 
     # ── Stage 2: 6-class ─────────────────────────────────────────────────
     mask_non_red = df["risk_level"] != "Red"
@@ -550,6 +604,9 @@ def train_hierarchical(
         "stage2_sha256": _sha(p2),
         "cost_sensitive": cost_sensitive,
         "cost_ratio_by_class": cost_ratio_by_class,
+        # Red 표본 부족으로 Stage 1 이 '상수 비-Red' 더미면 False — 배포 전 검토 신호.
+        "stage1_trained": stage1_trained,
+        "stage1_red_count": _n_red,
     }
     (out / "stage_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2)
@@ -562,6 +619,8 @@ def train_hierarchical(
         "thresholds": thresholds,
         "stage2_label_counts": label_counts,
         "y_other_excluded_count": y_other_excluded,
+        "stage1_trained": stage1_trained,
+        "stage1_red_count": _n_red,
         "meta_path": out / "stage_meta.json",
     }
 

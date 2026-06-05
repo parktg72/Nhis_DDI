@@ -2,6 +2,8 @@
 페이지 3: 데이터 추출 + 모델 선택 + 학습 실행
 """
 import json
+import os
+import shlex
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +24,16 @@ from hana_app.core.ml_runner import (
     build_patient_features, build_patient_features_from_parquet,
     features_to_dataframe, train_model,
 )
+from hana_app.core.sparse_research import (
+    DATASETS_ROOT,
+    build_smoke_command,
+    dataset_display_rows,
+    default_smoke_output_dir,
+    find_report_paths,
+    list_sparse_datasets,
+    log_path_for,
+    read_log_tail,
+)
 
 st.set_page_config(page_title="모델 학습", page_icon="🤖", layout="wide")
 st.title("🤖 모델 선택 및 학습")
@@ -29,8 +41,116 @@ st.title("🤖 모델 선택 및 학습")
 cfg  = load_config()
 conn = get_connection(st.session_state)
 
-# ── validated 가드 ────────────────────────────────────────────────────────
-if is_hana(cfg) and not cfg.get("validated"):
+# ─────────────────────────────────────────────────────────────────────────────
+# 데이터 소스 모드 선택 — HANA 검증 게이트보다 **먼저** 렌더한다.
+#   게이트(검증·재연결)는 라이브 DB가 필요한 EXTRACT 모드 전용이며, RAW/SAVED 는
+#   로컬 parquet 만 읽으므로 게이트 위에서 모드를 고를 수 있어야 진입이 가능하다.
+#   (이전: 게이트가 라디오보다 먼저 st.stop() → HANA 미검증 시 RAW/SAVED 도달 불가)
+# ─────────────────────────────────────────────────────────────────────────────
+DATA_MODE_EXTRACT = "extract"
+DATA_MODE_SAVED   = "saved"
+DATA_MODE_RAW     = "raw"
+
+DATASET_DIR = Path(__file__).parent.parent / "data" / "datasets"
+DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _list_saved_datasets() -> list[Path]:
+    return sorted(DATASET_DIR.glob("features_*.parquet"), reverse=True)
+
+
+saved_files = _list_saved_datasets()
+
+_DATA_MODE_LABELS = {
+    DATA_MODE_EXTRACT: "🔗  DB / SAS 파일에서 추출",
+    DATA_MODE_SAVED:   f"📂  저장된 데이터 불러오기  ({len(saved_files)}개 보유)",
+    DATA_MODE_RAW:     "📥  다운로드 받은 Raw 데이터 (records_*.parquet)",
+}
+
+data_mode = st.radio(
+    "데이터 준비 방식",
+    options=[DATA_MODE_EXTRACT, DATA_MODE_SAVED, DATA_MODE_RAW],
+    format_func=lambda x: _DATA_MODE_LABELS[x],
+    horizontal=True,
+    key="data_mode",
+)
+
+
+def _quote_command(command: list[str]) -> str:
+    import subprocess
+
+    return subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
+
+
+@st.cache_data(ttl=300)
+def _cached_sparse_dataset_summaries():
+    return list_sparse_datasets(DATASETS_ROOT)
+
+
+def _render_sparse_research_section() -> None:
+    """Show project-level sparse research artifacts without touching features_df."""
+    st.markdown("---")
+    with st.expander("🧪 추출 산출물 학습 (Research/Smoke)", expanded=False):
+        st.caption(
+            "프로젝트 루트 `data/datasets`의 `X_csr.npz` + `y.npy` + `metadata.json` 산출물을 "
+            "기존 DB/SAS 학습 경로와 분리해서 확인합니다."
+        )
+        if st.button("데이터셋 목록 새로고침", key="refresh_sparse_research_datasets"):
+            _cached_sparse_dataset_summaries.clear()
+            st.rerun()
+        summaries = _cached_sparse_dataset_summaries()
+        if not summaries:
+            st.info(f"사용 가능한 sparse 데이터셋이 없습니다. `{DATASETS_ROOT}` 경로를 확인하세요.")
+            return
+
+        st.dataframe(pd.DataFrame(dataset_display_rows(summaries)), use_container_width=True, hide_index=True)
+
+        selected_name = st.selectbox(
+            "Sparse 데이터셋 선택",
+            options=[summary.name for summary in summaries],
+            key="sparse_research_dataset",
+        )
+        selected = next(summary for summary in summaries if summary.name == selected_name)
+        output_dir = default_smoke_output_dir(selected.dataset_dir, model="linear")
+        command = build_smoke_command(selected.dataset_dir, output_dir)
+        reports = find_report_paths(selected.dataset_dir)
+
+        metric_cols = st.columns(5)
+        metric_cols[0].metric("환자 수", f"{selected.n_patients:,}")
+        metric_cols[1].metric("양성률", f"{selected.label_positive_rate_pct:.4f}%")
+        metric_cols[2].metric("입력 차원", f"{selected.input_dim:,}")
+        metric_cols[3].metric("평가 맥락", selected.evaluation_context)
+        metric_cols[4].metric("상태", selected.status)
+
+        with st.expander("metadata.json", expanded=False):
+            st.json(selected.metadata)
+
+        st.markdown("**Smoke 학습 CLI**")
+        st.code(_quote_command(command), language="bat")
+        st.caption(
+            "Raw→dataset 빌드는 메모리와 시간이 큰 작업이라 앱 버튼으로 실행하지 않습니다. "
+            "위 명령은 이미 생성된 sparse dataset에 대한 smoke 학습만 실행합니다."
+        )
+
+        if reports.markdown:
+            st.markdown("**기존 리포트**")
+            st.markdown(reports.markdown.read_text(encoding="utf-8", errors="replace"))
+        elif reports.json:
+            st.markdown("**기존 리포트(JSON)**")
+            st.json(json.loads(reports.json.read_text(encoding="utf-8")))
+        else:
+            st.info(f"아직 smoke 리포트가 없습니다. 실행 후 `{output_dir}`에 리포트가 생성됩니다.")
+
+        log_tail = read_log_tail(log_path_for(output_dir), max_lines=30)
+        if log_tail:
+            with st.expander("최근 실행 로그", expanded=False):
+                st.code(log_tail, language=None)
+
+
+_render_sparse_research_section()
+
+# ── validated 가드 (EXTRACT 모드 전용 — RAW/SAVED 는 라이브 DB 불필요) ──────
+if data_mode == DATA_MODE_EXTRACT and is_hana(cfg) and not cfg.get("validated"):
     st.warning("⚠️ HANA 테이블 검증이 완료되지 않았습니다.")
     st.page_link(
         "pages/1_🔌_연결_및_테이블설정.py",
@@ -38,14 +158,14 @@ if is_hana(cfg) and not cfg.get("validated"):
     )
     st.stop()
 
-if is_hana(cfg):
+if data_mode == DATA_MODE_EXTRACT and is_hana(cfg):
     if cfg.get("validated_host") and \
        cfg["validated_host"] != cfg["connection"]["host"]:
         st.warning("⚠️ 검증된 DB 호스트와 현재 연결 호스트가 다릅니다. 1번 페이지에서 재검증을 권장합니다.")
 
-# ── 자동 재연결 ───────────────────────────────────────────────────────────
+# ── 자동 재연결 (EXTRACT 모드 전용) ───────────────────────────────────────
 _hana_creds = st.session_state.get("hana_creds")
-if is_hana(cfg):
+if data_mode == DATA_MODE_EXTRACT and is_hana(cfg):
     if _hana_creds:
         try:
             conn.ensure_connected(_hana_creds, session_state=st.session_state)
@@ -59,15 +179,8 @@ if is_hana(cfg):
 using_hana = is_hana(cfg)
 using_sas  = is_sas(cfg)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 저장 데이터 디렉토리
-# ─────────────────────────────────────────────────────────────────────────────
-DATASET_DIR = Path(__file__).parent.parent / "data" / "datasets"
-DATASET_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _list_saved_datasets() -> list[Path]:
-    return sorted(DATASET_DIR.glob("features_*.parquet"), reverse=True)
+# DATASET_DIR / _list_saved_datasets / 데이터 모드 라디오는 페이지 상단(게이트 위)에서
+# 이미 정의·렌더했다.
 
 
 def _save_dataset(df: pd.DataFrame, meta: dict) -> Path:
@@ -88,25 +201,84 @@ def _load_dataset(path: Path) -> tuple[pd.DataFrame, dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 데이터 소스 모드 선택
+# 다운로드 받은 Raw 데이터 (records_YYYYMMDD.parquet) 헬퍼
+#   HANA에서 내려받은 일별 처방 원본 파일을 직접 선택해 피처 계산 → 학습.
 # ─────────────────────────────────────────────────────────────────────────────
-DATA_MODE_EXTRACT = "extract"
-DATA_MODE_SAVED   = "saved"
+# 기본 후보 폴더: H: 전송 드라이브 → 프로젝트 data/raw 순.
+_RAW_DIR_CANDIDATES = [
+    r"H:\mode_11_hana\data\raw",
+    str(ROOT / "data" / "raw"),
+]
 
-saved_files = _list_saved_datasets()
 
-data_mode = st.radio(
-    "데이터 준비 방식",
-    options=[DATA_MODE_EXTRACT, DATA_MODE_SAVED],
-    format_func=lambda x: (
-        "🔗  DB / SAS 파일에서 추출"
-        if x == DATA_MODE_EXTRACT
-        else f"📂  저장된 데이터 불러오기  ({len(saved_files)}개 보유)"
-    ),
-    horizontal=True,
-    key="data_mode",
-)
+def _resolve_default_raw_dir(configured: str = "") -> str:
+    """설정값 → 후보 폴더 순으로 존재하는 첫 raw 폴더를 반환."""
+    if configured and Path(configured).is_dir():
+        return configured
+    for cand in _RAW_DIR_CANDIDATES:
+        if Path(cand).is_dir():
+            return cand
+    return configured or _RAW_DIR_CANDIDATES[0]
 
+
+def _parse_record_date(path: Path):
+    """`records_YYYYMMDD.parquet` 파일명에서 날짜(date)를 파싱. 실패 시 None."""
+    stem = path.stem
+    prefix = "records_"
+    if not stem.startswith(prefix):
+        return None
+    token = stem[len(prefix):]
+    try:
+        return datetime.strptime(token[:8], "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
+def _list_raw_records(raw_dir: Path) -> list[tuple[Path, object]]:
+    """raw 폴더의 records_*.parquet 파일을 (경로, date|None) 목록으로 반환 (날짜 오름차순)."""
+    if not raw_dir.is_dir():
+        return []
+    rows = [(p, _parse_record_date(p)) for p in raw_dir.glob("records_*.parquet")]
+    # 날짜 있는 것 먼저(날짜순), 날짜 없는 것은 이름순으로 뒤에
+    rows.sort(key=lambda r: (r[1] is None, r[1] or r[0].name))
+    return rows
+
+
+def _ensure_demographics_from_raw(raw_dir: Path, log=None) -> str:
+    """raw 폴더의 eligibility_demographics.parquet 를 정규 DEMOGRAPHICS_PATH 로 복사.
+
+    피처 빌더(`build_patient_features_from_parquet`)는 age/sex 를 record 컬럼이 아니라
+    저장된 인구통계 파일(_load_demographics/_load_age_map)에서 읽는다. 따라서 raw 학습
+    전에 이 파일을 정규 경로로 옮겨두지 않으면 age/sex_m 이 null 로 학습되어
+    **조용히 성능이 저하된 모델**이 만들어진다(에러 없이). 이를 방지한다.
+
+    Returns: "missing" | "in_place" | "copied" | "error:<msg>"
+    """
+    import shutil
+    from hana_app.core.ml_runner import DEMOGRAPHICS_PATH, AGE_MAP_PATH
+
+    src = raw_dir / "eligibility_demographics.parquet"
+    if not src.exists():
+        return "missing"
+    try:
+        if src.resolve() == DEMOGRAPHICS_PATH.resolve():
+            return "in_place"
+        DEMOGRAPHICS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, DEMOGRAPHICS_PATH)
+        src_age = raw_dir / "eligibility_ages.parquet"
+        if src_age.exists() and src_age.resolve() != AGE_MAP_PATH.resolve():
+            shutil.copy2(src_age, AGE_MAP_PATH)
+        if log:
+            log(f"인구통계 파일 정규 경로로 복사: {DEMOGRAPHICS_PATH}")
+        return "copied"
+    except Exception as e:  # noqa: BLE001 — 복사 실패는 치명적이지 않음(경고만)
+        if log:
+            log(f"인구통계 복사 실패: {e}")
+        return f"error:{e}"
+
+
+# ── 데이터 소스 모드별 입력 UI ────────────────────────────────────────────────
+#   (모드 상수·saved_files·data_mode 라디오는 페이지 상단에서 이미 정의·렌더됨)
 # ── 저장된 데이터 불러오기 모드 ───────────────────────────────────────────────
 if data_mode == DATA_MODE_SAVED:
     st.markdown("---")
@@ -158,6 +330,132 @@ if data_mode == DATA_MODE_SAVED:
 
     st.markdown("---")
 
+# ── 다운로드 받은 Raw 데이터 모드 ──────────────────────────────────────────────
+elif data_mode == DATA_MODE_RAW:
+    st.markdown("---")
+    st.subheader("📥 다운로드 받은 Raw 데이터")
+    st.caption(
+        "HANA에서 내려받은 일별 처방 원본(`records_YYYYMMDD.parquet`)을 직접 선택해 학습합니다. "
+        "선택한 파일은 아래 **피처 계산**(동시복용 기간·다재약물 기준) 후 학습에 사용됩니다."
+    )
+
+    _trn_raw = cfg.get("training", {})
+    _default_raw = _resolve_default_raw_dir(_trn_raw.get("raw_data_dir", ""))
+    raw_dir_str = st.text_input(
+        "Raw 데이터 폴더",
+        value=_default_raw,
+        key="raw_dir_input",
+        help=r"records_YYYYMMDD.parquet 파일이 있는 폴더 (예: H:\mode_11_hana\data\raw)",
+    )
+    raw_dir = Path(raw_dir_str.strip()) if raw_dir_str.strip() else Path(_default_raw)
+    st.session_state["raw_data_dir"] = str(raw_dir)
+
+    if not raw_dir.is_dir():
+        st.warning(f"⚠️ 폴더를 찾을 수 없습니다: `{raw_dir}`")
+        st.stop()
+
+    raw_records = _list_raw_records(raw_dir)
+    if not raw_records:
+        st.warning(f"⚠️ `{raw_dir}` 에 records_*.parquet 파일이 없습니다.")
+        st.stop()
+
+    # ── 인구통계(나이/성별) 파일 상태 ──────────────────────────────────────
+    _demo_src = raw_dir / "eligibility_demographics.parquet"
+    if _demo_src.exists():
+        st.success(
+            "✅ `eligibility_demographics.parquet` 감지 — 나이·성별 피처가 학습에 포함됩니다."
+        )
+    else:
+        st.warning(
+            "⚠️ `eligibility_demographics.parquet` 이(가) 없습니다. "
+            "나이·성별(age·sex_m) 없이 학습되어 성능이 저하될 수 있습니다. "
+            "가능하면 같은 폴더에 인구통계 파일을 두세요."
+        )
+
+    _dated = [(p, d) for p, d in raw_records if d is not None]
+    _undated = [p for p, d in raw_records if d is None]
+
+    # ── 선택 방식: 기간 설정 vs 파일 직접 선택 ─────────────────────────────
+    sel_method = st.radio(
+        "선택 방식",
+        options=["date_range", "files"],
+        format_func=lambda x: {
+            "date_range": "📅 기간으로 선택",
+            "files": "🗂️ 파일 직접 선택",
+        }[x],
+        horizontal=True,
+        key="raw_sel_method",
+        disabled=not _dated,
+    )
+
+    chosen_paths: list[Path] = []
+    if sel_method == "date_range" and _dated:
+        _min_d = _dated[0][1]
+        _max_d = _dated[-1][1]
+        st.caption(
+            f"사용 가능 기간: **{_min_d.isoformat()} ~ {_max_d.isoformat()}** "
+            f"(일별 파일 {len(_dated)}개)"
+        )
+        # 키를 폴더에 종속시켜 폴더 전환 시 이전 날짜가 새 범위 밖이라 크래시 나는 것을 방지
+        _dk = abs(hash(str(raw_dir)))
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            d_from = st.date_input(
+                "시작일", value=_min_d, min_value=_min_d, max_value=_max_d, key=f"raw_date_from_{_dk}",
+            )
+        with rc2:
+            d_to = st.date_input(
+                "종료일", value=_max_d, min_value=_min_d, max_value=_max_d, key=f"raw_date_to_{_dk}",
+            )
+        if d_from > d_to:
+            st.error("⚠️ 시작일이 종료일보다 늦습니다.")
+            st.stop()
+        chosen_paths = [p for p, d in _dated if d_from <= d <= d_to]
+    else:
+        # 파일 직접 선택 (날짜 없는 파일 포함)
+        _all_paths = [p for p, _ in raw_records]
+        _labels = {
+            str(p): f"{p.name}  ({p.stat().st_size / 1024 / 1024:.1f} MB)"
+            for p in _all_paths
+        }
+        _picked = st.multiselect(
+            "학습에 사용할 records 파일 선택",
+            options=list(_labels.keys()),
+            default=list(_labels.keys()),
+            format_func=lambda x: _labels[x],
+            key=f"raw_file_pick_{abs(hash(str(raw_dir)))}",
+        )
+        chosen_paths = [Path(x) for x in _picked]
+
+    if _undated and sel_method == "date_range":
+        st.caption(
+            f"ℹ️ 날짜를 해석할 수 없는 파일 {len(_undated)}개는 기간 선택에서 제외됩니다. "
+            "포함하려면 '파일 직접 선택'을 사용하세요."
+        )
+
+    if not chosen_paths:
+        st.warning("선택된 파일이 없습니다. 기간 또는 파일을 선택하세요.")
+        st.session_state["raw_selected_paths"] = []
+        st.stop()
+
+    st.session_state["raw_selected_paths"] = [str(p) for p in chosen_paths]
+
+    _total_mb = sum(p.stat().st_size for p in chosen_paths) / 1024 / 1024
+    mcol1, mcol2, mcol3 = st.columns(3)
+    mcol1.metric("선택 파일 수", f"{len(chosen_paths):,}개")
+    mcol2.metric("총 용량", f"{_total_mb:,.1f} MB")
+    _chosen_dates = [d for p, d in _dated if p in set(chosen_paths)]
+    if _chosen_dates:
+        mcol3.metric("기간", f"{min(_chosen_dates).isoformat()} ~ {max(_chosen_dates).isoformat()}")
+    else:
+        mcol3.metric("기간", "—")
+
+    st.info(
+        "📌 아래 **2️⃣ 모델 선택** 이후 **🚀 학습 시작** 을 누르면 선택한 Raw 파일에서 "
+        "피처를 계산한 뒤 학습합니다. (동시복용 기간·다재약물 기준은 아래 설정 사용)"
+    )
+    st.markdown("---")
+
 else:
     # 데이터 소스 표시
     if using_sas:
@@ -170,7 +468,12 @@ else:
 # ─────────────────────────────────────────────────────────────────────────────
 _show_extract_section = (data_mode == DATA_MODE_EXTRACT)
 st.header("1️⃣ 데이터 추출 범위")
-if not _show_extract_section:
+if data_mode == DATA_MODE_RAW:
+    st.info(
+        "📥 다운로드 Raw 모드 — 아래 시작/종료 년·월은 무시되고, 위에서 선택한 파일/기간을 사용합니다. "
+        "단, **동시복용 판단 기간**·**다재약물 기준**은 피처 계산에 그대로 적용됩니다."
+    )
+elif not _show_extract_section:
     st.info("📂 저장된 데이터 모드 — 추출 범위 설정을 건너뜁니다.")
 col1, col2, col3, col4 = st.columns(4)
 
@@ -460,6 +763,10 @@ st.markdown("---")
 st.header("2️⃣ 모델 선택 및 하이퍼파라미터")
 
 # 예측 타겟
+# NOTE: 반드시 stable `key` 를 둔다. keyless selectbox 는 앞쪽 조건부 위젯이
+# rerun 마다 렌더/언렌더되면 structural id 가 흔들려 선택값이 config 기본값으로
+# 리셋된다(예: hierarchical 선택 → 학습 시작 시 risk_label/risk_binary 로 되돌아감).
+# key 를 주면 값이 session_state 에 고정되어 위치 변동·페이지 이동에도 보존된다.
 target = st.selectbox(
     "예측 타겟",
     options=["risk_binary", "hierarchical", "risk_label"],
@@ -473,6 +780,7 @@ target = st.selectbox(
         if trn.get("target") in ("risk_binary", "hierarchical", "risk_label")
         else "risk_binary"
     ),
+    key="train_target_select",
 )
 
 # ── Phase 탭 ─────────────────────────────────────────────────────────────
@@ -803,6 +1111,7 @@ with col_save:
             "cost_fn": cost_fn,
             "recall_floor": recall_floor,
             "review_recall_target": review_recall_target,
+            "raw_data_dir": st.session_state.get("raw_data_dir", trn.get("raw_data_dir", "")),
         })
         save_config(cfg)
         st.success("학습 설정이 저장되었습니다.")
@@ -814,6 +1123,13 @@ with col_run:
 # 학습 실행
 # ─────────────────────────────────────────────────────────────────────────────
 if run_btn:
+    # 어떤 타겟으로 분기하는지 항상 가시화 (계층 선택이 일반 분기로 새는 회귀 진단용)
+    _target_label = {
+        "risk_binary": "이진 분류 (risk_binary)",
+        "hierarchical": "계층 분류 (hierarchical)",
+        "risk_label": "4분류 risk_label (레거시)",
+    }.get(target, target)
+    st.caption(f"🎯 이번 학습 예측 타겟: **{_target_label}**")
     if not selected_features:
         st.error("최소 1개 이상의 피처를 선택하세요.")
         st.stop()
@@ -864,6 +1180,146 @@ if run_btn:
             st.stop()
         log(f"📂 저장된 데이터 사용: {len(features_df):,}명")
         _set_phase(0.60, 0.95)
+
+    elif data_mode == DATA_MODE_RAW:
+        # ── 다운로드 Raw 모드: 추출 건너뛰고 선택 파일에서 피처 계산 ─────────
+        from hana_app.core.memory_guard import MemoryGuard, MemoryLimitExceeded
+        from hana_app.core.ml_runner import (
+            InsufficientDiskSpaceError,
+            load_features_from_parquet, _duckdb_available, _duck_con,
+        )
+
+        _raw_paths = [Path(p) for p in (st.session_state.get("raw_selected_paths") or [])]
+        _raw_paths = [p for p in _raw_paths if p.exists()]
+        if not _raw_paths:
+            st.error(
+                "⚠️ 선택된 Raw 파일이 없습니다(또는 경로가 사라짐). "
+                "위 **📥 다운로드 받은 Raw 데이터** 에서 파일/기간을 다시 선택하세요."
+            )
+            st.stop()
+
+        _mem_guard = MemoryGuard(limit_mb=memory_limit_mb, on_warning=log, on_critical=log)
+        log(f"MemoryGuard 활성화: {_mem_guard.info()}")
+
+        # 인구통계(나이/성별) 파일을 정규 경로로 확보 — age/sex_m silent 저하 방지
+        _raw_dir_for_run = Path(st.session_state.get("raw_data_dir", str(_raw_paths[0].parent)))
+        _demo_status = _ensure_demographics_from_raw(_raw_dir_for_run, log=log)
+        if _demo_status == "missing":
+            st.warning("⚠️ 인구통계 파일이 없어 나이·성별 없이 피처를 계산합니다.")
+        elif _demo_status.startswith("error:"):
+            st.warning(f"⚠️ 인구통계 파일 확보 실패 — 나이·성별 없이 진행할 수 있습니다 ({_demo_status[6:]}).")
+
+        st.subheader("⚙️ 피처 계산 중 (다운로드 Raw)...")
+        _set_phase(0.10, 0.60)
+        log(
+            f"Raw 파일 {len(_raw_paths)}개 → 피처 계산 시작 "
+            f"(window={window_days}일, 다재약물≥{poly_threshold}종, 배치 {int(patient_batch):,}명)"
+        )
+
+        try:
+            features_list = build_patient_features_from_parquet(
+                parquet_paths=_raw_paths,
+                window_days=window_days,
+                poly_threshold=poly_threshold,
+                patient_batch_size=int(patient_batch),
+                memory_limit_mb=memory_limit_mb,
+                progress_cb=log,
+                progress_pct_cb=update_pct,
+                guard=_mem_guard,
+            )
+        except InsufficientDiskSpaceError as _de:
+            st.error(
+                "⚠️ **임시 디스크 공간 부족**\n\n"
+                f"{_de}\n\n"
+                "여유 있는 드라이브를 `HANA_FEAT_TMP` 환경변수로 지정 후 다시 시도하세요 "
+                r"(예: `set HANA_FEAT_TMP=D:\hana_tmp`)."
+            )
+            st.stop()
+        except (MemoryError, MemoryLimitExceeded) as _me:
+            _rss = getattr(_me, 'rss_mb', '?')
+            st.error(
+                "⚠️ **메모리 한도 도달**\n\n"
+                "피처 계산 중 RAM 한도에 도달하여 안전하게 중단되었습니다.\n\n"
+                "**해결 방법:**\n"
+                "- 👥 환자 배치 크기를 줄이세요\n"
+                "- 🧠 RAM 사용 한도를 높이세요\n"
+                "- 📅 선택한 Raw 파일(기간)을 줄이세요\n"
+                f"- 현재 RAM: {_rss} MB / 한도: {memory_limit_mb:,} MB / 배치: {int(patient_batch):,}명"
+            )
+            st.stop()
+        except Exception as e:
+            st.error("❌ Raw 피처 계산 실패")
+            st.exception(e)
+            st.stop()
+
+        _features_parquet_paths = features_list  # list[Path] (피처 Parquet)
+        features_df = None
+        if not _features_parquet_paths:
+            st.error(
+                f"⚠️ 다재약물 기준({poly_threshold}종 이상) 충족 환자가 없습니다. "
+                "선택 파일(기간)이나 약물 기준을 조정하세요."
+            )
+            st.stop()
+
+        # 위험도 분포 (전체 로드 없이 DuckDB 집계)
+        _fp_list = ", ".join(f"'{Path(p).as_posix()}'" for p in _features_parquet_paths)
+        if _duckdb_available():
+            with _duck_con(memory_limit_mb=max(256, memory_limit_mb // 4)) as _con:
+                _total_feat = _con.execute(
+                    f"SELECT COUNT(*) FROM read_parquet([{_fp_list}])"
+                ).fetchone()[0]
+                _risk_dist_df = _con.execute(
+                    f"SELECT risk_level, COUNT(*) AS cnt FROM read_parquet([{_fp_list}]) GROUP BY risk_level"
+                ).df()
+        else:
+            from collections import Counter as _Counter
+            _risk_cnt = _Counter()
+            for _fp in _features_parquet_paths:
+                _chunk = pd.read_parquet(_fp, columns=["risk_level"])
+                _risk_cnt.update(_chunk["risk_level"].value_counts().to_dict())
+                del _chunk
+            _total_feat = sum(_risk_cnt.values())
+            _risk_dist_df = pd.DataFrame([{"risk_level": k, "cnt": v} for k, v in _risk_cnt.items()])
+
+        progress_bar.progress(0.60, text="피처 계산 완료")
+        st.success(
+            f"✅ 피처 완료 (디스크 기반): {_total_feat:,}명 / "
+            f"Parquet {len(_features_parquet_paths)}개 파일"
+        )
+        _rlevels = list(_risk_dist_df["risk_level"])
+        risk_cols = st.columns(4)
+        for _, row in _risk_dist_df.iterrows():
+            level = row["risk_level"]
+            cnt = int(row["cnt"])
+            emoji = {"Red": "🔴", "Yellow": "🟡", "Green": "🟢", "Normal": "⚪"}.get(level, "")
+            risk_cols[_rlevels.index(level) % 4].metric(f"{emoji} {level}", f"{cnt:,}명")
+
+        # ── 피처 데이터 저장 (HANA 없이 재사용) ──────────────────────────────
+        st.markdown("---")
+        st.markdown("**💾 추출된 피처 데이터 저장** — 나중에 '저장된 데이터'로 재사용할 수 있습니다.")
+        _rsave_col, _ = st.columns([2, 3])
+        with _rsave_col:
+            if st.button("💾 피처 데이터를 파일로 저장", use_container_width=True, key="raw_save_feat"):
+                _save_df = load_features_from_parquet(
+                    _features_parquet_paths, memory_limit_mb=memory_limit_mb,
+                ) if _duckdb_available() else pd.concat(
+                    [pd.read_parquet(p) for p in _features_parquet_paths], ignore_index=True,
+                )
+                meta = {
+                    "source": "raw_download",
+                    "raw_dir": str(_raw_dir_for_run),
+                    "raw_files": len(_raw_paths),
+                    "window_days": window_days,
+                    "poly_threshold": poly_threshold,
+                    "total_patients": len(_save_df),
+                    "saved_at": datetime.now().isoformat(),
+                }
+                saved_path = _save_dataset(_save_df, meta)
+                del _save_df
+                st.success(
+                    f"✅ 저장 완료: `{saved_path.name}`  "
+                    f"({saved_path.stat().st_size/1024/1024:.1f} MB)"
+                )
 
     else:
         # ── 데이터 소스 사전 검증 ──────────────────────────────────────────
@@ -1019,9 +1475,20 @@ if run_btn:
                             {"층": list(_strata_sum.keys()), "환자 수": list(_strata_sum.values())}
                         ).sort_values("환자 수", ascending=False), use_container_width=True)
             except Exception as e:
-                st.warning(f"⚠️ 사전 층화 샘플링 실패: {e}. 전체 환자 대상으로 계속합니다.")
                 log(f"사전 샘플링 오류: {e}")
-                _pre_sampled_pids = _disease_pids  # 질환 필터는 유지
+                if _disease_pids is None:
+                    st.error(
+                        f"❌ 사전 층화 샘플링 실패: {e}\n\n"
+                        "⚠️ 질환 필터가 비활성화된 상태에서 샘플링이 실패하여, "
+                        "전체 환자 대상의 대규모 데이터 추출이 시도될 위험이 있습니다. "
+                        "메모리 초과 및 세션 타임아웃 방지를 위해 프로세스를 안전하게 중단합니다. "
+                        "샘플 크기(pre_sample_size) 또는 자격DB 상태를 재검토해 주십시오."
+                    )
+                    st.stop()
+                else:
+                    st.warning(f"⚠️ 사전 층화 샘플링 실패: {e}. 질환 필터 적용 환자 대상으로 계속합니다.")
+                    _pre_sampled_pids = _disease_pids  # 질환 필터는 유지
+
 
         elif _disease_pids is not None:
             # 샘플링 없이 질환 필터만 적용
@@ -1385,6 +1852,7 @@ if run_btn:
                 recall_floor=recall_floor,
                 review_recall_target=review_recall_target,
                 cost_sensitive=use_cost_sensitive,
+                log_cb=log,
             )
         except Exception as e:
             st.error(f"❌ 계층 분류 학습 실패: {e}")
@@ -1398,13 +1866,28 @@ if run_btn:
         _meta = _json.loads((_hier_out / "stage_meta.json").read_text(encoding="utf-8"))
         thresholds = _meta.get("thresholds", {})
         label_counts = _meta.get("stage2_label_counts", {})
+        _stage1_trained = _meta.get("stage1_trained", True)
+        _red_cnt = _meta.get("stage1_red_count", 0)
 
         st.markdown("---")
         st.subheader("📊 계층 분류 학습 결과")
 
+        if not _stage1_trained:
+            st.warning(
+                f"⚠️ **Stage 1(Red 이진) 건너뜀** — 데이터의 Red 표본이 {_red_cnt:,}건뿐이라 "
+                "Red 분류기를 학습할 수 없어 '상수 비-Red' 더미로 대체했습니다. "
+                "**Stage 2(Yellow 세분화)만 학습**되었습니다. "
+                "이 모델을 그대로 배포하면 Red 를 탐지하지 못하므로, 운영 서빙 전에는 "
+                "Red 가 포함된 데이터로 Stage 1 을 재학습해야 합니다(τ 임계값은 무의미한 더미값)."
+            )
+
         _t_col1, _t_col2, _t_col3 = st.columns(3)
-        _t_col1.metric("τ_red", f"{thresholds.get('tau_red', '?'):.3f}" if isinstance(thresholds.get('tau_red'), float) else "?")
-        _t_col2.metric("τ_review", f"{thresholds.get('tau_review', '?'):.3f}" if isinstance(thresholds.get('tau_review'), float) else "?")
+        if _stage1_trained:
+            _t_col1.metric("τ_red", f"{thresholds.get('tau_red', '?'):.3f}" if isinstance(thresholds.get('tau_red'), float) else "?")
+            _t_col2.metric("τ_review", f"{thresholds.get('tau_review', '?'):.3f}" if isinstance(thresholds.get('tau_review'), float) else "?")
+        else:
+            _t_col1.metric("τ_red", "— (Stage1 미학습)")
+            _t_col2.metric("Red 표본", f"{_red_cnt:,}명")
         _t_col3.metric("Y_OTHER 제외", f"{_meta.get('y_other_excluded_count', 0):,}명")
 
         st.markdown("**Stage 2 라벨 분포**")
@@ -1439,7 +1922,11 @@ if run_btn:
 
         # predict_risk → features_df 에 red_suspect / action 컬럼 채우기
         # (page 4 의 yellow_subtype_view 가 이 컬럼을 사용)
-        _feat_df = st.session_state.get("features_df") if _train_parquet else _train_df
+        # _train_df 는 모든 모드에서 이 시점에 채워져 있다:
+        #   saved → session_state.features_df, raw/parquet → 1817 에서 로드, memory → features_df.
+        # 과거엔 _train_parquet 일 때 session_state.features_df(=Raw 모드에선 None) 를
+        # 참조해 predict_risk 가 통째로 스킵되고 Page 4 가 비어 보였다(계층 결과 누락).
+        _feat_df = _train_df
         if _feat_df is not None and selected_features and \
                 all(c in _feat_df.columns for c in selected_features):
             try:
