@@ -186,6 +186,7 @@ def _write_hier_artifact(root: Path, feature_cols: list[str], *, corrupt_stage1_
     import types
     import numpy as np
     from hana_app.core.hierarchical_runner import STAGE2_LABELS
+    from scripts.etl.prescription_aggregator import DDI_FEATURE_SEMANTICS_VERSION
 
     root.mkdir(parents=True, exist_ok=True)
     stage1_path = root / "stage1_red.joblib"
@@ -208,6 +209,7 @@ def _write_hier_artifact(root: Path, feature_cols: list[str], *, corrupt_stage1_
         "thresholds": {"tau_red": 0.7, "tau_review": 0.3},
         "feature_cols": feature_cols,
         "stage2_labels": list(STAGE2_LABELS),
+        "ddi_feature_semantics_version": DDI_FEATURE_SEMANTICS_VERSION,
         "stage1_sha256": stage1_sha,
         "stage2_sha256": hashlib.sha256(stage2_path.read_bytes()).hexdigest(),
     }
