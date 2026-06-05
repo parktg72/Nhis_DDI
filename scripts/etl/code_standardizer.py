@@ -42,6 +42,8 @@ class CodeStandardizer:
         # 레거시 EDI→ATC 경로 (DrugBank 기반)
         index_path: str | Path = "data/processed/drug_name_index.parquet",
         extra_csv: str | Path | None = "config/edi_atc_extra.csv",
+        # EDI(제품코드)→WK(주성분코드) 브릿지 (Task B serving DDI parity)
+        edi_wk_path: str | Path = "data/processed/edi_to_wk.parquet",
     ):
         # ── DrugMaster (성분명 기반 DDI) ────────────────────────────────────
         if drug_master is not None:
@@ -63,11 +65,48 @@ class CodeStandardizer:
         if extra_csv and Path(extra_csv).exists():
             self._load_extra(Path(extra_csv))
 
+        # ── EDI(제품코드) → WK(주성분코드) 브릿지 ───────────────────────────
+        self._edi_wk: dict[str, str] = {}
+        self._load_edi_wk(Path(edi_wk_path))
+
         logger.info(
-            "CodeStandardizer 초기화: DrugMaster %d개 코드, EDI매핑 %d개",
+            "CodeStandardizer 초기화: DrugMaster %d개 코드, EDI매핑 %d개, EDI→WK %d개",
             self._master.code_count,
             len(self._edi_map),
+            len(self._edi_wk),
         )
+
+    @staticmethod
+    def _normalize_edi(value) -> str | None:
+        """edi 를 9자리 문자열로 정규화 (build_edi_wk_map 과 동일 규칙)."""
+        if value is None:
+            return None
+        s = str(value).strip()
+        if s in ("", "nan", "None"):
+            return None
+        if s.endswith(".0"):
+            s = s[:-2]
+        if not s.isdigit():
+            return None
+        return s.zfill(9)
+
+    def _load_edi_wk(self, path: Path) -> None:
+        if not path.exists():
+            logger.warning("edi→wk 맵 없음 — 서빙 DDI 미평가 위험: %s", path)
+            return
+        df = pd.read_parquet(path)
+        if not {"edi_code", "wk_compn_cd"}.issubset(df.columns):
+            logger.error("edi→wk 맵 컬럼 이상(%s): %s", path, list(df.columns))
+            return
+        for edi, wk in zip(df["edi_code"].astype(str), df["wk_compn_cd"].astype(str)):
+            self._edi_wk[edi] = wk
+
+    def get_wk(self, edi_code: str) -> Optional[str]:
+        """제품코드(EDI) → 주성분코드(WK). 미매핑 시 None."""
+        norm = self._normalize_edi(edi_code)
+        if norm is None:
+            return None
+        return self._edi_wk.get(norm)
 
     # ── 레거시 EDI 매핑 로딩 ─────────────────────────────────────────────────
 

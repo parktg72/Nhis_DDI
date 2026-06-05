@@ -785,6 +785,78 @@ class RequestFeatureBuilder:
                 if existing is None or order.get(sev, 0) > order.get(existing, 0):
                     self._ddi_index[key] = sev
 
+    def _drug_master(self):
+        try:
+            return self._std.drug_master if self._std is not None else None
+        except Exception:
+            return None
+
+    def _build_ddi_records(self, drugs: list, ref: date):
+        """edi→wk 로 PrescriptionRecord 재구성 + wk→표시명 맵. (recs, wk_to_name) 반환.
+
+        미매핑 EDI 는 DDI 평가서 제외(degraded, "미매핑≠음성") + 경고. 학습 DDI 피처와
+        DDI 알림이 이 동일 재구성을 공유한다.
+        """
+        from scripts.etl.models import PrescriptionRecord
+        recs = []
+        wk_to_name: dict[str, str] = {}
+        n_unmapped = 0
+        for i, d in enumerate(drugs):
+            wk = self._std.get_wk(d.edi_code) if self._std is not None else None
+            if not wk:
+                n_unmapped += 1
+                continue
+            sd = d.start_date or ref
+            td = int(d.total_days or 1)
+            recs.append(PrescriptionRecord(
+                patient_id="req", institution_id=str(d.institution_id or ""),
+                bill_no=f"R{i}", wk_compn_cd=wk, edi_code=d.edi_code,
+                start_date=sd, end_date=sd + timedelta(days=td - 1), total_days=td,
+                source="serving",
+            ))
+            wk_to_name.setdefault(wk, d.drug_name or d.edi_code)
+        if n_unmapped:
+            logger.warning(
+                "DDI: edi→wk 미매핑 %d/%d 건 — DDI 평가서 제외(degraded, 미매핑≠음성)",
+                n_unmapped, len(drugs),
+            )
+        return recs, wk_to_name
+
+    def _count_ddi(self, drugs: list, ref: date) -> dict[str, int]:
+        """학습과 동일 경로로 DDI 심각도 카운트 (train/serve parity).
+
+        edi→wk → PrescriptionRecord 재구성 → calculate_overlaps_for_patient(학습과 동일)
+        → count_ddi_severities(공용 단일출처). std/ddi_matrix/drug_master 부재·약물<2 면 0.
+        """
+        zero = {"Contraindicated": 0, "Major": 0, "Moderate": 0, "Minor": 0}
+        drug_master = self._drug_master()
+        if self._std is None or self._ddi is None or drug_master is None:
+            return dict(zero)
+        from scripts.etl.overlap_calculator import calculate_overlaps_for_patient
+        from scripts.etl.prescription_aggregator import count_ddi_severities
+        recs, _ = self._build_ddi_records(drugs, ref)
+        if len(recs) < 2:
+            return dict(zero)
+        overlaps = calculate_overlaps_for_patient(recs, window_days=90)
+        return count_ddi_severities(overlaps, self._ddi, drug_master)
+
+    def ddi_alert_pairs(self, drugs: list, ref: date) -> list[tuple[str, str, str]]:
+        """동시복용 DDI 쌍 → (name_a, name_b, severity). DDI 피처와 **동일 경로**(일관성)."""
+        drug_master = self._drug_master()
+        if self._std is None or self._ddi is None or drug_master is None:
+            return []
+        from scripts.etl.overlap_calculator import calculate_overlaps_for_patient
+        from scripts.etl.prescription_aggregator import ddi_pair_severities
+        recs, wk_to_name = self._build_ddi_records(drugs, ref)
+        if len(recs) < 2:
+            return []
+        overlaps = calculate_overlaps_for_patient(recs, window_days=90)
+        return [
+            (wk_to_name.get(pair.drug_a_wk_compn, pair.drug_a_wk_compn),
+             wk_to_name.get(pair.drug_b_wk_compn, pair.drug_b_wk_compn), sev)
+            for pair, sev in ddi_pair_severities(overlaps, self._ddi, drug_master)
+        ]
+
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None) -> tuple[np.ndarray, dict]:
         """
         요청 → (피처 벡터, 피처 딕셔너리).
@@ -812,16 +884,10 @@ class RequestFeatureBuilder:
         feat["age"]               = float(req.patient_age or 0)
         feat["sex_m"]             = float(req.patient_sex == "M") if req.patient_sex else 0.5
 
-        # ── DDI 피처 (ATC 조합 기반) ──────────────────────────────────────
-        ddi_counts = {"Contraindicated": 0, "Major": 0, "Moderate": 0, "Minor": 0}
-        if self._ddi_index and len(atc_codes) >= 2:
-            for i in range(len(atc_codes)):
-                for j in range(i + 1, len(atc_codes)):
-                    key = frozenset({atc_codes[i], atc_codes[j]})
-                    sev = self._ddi_index.get(key)
-                    if sev in ddi_counts:
-                        ddi_counts[sev] += 1
-
+        # ── DDI 피처 (학습 정합: edi→wk→DrugMaster→DB-code, overlap 쌍 기준) ──
+        # 학습(_fill_ddi_features)과 동일하게 count_ddi_severities 를 호출해 train/serve
+        # 스큐를 구조적으로 차단(d201743 전례). 날짜 미겹침 쌍은 overlap 0 → 카운트 0.
+        ddi_counts = self._count_ddi(drugs, ref)
         feat["ddi_contraindicated"] = float(ddi_counts["Contraindicated"])
         feat["ddi_major"]           = float(ddi_counts["Major"])
         feat["ddi_moderate"]        = float(ddi_counts["Moderate"])
@@ -1196,7 +1262,7 @@ class HybridPredictor:
 
         # Step 5: DDI 알림 보완 (ddi_matrix에서 추가)
         if self._ddi_matrix is not None:
-            extra_alerts = self._build_ddi_alerts(req.drugs)
+            extra_alerts = self._build_ddi_alerts(req.drugs, ref)
             existing_pairs = {(a.drug_a, a.drug_b) for a in ddi_alerts}
             for alert in extra_alerts:
                 if (alert.drug_a, alert.drug_b) not in existing_pairs:
@@ -1230,35 +1296,26 @@ class HybridPredictor:
             dl_error=dl_error,
         )
 
-    def _build_ddi_alerts(self, drugs: list[DrugItem]) -> list[DDIAlert]:
-        """DDI 매트릭스에서 ATC 기반 DDI 알림 생성."""
+    def _build_ddi_alerts(self, drugs: list[DrugItem], ref: Optional[date] = None) -> list[DDIAlert]:
+        """DDI 알림 생성 — DDI 피처와 **동일 경로**(edi→wk→overlap→DB-code, 단일출처).
+
+        구 ATC all-pairs 경로(_builder._ddi_index)는 ddi_matrix 에 ATC 컬럼이 없어 항상
+        빈 dict 였고 features 와 불일치했다. 이제 RequestFeatureBuilder.ddi_alert_pairs 로
+        통일해 features(ddi_*)와 alerts 가 같은 overlap·식별자 공간을 쓴다(d201743 회귀 방지).
+        """
         if self._ddi_matrix is None:
             return []
-
-        atc_to_name = {d.atc_code: (d.drug_name or d.edi_code)
-                       for d in drugs if d.atc_code}
-        atc_codes = list(atc_to_name.keys())
+        pairs = self._builder.ddi_alert_pairs(drugs, ref or date.today())
         alerts: list[DDIAlert] = []
-
-        ddi_lookup = self._builder._ddi_index
-        severity_order = {"Contraindicated": 4, "Major": 3, "Moderate": 2, "Minor": 1}
-
-        for i in range(len(atc_codes)):
-            for j in range(i + 1, len(atc_codes)):
-                key = frozenset({atc_codes[i], atc_codes[j]})
-                sev = ddi_lookup.get(key)
-                if sev and sev in ("Contraindicated", "Major"):
-                    try:
-                        severity = Severity(sev)
-                    except ValueError:
-                        severity = Severity.UNKNOWN
-                    alerts.append(DDIAlert(
-                        drug_a=atc_to_name.get(atc_codes[i], atc_codes[i]),
-                        drug_b=atc_to_name.get(atc_codes[j], atc_codes[j]),
-                        severity=severity,
-                        source="DDI_Matrix",
-                    ))
-
+        for name_a, name_b, sev in pairs:
+            if sev in ("Contraindicated", "Major"):
+                try:
+                    severity = Severity(sev)
+                except ValueError:
+                    severity = Severity.UNKNOWN
+                alerts.append(DDIAlert(
+                    drug_a=name_a, drug_b=name_b, severity=severity, source="DDI_Matrix",
+                ))
         return alerts
 
 
