@@ -45,6 +45,7 @@ for %%V in (%PY_VERSIONS%) do (
         --platform win_amd64 ^
         --python-version %%V ^
         --only-binary=:all: ^
+        --no-deps ^
         -d "!OUT_DIR!" ^
         -r "%REQUIREMENTS%"
 
