@@ -38,7 +38,7 @@ class _FakeSklearnModel:
         return np.column_stack([1 - prob, prob])
 
 
-def _write_model(path: Path, feature_names: list[str]) -> Path:
+def _write_model(path: Path, feature_names: list[str], ddi_version: str | None = "__default__") -> Path:
     payload = {
         "model": _FakeSklearnModel(),
         "best_threshold": 0.5,
@@ -46,6 +46,12 @@ def _write_model(path: Path, feature_names: list[str]) -> Path:
         "feature_names": feature_names,
         "artifact_version": 2,
     }
+    if ddi_version == "__default__":
+        from scripts.etl.prescription_aggregator import DDI_FEATURE_SEMANTICS_VERSION
+        payload["ddi_feature_semantics_version"] = DDI_FEATURE_SEMANTICS_VERSION
+    elif ddi_version is not None:
+        payload["ddi_feature_semantics_version"] = ddi_version
+    # ddi_version=None → 키 없음(누락 케이스)
     content = pickle.dumps(payload)
     path.write_bytes(content)
     sha = hashlib.sha256(content).hexdigest()
@@ -125,6 +131,41 @@ def test_mlmodel_load_accepts_dup_efmdc(tmp_path, monkeypatch):
     ml = MLModel()
     assert ml.load(path) is True
     assert ml._schema_drift == []
+
+
+# ─── MLModel DDI 시맨틱 버전 가드 (Q5) ───────────────────────────────────────
+
+def test_mlmodel_rejects_old_ddi_version(tmp_path, monkeypatch):
+    """ddi_* 피처 모델이 구 DDI 시맨틱(ddi.v1)이면 로드 거부."""
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    path = _write_model(tmp_path / "m.pkl", ["drug_count", "ddi_major"], ddi_version="ddi.v1")
+    ml = MLModel()
+    assert ml.load(path) is False, "구 DDI 시맨틱 tabular 모델이 로드됨 — 가드 실패"
+    assert ml._model is None
+
+
+def test_mlmodel_rejects_missing_ddi_version_when_using_ddi(tmp_path, monkeypatch):
+    """ddi_* 피처를 쓰는데 버전 누락이면 로드 거부(스탬핑 후 하드거부 정책)."""
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    path = _write_model(tmp_path / "m.pkl", ["drug_count", "ddi_major"], ddi_version=None)
+    ml = MLModel()
+    assert ml.load(path) is False, "DDI 버전 누락 tabular 모델이 로드됨 — 가드 실패"
+
+
+def test_mlmodel_loads_current_ddi_version(tmp_path, monkeypatch):
+    """현재 ddi.v2 스탬프된 ddi_* 모델은 정상 로드."""
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    path = _write_model(tmp_path / "m.pkl", ["drug_count", "ddi_major"])  # 기본=현재버전
+    ml = MLModel()
+    assert ml.load(path) is True
+
+
+def test_mlmodel_non_ddi_model_unaffected_by_ddi_guard(tmp_path, monkeypatch):
+    """ddi_* 피처를 안 쓰는 모델은 버전 누락이어도 가드 미적용 → 정상 로드."""
+    monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
+    path = _write_model(tmp_path / "m.pkl", ["drug_count", "age"], ddi_version=None)
+    ml = MLModel()
+    assert ml.load(path) is True
 
 
 # ─── reload_hierarchical 통합 ─────────────────────────────────────────────────
