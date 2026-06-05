@@ -147,11 +147,14 @@ class TrainPipeline:
             selector_abs = Path(self.config.feature_base).resolve() / "selector.pkl"
 
             # feature contract metadata
+            from scripts.etl.prescription_aggregator import DDI_FEATURE_SEMANTICS_VERSION
             trainer._extra_meta = {
                 "artifact_version": 2,
                 "feature_names": list(dataset.feature_names),
                 "scaler_path": os.path.relpath(str(scaler_abs), start=model_dir_resolved),
                 "selector_path": os.path.relpath(str(selector_abs), start=model_dir_resolved),
+                # Q5: ddi_* 피처가 현재 시맨틱(ddi.v2)으로 계산됐음을 기록 → 서빙 reload 가드.
+                "ddi_feature_semantics_version": DDI_FEATURE_SEMANTICS_VERSION,
             }
             trainer.save(model_path)
             result.model_path = str(model_path)
