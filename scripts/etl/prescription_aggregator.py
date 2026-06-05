@@ -276,6 +276,31 @@ def _fill_ddi_features(
     features.ddi_minor += counts["Minor"]
 
 
+def count_same_ingredient_dups(
+    prescriptions: list[PrescriptionRecord],
+    drug_master: DrugMaster | None = None,
+) -> int:
+    """동일 성분(복합제 전개) 2개 이상 처방 수 = dup_same_ingredient 의 성분 경로.
+
+    학습(_fill_dup_features)·서빙 공용 단일출처. DrugMaster 로 각 WK_COMPN_CD 를 성분명
+    집합으로 전개(복합제 포함) 후 성분별 2회+ 카운트. drug_master 없으면 WK 직접 비교.
+    (학습 records 는 atc_code 가 없어 ATC fallback 은 프로덕션에서 미발동 — 본 함수가 곧 값.)
+    """
+    from collections import Counter
+    wk_codes = [p.wk_compn_cd for p in prescriptions if p.wk_compn_cd]
+    if len(wk_codes) < 2:
+        return 0
+    if drug_master is not None:
+        all_comps: list[str] = []
+        for code in wk_codes:
+            comps = set(drug_master.get_components(code)) or {code}
+            all_comps.extend(comps)
+        cnt = Counter(all_comps)
+        return sum(1 for c in cnt.values() if c >= 2)
+    cnt_wk = Counter(wk_codes)
+    return sum(1 for c in cnt_wk.values() if c >= 2)
+
+
 def _fill_dup_features(
     features: PatientFeatures,
     prescriptions: list[PrescriptionRecord],
@@ -292,25 +317,8 @@ def _fill_dup_features(
     """
     from collections import Counter
 
-    # ── 1. 성분명 기반 동일성분 중복 ────────────────────────────────────────
-    # DrugMaster가 있으면 복합제 성분 전개 후 비교 (복합제A의 성분1 == 단일제B)
-    wk_codes = [p.wk_compn_cd for p in prescriptions if p.wk_compn_cd]
-    if len(wk_codes) >= 2:
-        if drug_master is not None:
-            # 각 처방의 성분명 집합 목록
-            comp_sets: list[set[str]] = [
-                set(drug_master.get_components(code)) or {code}
-                for code in wk_codes
-            ]
-            # 모든 성분명 누적 카운트 (복합제 포함)
-            all_comps: list[str] = []
-            for cs in comp_sets:
-                all_comps.extend(cs)
-            cnt_comp = Counter(all_comps)
-            features.dup_same_ingredient = sum(1 for c in cnt_comp.values() if c >= 2)
-        else:
-            cnt_wk = Counter(wk_codes)
-            features.dup_same_ingredient = sum(1 for c in cnt_wk.values() if c >= 2)
+    # ── 1. 성분명 기반 동일성분 중복 (공용 단일출처 — 서빙도 호출) ──────────
+    features.dup_same_ingredient = count_same_ingredient_dups(prescriptions, drug_master)
 
     # ── 2. EFMDC_CLSF_NO 기반 효능군 중복 ──────────────────────────────────
     efmdc_codes = [p.efmdc_clsf_no for p in prescriptions if p.efmdc_clsf_no]

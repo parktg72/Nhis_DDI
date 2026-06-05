@@ -891,6 +891,46 @@ class RequestFeatureBuilder:
             for pair, sev in ddi_pair_severities(overlaps, self._ddi, drug_master)
         ]
 
+    def _count_dup_features(self, drugs: list, ref: date) -> dict | None:
+        """학습 정합 drug_count / drug_count_7d / dup_same_ingredient (P2).
+
+        edi→wk(code_standardizer)→DrugMaster 로 학습과 동일 함수 호출:
+          drug_count        = len(expand_drug_count(매핑 wk)) + 미매핑 약물 수
+          drug_count_7d     = get_concurrent_drug_count(전 약물 record, ref)
+          dup_same_ingredient = count_same_ingredient_dups(매핑 record, drug_master)
+        브릿지/DrugMaster 부재 시 None → build() 가 기존(edi 기반) fallback 사용.
+        미매핑 EDI: drug_count 엔 +1(약물은 약물), dup 엔 제외(성분 모름=degraded).
+        """
+        drug_master = self._drug_master()
+        if self._std is None or drug_master is None:
+            return None
+        from scripts.etl.models import PrescriptionRecord
+        from scripts.etl.overlap_calculator import get_concurrent_drug_count
+        from scripts.etl.prescription_aggregator import count_same_ingredient_dups
+
+        all_recs, mapped_recs, mapped_wks = [], [], []
+        n_unmapped = 0
+        for i, d in enumerate(drugs):
+            wk = self._std.get_wk(d.edi_code)
+            sd = d.start_date or ref
+            td = int(d.total_days or 1)
+            rec = PrescriptionRecord(
+                patient_id="req", institution_id=str(d.institution_id or ""), bill_no=f"R{i}",
+                wk_compn_cd=(wk or str(d.edi_code)), edi_code=d.edi_code,
+                start_date=sd, end_date=sd + timedelta(days=td - 1), total_days=td, source="serving",
+            )
+            all_recs.append(rec)
+            if wk:
+                mapped_recs.append(rec)
+                mapped_wks.append(wk)
+            else:
+                n_unmapped += 1
+        return {
+            "drug_count": float(len(drug_master.expand_drug_count(mapped_wks)) + n_unmapped),
+            "drug_count_7d": float(get_concurrent_drug_count(all_recs, ref)),
+            "dup_same_ingredient": float(count_same_ingredient_dups(mapped_recs, drug_master)),
+        }
+
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None) -> tuple[np.ndarray, dict]:
         """
         요청 → (피처 벡터, 피처 딕셔너리).
@@ -911,8 +951,12 @@ class RequestFeatureBuilder:
         atc_codes = [d.atc_code for d in drugs if d.atc_code]
 
         # ── 기본 피처 ──────────────────────────────────────────────────────
+        # P2: drug_count/drug_count_7d/dup_same_ingredient 를 학습과 동일 함수로(edi→wk).
+        # 브릿지 없으면 _cdup=None → 기존 edi 기반 fallback.
+        _cdup = self._count_dup_features(drugs, ref)
         feat: dict[str, float] = {}
-        feat["drug_count"]        = float(len({d.edi_code for d in drugs}))
+        feat["drug_count"]        = (_cdup["drug_count"] if _cdup is not None
+                                     else float(len({d.edi_code for d in drugs})))
         feat["institution_count"] = float(len({d.institution_id for d in drugs
                                                if d.institution_id}))
         feat["age"]               = float(req.patient_age or 0)
@@ -939,7 +983,8 @@ class RequestFeatureBuilder:
         cnt5 = Counter(atc_codes)                                       # full 7-char
         cnt4 = Counter(c[:5] for c in atc_codes if len(c) >= 5)         # 5-prefix
         cnt3 = Counter(c[:4] for c in atc_codes if len(c) >= 4)         # 4-prefix
-        feat["dup_same_ingredient"] = float(sum(1 for v in cnt5.values() if v >= 2))
+        feat["dup_same_ingredient"] = (_cdup["dup_same_ingredient"] if _cdup is not None
+                                       else float(sum(1 for v in cnt5.values() if v >= 2)))
         feat["dup_atc5"]            = float(sum(1 for v in cnt5.values() if v >= 2))
         feat["dup_atc4"]            = float(sum(1 for v in cnt4.values() if v >= 2))
         feat["dup_atc3"]            = float(sum(1 for v in cnt3.values() if v >= 2))
@@ -967,7 +1012,8 @@ class RequestFeatureBuilder:
         # Triple Whammy, QT 카운트 (단순 ATC prefix 기반)
         feat["triple_whammy"] = float(_check_triple_whammy(atc_codes))
         feat["qt_risk_count"] = float(_count_qt_drugs(atc_codes))
-        feat["drug_count_7d"] = feat["drug_count"]  # 온라인에서는 동일
+        feat["drug_count_7d"] = (_cdup["drug_count_7d"] if _cdup is not None
+                                 else feat["drug_count"])  # 학습=concurrent@ref, fallback=copy
 
         # Align to training feature order
         if feature_names:
