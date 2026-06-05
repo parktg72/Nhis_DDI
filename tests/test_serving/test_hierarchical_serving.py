@@ -252,6 +252,69 @@ def test_hierarchical_predictor_sha_mismatch_rejects(tmp_path):
     assert not ok, "변조된 해시도 통과됨 — 무결성 검증 실패"
 
 
+def _train_7class_bundle(tmp_path, seed=42):
+    """7-class 계층 번들을 tmp_path 에 학습·저장 (가드 테스트 픽스처)."""
+    import pandas as pd
+    from hana_app.core.hierarchical_runner import train_hierarchical
+    rng = np.random.default_rng(seed)
+    n = 500
+    df = pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "drug_count": rng.integers(1, 12, size=n),
+        "age": rng.integers(45, 90, size=n),
+        "sex_m": rng.integers(0, 2, size=n),
+        "risk_level": (["Red"] * 25 + ["Yellow"] * 100
+                       + ["Green"] * 150 + ["Normal"] * 225),
+        "yellow_subtype": (
+            [None] * 25
+            + ["Y_TRIPLE"] * 10 + ["Y_DOUBLE"] * 15 + ["Y_DDI_MAJOR"] * 20
+            + ["Y_DDI_MOD"] * 25 + ["Y_DUP"] * 15 + ["Y_FRAG"] * 15
+            + [None] * 375
+        ),
+    })
+    train_hierarchical(df=df, feature_cols=["drug_count", "age", "sex_m"],
+                       output_dir=tmp_path, seed=seed)
+
+
+def test_hierarchical_predictor_rejects_old_label_space(tmp_path):
+    """구 6-class(Y_MIX) 번들은 현재 7-class STAGE2_LABELS 와 불일치 → 로드 거부.
+
+    d201743 류 silent train/serve skew 방지 — meta stage2_labels 가 현재와 다르면 거부.
+    """
+    import json
+    _train_7class_bundle(tmp_path)
+    meta_path = tmp_path / "stage_meta.json"
+    meta = json.loads(meta_path.read_text())
+    # 구 6-class 라벨 공간으로 변조 (Y_MIX 포함, Y_TRIPLE/Y_DOUBLE 없음)
+    meta["stage2_labels"] = ["Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG", "No_Alert"]
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False))
+
+    hp = HierarchicalPredictor()
+    assert hp.load(tmp_path) is False, "구 라벨 공간 번들이 로드됨 — 가드 실패"
+    assert hp.loaded is False
+
+
+def test_hierarchical_predictor_rejects_missing_stage2_labels(tmp_path):
+    """stage2_labels 메타 누락 시 추측 대신 거부(재학습 필요)."""
+    import json
+    _train_7class_bundle(tmp_path)
+    meta_path = tmp_path / "stage_meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta.pop("stage2_labels", None)
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False))
+
+    hp = HierarchicalPredictor()
+    assert hp.load(tmp_path) is False, "stage2_labels 누락 번들이 로드됨 — 가드 실패"
+
+
+def test_hierarchical_predictor_loads_current_7class(tmp_path):
+    """현재 7-class 라벨 공간 번들은 정상 로드(가드가 정상 번들을 막지 않음)."""
+    _train_7class_bundle(tmp_path)
+    hp = HierarchicalPredictor()
+    assert hp.load(tmp_path) is True
+    assert hp.loaded is True
+
+
 def test_hierarchical_predictor_missing_files(tmp_path):
     """stage1_red.joblib 없을 때 load() 는 False 반환."""
     # stage_meta.json 만 있고 나머지 없음

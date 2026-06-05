@@ -646,6 +646,22 @@ class HierarchicalPredictor:
             self._meta = json.loads(meta_path.read_text())
             self._thresholds = self._meta["thresholds"]
             self._feature_cols = self._meta["feature_cols"]
+            # 라벨 공간 정합 가드 (fail-fast, joblib 로드 전) — 구 번들(예: 6-class Y_MIX)이
+            # 현재 STAGE2_LABELS(7-class)와 불일치하면 predict_risk 의 local→global 슬롯이
+            # 어긋나 silent train/serve skew(d201743 전례)가 발생한다. 메타의 stage2_labels 가
+            # 현재와 정확히 같지 않거나 없으면 로드 거부(재학습 필요).
+            from hana_app.core.hierarchical_runner import (
+                STAGE2_LABELS as _CURRENT_STAGE2_LABELS,
+            )
+            _meta_labels = self._meta.get("stage2_labels")
+            if _meta_labels is None or list(_meta_labels) != list(_CURRENT_STAGE2_LABELS):
+                logger.error(
+                    "계층 모델 stage2 라벨 공간 불일치 — 로드 거부(재학습 필요): "
+                    "번들=%s vs 현재(%d)=%s",
+                    _meta_labels, len(_CURRENT_STAGE2_LABELS), list(_CURRENT_STAGE2_LABELS),
+                )
+                self._clear_state()
+                return False
             if not self._feature_cols:
                 logger.error(
                     "계층 모델 feature_cols 비어 있음 — 로드 거부: %s",
@@ -683,6 +699,23 @@ class HierarchicalPredictor:
             self._stage2 = bundle["model"]
             self._encoder = bundle["encoder"]
             self._classes_present = list(bundle["classes_present"])
+            # 인코더 객체 정합 가드 (belt-and-suspenders) — encoder.classes_ 는 학습 시
+            # 항상 full STAGE2_LABELS 로 강제되고(_make_stage2_encoder), classes_present 는
+            # 학습에 존재한 클래스의 global 인덱스 부분집합이다. 직렬화된 인코더가 현재
+            # STAGE2_LABELS 와 정확히 같지 않거나 classes_present 인덱스가 범위를 벗어나면
+            # (메타만 손편집된 혼합 번들 등) 거부.
+            _enc_classes = [str(c) for c in self._encoder.classes_]
+            if _enc_classes != list(_CURRENT_STAGE2_LABELS) or any(
+                not (0 <= int(gi) < len(_CURRENT_STAGE2_LABELS))
+                for gi in self._classes_present
+            ):
+                logger.error(
+                    "계층 모델 encoder.classes_/classes_present 정합 실패 — 로드 거부: "
+                    "enc=%s classes_present=%s 현재=%s",
+                    _enc_classes, self._classes_present, list(_CURRENT_STAGE2_LABELS),
+                )
+                self._clear_state()
+                return False
             logger.info(
                 "계층 모델 로드 완료: %s (τ_red=%.3f, τ_review=%.3f, %d features)",
                 model_dir,
