@@ -625,11 +625,14 @@ def train_hierarchical(
     }
 
 
+# Red 권장 개입 — Red 는 stage2 라벨이 아니라 risk_level/Stage1 로 분기하므로
+# ACTION_BY_LABEL 에 없고, _dispatch_result(확정 Red)와 결과분석 개입 분포가 공유한다.
+RED_ACTION: str = "즉각 개입"
+
 # Yellow 세부 라벨별 권장 개입.
 # 계수 기반(Y_TRIPLE/Y_DOUBLE)은 yellow 요소 개수로 개입 강도를 구분한다:
 #   Y_TRIPLE(요소 3개+) → 의료인 전화, Y_DOUBLE(요소 2개) → 문자 알림.
-# 단일 요소 라벨(Y_DDI_MAJOR 등)은 기존 임상 매핑 유지 — Red 는 stage2 라벨이
-# 아니라 risk_level 로 분기하므로 여기 없고, 표시단에서 "즉각 개입"(RED_ACTION)으로 합산.
+# 단일 요소 라벨(Y_DDI_MAJOR 등)은 기존 임상 매핑 유지.
 ACTION_BY_LABEL: dict[str, str] = {
     "Y_TRIPLE":     "의료인 전화",
     "Y_DOUBLE":     "문자 알림",
@@ -660,7 +663,7 @@ def _dispatch_result(
             "p_red": float(p_red),
             "stage2_probs": None,
             "red_suspect": False,
-            "action": "응급 개입",
+            "action": RED_ACTION,
         }
     if stage2_probs is None:
         raise ValueError(

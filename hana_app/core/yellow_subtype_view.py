@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from hana_app.core.hierarchical_runner import ACTION_BY_LABEL, YELLOW_SUBTYPE_LABELS
-
-# Red 권장 개입 라벨 — risk_level=="Red" 건은 stage2 라벨이 아니므로
-# ACTION_BY_LABEL 대신 여기서 개입 분포에 "즉각 개입"으로 합산한다.
-RED_ACTION = "즉각 개입"
+from hana_app.core.hierarchical_runner import (
+    ACTION_BY_LABEL,
+    RED_ACTION,
+    YELLOW_SUBTYPE_LABELS,
+)
 
 # Yellow 세부 라벨 컬러 팔레트 — 동일 "Yellow" 계열 내에서 세분화 시각화
 YELLOW_SUBTYPE_COLORS: dict[str, str] = {

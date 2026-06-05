@@ -346,7 +346,7 @@ def test_dispatch_red_confirmed_above_tau_red():
     )
     assert r["risk_level"] == "Red"
     assert r["red_suspect"] is False
-    assert r["action"] == "응급 개입"
+    assert r["action"] == "즉각 개입"
     assert r["stage2_probs"] is None
 
 

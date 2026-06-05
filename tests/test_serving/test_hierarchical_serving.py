@@ -115,7 +115,7 @@ def test_hierarchical_red_confirmed(req_normal):
     assert resp.yellow_subtype is None
     assert resp.stage2_probs is None
     assert resp.red_suspect is False
-    assert resp.action == "응급 개입"
+    assert resp.action == "즉각 개입"
 
 
 def test_hierarchical_red_suspect_band(req_normal):
