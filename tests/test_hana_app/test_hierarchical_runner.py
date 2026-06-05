@@ -500,9 +500,9 @@ def test_end_to_end_train_predict(tmp_path):
     for _ in range(30):
         features.append(_ft(ddi_major=1, dup_same_ingredient=1,
                              drug_count=rng.randint(3, 8)))
-    # Y_TRIPLE (30) — yellow 요소 3개 (DDI_MAJOR + DDI_MOD + FRAG)
+    # Y_TRIPLE (30) — 3 위험차원 (상호작용 + 중복 + 다기관)
     for _ in range(30):
-        features.append(_ft(ddi_major=1, ddi_moderate=2, institution_count=3,
+        features.append(_ft(ddi_major=1, dup_same_ingredient=1, institution_count=3,
                              drug_count=rng.randint(3, 8)))
     # Y_DDI_MAJOR (30)
     for _ in range(30):

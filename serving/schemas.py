@@ -150,7 +150,7 @@ class PredictResponse(BaseModel):
     )
     action:         Optional[str] = Field(
         None,
-        description="세부 라벨별 개입 액션 (Y_TRIPLE=의료인 전화, Y_DDI_MAJOR=약사 전화, Y_DOUBLE/Y_DDI_MOD/Y_FRAG=문자 알림 등)",
+        description="세부 라벨별 개입 액션 (Y_TRIPLE/Y_DDI_MAJOR=의료인 전화, Y_DOUBLE/Y_DDI_MOD/Y_FRAG=문자 알림, Y_DUP=문서+문자 등)",
     )
     dl_prediction:  Optional[DLPredictionResult] = Field(
         None,
