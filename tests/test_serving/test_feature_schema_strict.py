@@ -61,9 +61,12 @@ def _write_model(path: Path, feature_names: list[str], ddi_version: str | None =
 
 # ─── _validate_feature_schema 단위 ────────────────────────────────────────────
 
-def test_allowlist_includes_dup_efmdc():
-    """dup_efmdc 는 의도적 allowlist (serving 0.0 고정) — _FEATURE_ALLOWED 에 포함."""
-    assert "dup_efmdc" in _INTENTIONAL_FEATURE_ALLOWLIST
+def test_dup_efmdc_is_produced_feature():
+    """dup_efmdc 는 P2 에서 edi→efmdc 브릿지로 산출됨 → _BUILDER_KNOWN_COLS 에 포함,
+    의도적 미산출 allowlist 에서는 제거됨(더 이상 0.0 고정 아님)."""
+    from serving.predictor import _BUILDER_KNOWN_COLS
+    assert "dup_efmdc" in _BUILDER_KNOWN_COLS
+    assert "dup_efmdc" not in _INTENTIONAL_FEATURE_ALLOWLIST
     assert "dup_efmdc" in _FEATURE_ALLOWED
 
 

@@ -65,8 +65,9 @@ class CodeStandardizer:
         if extra_csv and Path(extra_csv).exists():
             self._load_extra(Path(extra_csv))
 
-        # ── EDI(제품코드) → WK(주성분코드) 브릿지 ───────────────────────────
+        # ── EDI(제품코드) → WK(주성분코드) + efmdc(약효분류) 브릿지 ─────────
         self._edi_wk: dict[str, str] = {}
+        self._edi_efmdc: dict[str, str] = {}
         self._load_edi_wk(Path(edi_wk_path))
 
         logger.info(
@@ -100,6 +101,11 @@ class CodeStandardizer:
             return
         for edi, wk in zip(df["edi_code"].astype(str), df["wk_compn_cd"].astype(str)):
             self._edi_wk[edi] = wk
+        # efmdc(약효분류) 컬럼 — dup_efmdc 정합용 (구 맵엔 없을 수 있음)
+        if "efmdc_clsf_no" in df.columns:
+            for edi, ef in zip(df["edi_code"].astype(str), df["efmdc_clsf_no"]):
+                if ef is not None and str(ef).strip() not in ("", "nan", "None"):
+                    self._edi_efmdc[str(edi)] = str(ef).strip()
 
     def get_wk(self, edi_code: str) -> Optional[str]:
         """제품코드(EDI) → 주성분코드(WK). 미매핑 시 None."""
@@ -107,6 +113,13 @@ class CodeStandardizer:
         if norm is None:
             return None
         return self._edi_wk.get(norm)
+
+    def get_efmdc(self, edi_code: str) -> Optional[str]:
+        """제품코드(EDI) → 약효분류번호(efmdc_clsf_no). 미매핑 시 None."""
+        norm = self._normalize_edi(edi_code)
+        if norm is None:
+            return None
+        return self._edi_efmdc.get(norm)
 
     # ── 레거시 EDI 매핑 로딩 ─────────────────────────────────────────────────
 

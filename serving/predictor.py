@@ -41,26 +41,21 @@ from .hana_history import HANAHistoryProvider
 logger = logging.getLogger(__name__)
 
 # RequestFeatureBuilder.build() 가 생성하는 컬럼 집합 — 계층 모델 호환성 검증용
-# dup_efmdc 는 serving 에서 DrugMaster 미로드로 0.0 고정 → 의도적으로 제외
+# dup_efmdc: edi→efmdc(HIRA 분류) 브릿지로 학습 정합 산출(P2). 브릿지 없으면 0.0 degraded.
 _BUILDER_KNOWN_COLS: frozenset[str] = frozenset({
     "drug_count", "institution_count", "age", "sex_m",
     "ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor",
     "avg_drug_duration", "long_term_drug_count",
-    "dup_same_ingredient", "dup_atc5", "dup_atc4", "dup_atc3",
+    "dup_same_ingredient", "dup_atc5", "dup_atc4", "dup_atc3", "dup_efmdc",
     "has_high_risk_drug", "has_renal_risk_drug", "has_hepatic_risk_drug",
     "cyp_risk_score", "cyp_high_risk_pairs", "cyp_max_enzyme_risk",
     "triple_whammy", "qt_risk_count", "drug_count_7d",
 })
 
-# 학습 모델은 사용할 수 있지만 serving 에선 산출 못 하는 의도된 컬럼.
-# (DrugMaster 미로드로 dup_efmdc=0.0 고정 — predictor.py:650)
-# 본 allowlist 외의 컬럼이 모델 feature_names 에 있으면 silent 0.0 fallback drift
-# 위험 — _validate_feature_schema 가 strict fail (Codex 2026-05-07 P1).
-#
-# *provisional*: dup_efmdc allowlist 는 prod 학습 모델의 importance 측정 결과 전까지
-# 잠정 분류. ≥ 1% 면 본 allowlist 에서 제거하고 DrugMaster 로드 또는 serving 측
-# 산출 추가가 정답. ≈ 0 이면 현행 유지 (Codex 2026-05-07 후속 결정).
-_INTENTIONAL_FEATURE_ALLOWLIST: frozenset[str] = frozenset({"dup_efmdc"})
+# serving 이 산출 못 하는 의도된 컬럼(현재 없음 — dup_efmdc 는 P2 에서 산출 추가됨).
+# 본 allowlist 외 컬럼이 모델 feature_names 에 있으면 silent 0.0 fallback drift 위험 →
+# _validate_feature_schema 가 strict fail (Codex 2026-05-07 P1).
+_INTENTIONAL_FEATURE_ALLOWLIST: frozenset[str] = frozenset()
 _FEATURE_ALLOWED: frozenset[str] = _BUILDER_KNOWN_COLS | _INTENTIONAL_FEATURE_ALLOWLIST
 
 
@@ -917,6 +912,7 @@ class RequestFeatureBuilder:
             rec = PrescriptionRecord(
                 patient_id="req", institution_id=str(d.institution_id or ""), bill_no=f"R{i}",
                 wk_compn_cd=(wk or str(d.edi_code)), edi_code=d.edi_code,
+                efmdc_clsf_no=(self._std.get_efmdc(d.edi_code) if wk else None),
                 start_date=sd, end_date=sd + timedelta(days=td - 1), total_days=td, source="serving",
             )
             all_recs.append(rec)
@@ -926,9 +922,9 @@ class RequestFeatureBuilder:
             else:
                 n_unmapped += 1
         # dup 피처: 학습 _fill_dup_features 공용 호출(단일출처, dup_groups 미사용→None).
-        # 재구성 record 는 atc_code 가 없으므로(학습 df_row_to_record 도 atc_code 미세팅)
-        # dup_same_ingredient=성분경로, dup_atc5/4/3=0 으로 학습과 정합. dup_efmdc 는
-        # efmdc 미보유로 0(의도, allowlist).
+        # atc_code 없음(학습 df_row_to_record 도 미세팅) → dup_same_ingredient=성분경로,
+        # dup_atc5/4/3=0 학습 정합. dup_efmdc 는 edi→efmdc(HIRA 분류, records efmdc 와
+        # 99.9% 동일) 로 채워 학습과 정합.
         _dup = PatientFeatures(patient_id="req", window_start=ref, window_end=ref)
         _fill_dup_features(_dup, mapped_recs, dup_groups=None, drug_master=drug_master)
         return {
@@ -938,6 +934,7 @@ class RequestFeatureBuilder:
             "dup_atc5": float(_dup.dup_atc5),
             "dup_atc4": float(_dup.dup_atc4),
             "dup_atc3": float(_dup.dup_atc3),
+            "dup_efmdc": float(_dup.dup_efmdc),
         }
 
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None) -> tuple[np.ndarray, dict]:
@@ -1002,8 +999,9 @@ class RequestFeatureBuilder:
                             else float(sum(1 for v in cnt4.values() if v >= 2)))
         feat["dup_atc3"] = (_cdup["dup_atc3"] if _cdup is not None
                             else float(sum(1 for v in cnt3.values() if v >= 2)))
-        # dup_efmdc: 약효분류 중복 — DrugMaster 미로드로 0.0 고정 (serving 제약)
-        feat["dup_efmdc"]           = 0.0
+        # dup_efmdc: 약효분류 중복 — 브릿지 있으면 edi→efmdc(HIRA 분류)로 학습 정합,
+        # 없으면 0.0(efmdc 출처 부재 degraded).
+        feat["dup_efmdc"] = (_cdup["dup_efmdc"] if _cdup is not None else 0.0)
 
         # ── CYP 피처 ──────────────────────────────────────────────────────
         if self._cyp and atc_codes:
