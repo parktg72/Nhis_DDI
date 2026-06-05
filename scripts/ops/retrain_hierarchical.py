@@ -1,4 +1,4 @@
-"""계층(hierarchical) 모델 헤드리스 재학습 — same-window 분류기.
+"""계층(hierarchical) 모델 헤드리스 재학습 - same-window 분류기.
 
 Page 3 (RAW → hierarchical) 데스크톱 흐름을 CLI 로 재현해, 동일 raw Parquet 에서
 앱과 **같은 함수**(`build_patient_features_from_parquet` → `_patient_features_to_row`
@@ -36,6 +36,7 @@ from hana_app.core.ml_runner import (
     build_patient_features_from_parquet,
 )
 from hana_app.core.hierarchical_runner import STAGE2_LABELS, train_hierarchical
+from scripts.etl.models import PatientFeatures
 
 
 def collect_raw_paths(raw_dir: str | Path, glob: str = "records_*.parquet") -> list[Path]:
@@ -73,7 +74,11 @@ def retrain_hierarchical(
     cols = list(feature_cols) if feature_cols is not None else list(FEATURE_COLS)
     out = Path(output_dir)
 
-    log_cb(f"[1/3] 피처 계산 — raw 파일 {len(raw_paths)}개")
+    log_cb(f"[1/3] 피처 계산 - raw 파일 {len(raw_paths)}개")
+    # build_patient_features_from_parquet 는 실제로 **피처 배치 Parquet 경로(list[Path])**
+    # 를 반환한다(소량·대량 분기 모두; -> list[PatientFeatures] 주석은 stale). 각 parquet 는
+    # _patient_features_to_row 전체 스키마(risk_level/yellow_subtype/FEATURE_COLS)를 가진다.
+    # 방어적으로 PatientFeatures 리스트 반환 경우도 처리.
     features = build_patient_features_from_parquet(
         parquet_paths=list(raw_paths),
         window_days=window_days,
@@ -83,12 +88,15 @@ def retrain_hierarchical(
         progress_cb=log_cb,
     )
     if not features:
-        raise ValueError("피처 0건 — raw 데이터/필터(poly_threshold)를 확인하세요.")
+        raise ValueError("피처 0건 - raw 데이터/필터(poly_threshold)를 확인하세요.")
 
-    log_cb(f"[2/3] DataFrame 변환 — 환자 {len(features):,}명")
-    df = pd.DataFrame([_patient_features_to_row(f) for f in features])
+    log_cb(f"[2/3] DataFrame 변환 - 피처 산출 {len(features)}건")
+    if isinstance(features[0], PatientFeatures):
+        df = pd.DataFrame([_patient_features_to_row(f) for f in features])
+    else:  # list[Path] - 디스크 배치 parquet (실제 계약, Page3 와 동일 경로)
+        df = pd.concat([pd.read_parquet(p) for p in features], ignore_index=True)
 
-    log_cb(f"[3/3] 계층 학습 — feature_cols={len(cols)}, output={out}")
+    log_cb(f"[3/3] 계층 학습 - feature_cols={len(cols)}, output={out}")
     result = train_hierarchical(
         df=df,
         feature_cols=cols,
@@ -123,6 +131,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows 폐쇄망 콘솔(cp949)에서 한글/유니코드 로그가 UnicodeEncodeError 로 죽지
+    # 않도록 stdout/stderr 를 UTF-8 로 재설정(chcp 65001 정합). 리다이렉트/구버전 대비 guard.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+        except Exception:
+            pass
     args = build_parser().parse_args(argv)
     raw_paths = collect_raw_paths(args.raw_dir, args.glob)
     output_dir = args.output_dir or (

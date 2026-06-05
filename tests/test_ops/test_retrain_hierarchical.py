@@ -59,31 +59,54 @@ def _synthetic_cohort() -> list[PatientFeatures]:
     return feats
 
 
-def test_retrain_produces_7class_bundle(tmp_path, monkeypatch):
+def test_retrain_produces_7class_bundle_from_parquet_paths(tmp_path, monkeypatch):
+    """실제 계약: build_patient_features_from_parquet 는 피처 배치 Parquet 경로를 반환.
+
+    mock 이 _patient_features_to_row 스키마 parquet 를 써서 list[Path] 를 반환 →
+    스크립트의 pd.read_parquet 분기(실 풀런 경로)를 행사한다.
+    """
+    import pandas as pd
+    from hana_app.core.ml_runner import _patient_features_to_row
+
     cohort = _synthetic_cohort()
-    monkeypatch.setattr(rh, "build_patient_features_from_parquet", lambda **kw: cohort)
+    feat_path = tmp_path / "features_batch_0000.parquet"
+    pd.DataFrame([_patient_features_to_row(f) for f in cohort]).to_parquet(feat_path, index=False)
+    monkeypatch.setattr(rh, "build_patient_features_from_parquet", lambda **kw: [feat_path])
 
     out = tmp_path / "bundle"
     result = rh.retrain_hierarchical(
-        raw_paths=[tmp_path / "records_dummy.parquet"],  # monkeypatch 로 미사용
+        raw_paths=[tmp_path / "records_dummy.parquet"],
         output_dir=out,
         seed=7,
         log_cb=lambda *_a, **_k: None,
     )
 
-    # 번들 파일 산출
     assert (out / "stage1_red.joblib").exists()
     assert (out / "stage2_yellow.joblib").exists()
     meta = json.loads((out / "stage_meta.json").read_text())
-
     # 라벨 공간 = 현재 7-class (서빙 가드 통과 조건)
     assert meta["stage2_labels"] == list(STAGE2_LABELS)
     assert len(STAGE2_LABELS) == 7
     assert result["n_patients"] == len(cohort)
-    # 계수 라벨이 실제로 분포에 존재
     counts = meta["stage2_label_counts"]
     assert counts.get("Y_TRIPLE", 0) > 0
     assert counts.get("Y_DOUBLE", 0) > 0
+
+
+def test_retrain_handles_patient_features_list(tmp_path, monkeypatch):
+    """방어적 분기: 빌더가 list[PatientFeatures] 를 반환해도 동작."""
+    cohort = _synthetic_cohort()
+    monkeypatch.setattr(rh, "build_patient_features_from_parquet", lambda **kw: cohort)
+    out = tmp_path / "bundle2"
+    result = rh.retrain_hierarchical(
+        raw_paths=[tmp_path / "records_dummy.parquet"],
+        output_dir=out,
+        seed=7,
+        log_cb=lambda *_a, **_k: None,
+    )
+    meta = json.loads((out / "stage_meta.json").read_text())
+    assert meta["stage2_labels"] == list(STAGE2_LABELS)
+    assert result["n_patients"] == len(cohort)
 
 
 def test_collect_raw_paths_missing_dir(tmp_path):
