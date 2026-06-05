@@ -15,10 +15,13 @@ from scripts.datasets.contracts import (
 
 DEFAULT_SCHEMA_VERSION = "dl.v1"
 DEFAULT_RUN_ID = "smoke-dl"
+# 운영 vocab(scripts/ops/build_drug_vocab)은 "_unk" 을 index 0 에 둔다. smoke 번들도
+# 동일 관례를 따라 OOV→_unk 매핑 경로(serving._encode_history)를 실제로 행사한다.
 DEFAULT_DRUG_VOCAB = {
-    "D1": 0,
-    "D2": 1,
-    "D3": 2,
+    "_unk": 0,
+    "D1": 1,
+    "D2": 2,
+    "D3": 3,
 }
 DEFAULT_OUTPUT_LABELS = ["low", "high"]
 
