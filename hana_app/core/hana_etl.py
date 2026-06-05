@@ -99,12 +99,13 @@ _RECORD_COLS = [
 
 _AGE_CASE_SQL = """
 CASE
-    WHEN "{byear_col}" IS NULL THEN 'unknown'
-    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 0 THEN 'unknown'
-    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 20 THEN '0-19'
-    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 40 THEN '20-39'
-    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 60 THEN '40-59'
-    WHEN (? - CAST("{byear_col}" AS INTEGER)) < 75 THEN '60-74'
+    WHEN "{byear_col}" IS NULL OR TRIM("{byear_col}") = '' THEN 'unknown'
+    WHEN NOT (TRIM("{byear_col}") LIKE_REGEXPR '^[0-9]+$') THEN 'unknown'
+    WHEN (? - CAST(TRIM("{byear_col}") AS INTEGER)) < 0 THEN 'unknown'
+    WHEN (? - CAST(TRIM("{byear_col}") AS INTEGER)) < 20 THEN '0-19'
+    WHEN (? - CAST(TRIM("{byear_col}") AS INTEGER)) < 40 THEN '20-39'
+    WHEN (? - CAST(TRIM("{byear_col}") AS INTEGER)) < 60 THEN '40-59'
+    WHEN (? - CAST(TRIM("{byear_col}") AS INTEGER)) < 75 THEN '60-74'
     ELSE '75+'
 END
 """.strip()
@@ -123,14 +124,14 @@ def _allocate_sampling_quotas(
         return []
 
     alloc: list[dict[str, object]] = []
-    for row in counts_df.itertuples(index=False):
-        cnt = int(getattr(row, "POP_COUNT"))
+    for row in counts_df.to_dict(orient="records"):
+        cnt = int(row["POP_COUNT"])
         exact = cnt / total * sample_size
         quota = min(int(exact), cnt)
         alloc.append({
-            "sex": getattr(row, "_SEX"),
-            "age_grp": getattr(row, "_AGE_GRP"),
-            "addr": getattr(row, "_ADDR"),
+            "sex": row["_SEX"],
+            "age_grp": row["_AGE_GRP"],
+            "addr": row["_ADDR"],
             "count": cnt,
             "quota": quota,
             "fractional": exact - quota,
@@ -914,8 +915,12 @@ ORDER BY "{pid_col}" ASC
                     sex   = str(getattr(row, sex_col, "") or "").strip() or None
                     addr  = str(getattr(row, addr_col, "") or "").strip()
                     if pid:
+                        try:
+                            byear_val = int(str(byear).strip()) if byear is not None and str(byear).strip() != "" else None
+                        except (ValueError, TypeError):
+                            byear_val = None
                         result[pid] = {
-                            "byear":    int(byear) if byear is not None else None,
+                            "byear":    byear_val,
                             "sex_type": sex,
                             "addr_cd":  addr[:addr_digits] if addr else None,
                         }
@@ -1187,7 +1192,8 @@ ORDER BY "{pid_col}" ASC
         """
         if save_dir is None:
             save_dir = RAW_DIR
-        save_dir = Path(save_dir)
+        import uuid
+        save_dir = Path(save_dir) / f"run_{uuid.uuid4().hex[:8]}"
         save_dir.mkdir(parents=True, exist_ok=True)
 
         analysis_start = f"{year_from}{month_from}"

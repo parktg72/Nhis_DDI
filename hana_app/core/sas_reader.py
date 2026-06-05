@@ -974,7 +974,8 @@ class SASExtractor:
 
         if save_dir is None:
             save_dir = Path(__file__).parent.parent.parent / "data" / "raw"
-        save_dir = Path(save_dir)
+        import uuid
+        save_dir = Path(save_dir) / f"run_{uuid.uuid4().hex[:8]}"
         save_dir.mkdir(parents=True, exist_ok=True)
 
         analysis_start = f"{year_from}{month_from}"
