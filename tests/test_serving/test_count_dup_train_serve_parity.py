@@ -44,7 +44,8 @@ SCENARIOS = [
     ("partial_concurrent", [(*A, _REF, 5), (*B, _REF - timedelta(days=20), 10)]),  # 일부만 동시
 ]
 
-_KEYS = ("drug_count", "drug_count_7d", "dup_same_ingredient")
+_KEYS = ("drug_count", "drug_count_7d", "dup_same_ingredient",
+         "dup_atc5", "dup_atc4", "dup_atc3")
 
 _need_data = pytest.mark.skipif(
     not (MASTER.exists() and DDIMTX.exists() and EDIWK.exists()),
