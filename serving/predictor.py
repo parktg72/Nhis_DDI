@@ -897,16 +897,16 @@ class RequestFeatureBuilder:
         edi→wk(code_standardizer)→DrugMaster 로 학습과 동일 함수 호출:
           drug_count        = len(expand_drug_count(매핑 wk)) + 미매핑 약물 수
           drug_count_7d     = get_concurrent_drug_count(전 약물 record, ref)
-          dup_same_ingredient = count_same_ingredient_dups(매핑 record, drug_master)
+          dup_same_ingredient/dup_atc5/4/3 = _fill_dup_features(매핑 record, drug_master)
         브릿지/DrugMaster 부재 시 None → build() 가 기존(edi 기반) fallback 사용.
         미매핑 EDI: drug_count 엔 +1(약물은 약물), dup 엔 제외(성분 모름=degraded).
         """
         drug_master = self._drug_master()
         if self._std is None or drug_master is None:
             return None
-        from scripts.etl.models import PrescriptionRecord
+        from scripts.etl.models import PrescriptionRecord, PatientFeatures
         from scripts.etl.overlap_calculator import get_concurrent_drug_count
-        from scripts.etl.prescription_aggregator import count_same_ingredient_dups
+        from scripts.etl.prescription_aggregator import _fill_dup_features
 
         all_recs, mapped_recs, mapped_wks = [], [], []
         n_unmapped = 0
@@ -925,10 +925,19 @@ class RequestFeatureBuilder:
                 mapped_wks.append(wk)
             else:
                 n_unmapped += 1
+        # dup 피처: 학습 _fill_dup_features 공용 호출(단일출처, dup_groups 미사용→None).
+        # 재구성 record 는 atc_code 가 없으므로(학습 df_row_to_record 도 atc_code 미세팅)
+        # dup_same_ingredient=성분경로, dup_atc5/4/3=0 으로 학습과 정합. dup_efmdc 는
+        # efmdc 미보유로 0(의도, allowlist).
+        _dup = PatientFeatures(patient_id="req", window_start=ref, window_end=ref)
+        _fill_dup_features(_dup, mapped_recs, dup_groups=None, drug_master=drug_master)
         return {
             "drug_count": float(len(drug_master.expand_drug_count(mapped_wks)) + n_unmapped),
             "drug_count_7d": float(get_concurrent_drug_count(all_recs, ref)),
-            "dup_same_ingredient": float(count_same_ingredient_dups(mapped_recs, drug_master)),
+            "dup_same_ingredient": float(_dup.dup_same_ingredient),
+            "dup_atc5": float(_dup.dup_atc5),
+            "dup_atc4": float(_dup.dup_atc4),
+            "dup_atc3": float(_dup.dup_atc3),
         }
 
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None) -> tuple[np.ndarray, dict]:
@@ -985,9 +994,14 @@ class RequestFeatureBuilder:
         cnt3 = Counter(c[:4] for c in atc_codes if len(c) >= 4)         # 4-prefix
         feat["dup_same_ingredient"] = (_cdup["dup_same_ingredient"] if _cdup is not None
                                        else float(sum(1 for v in cnt5.values() if v >= 2)))
-        feat["dup_atc5"]            = float(sum(1 for v in cnt5.values() if v >= 2))
-        feat["dup_atc4"]            = float(sum(1 for v in cnt4.values() if v >= 2))
-        feat["dup_atc3"]            = float(sum(1 for v in cnt3.values() if v >= 2))
+        # dup_atc5/4/3: 브릿지 있으면 학습 정합(_fill_dup_features, atc_code 미보유→0;
+        # 학습 records 도 atc_code 없어 항상 0). 브릿지 없으면 기존 ATC 기반 fallback.
+        feat["dup_atc5"] = (_cdup["dup_atc5"] if _cdup is not None
+                            else float(sum(1 for v in cnt5.values() if v >= 2)))
+        feat["dup_atc4"] = (_cdup["dup_atc4"] if _cdup is not None
+                            else float(sum(1 for v in cnt4.values() if v >= 2)))
+        feat["dup_atc3"] = (_cdup["dup_atc3"] if _cdup is not None
+                            else float(sum(1 for v in cnt3.values() if v >= 2)))
         # dup_efmdc: 약효분류 중복 — DrugMaster 미로드로 0.0 고정 (serving 제약)
         feat["dup_efmdc"]           = 0.0
 
