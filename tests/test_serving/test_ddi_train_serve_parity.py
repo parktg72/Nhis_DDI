@@ -35,6 +35,7 @@ if str(ROOT) not in sys.path:
 MASTER = ROOT / "data" / "processed" / "hira_drug_master.parquet"
 DDIMTX = ROOT / "data" / "processed" / "ddi_matrix_final.parquet"
 DRUGIDX = ROOT / "data" / "processed" / "drug_name_index.parquet"
+EDIWK = ROOT / "data" / "processed" / "edi_to_wk.parquet"  # Task B EDI→WK 브릿지
 
 A = ("421001ATB", "660700010")  # mosapride
 B = ("480600ATB", "642902720")  # tramadol + APAP  (A×B = Major)
@@ -52,8 +53,8 @@ SCENARIOS = [
 ]
 
 _need_data = pytest.mark.skipif(
-    not (MASTER.exists() and DDIMTX.exists()),
-    reason="DDI/DrugMaster 데이터 파일 없음(이 환경)",
+    not (MASTER.exists() and DDIMTX.exists() and EDIWK.exists()),
+    reason="DDI/DrugMaster/EDI→WK 데이터 파일 없음(이 환경)",
 )
 
 
@@ -124,11 +125,12 @@ def test_training_ddi_matches_expected(name, drugs, expected):
 
 @_need_data
 @pytest.mark.parametrize("name,drugs,expected", SCENARIOS, ids=[s[0] for s in SCENARIOS])
-@pytest.mark.xfail(reason="Task B serving-side DDI 정합 미구현(edi→wk→DB-code + overlap)", strict=False)
 def test_serving_ddi_parity_with_training(name, drugs, expected):
-    """SPEC: serving ddi_* == training ddi_* (동일 약물·날짜). serving 정합 후 xfail 제거.
+    """serving ddi_* == training ddi_* (동일 약물·날짜). Task B 정합 완료(2026-06-05).
 
-    특히 major_no_overlap: 서빙이 날짜 무시 all-pairs 로 세면 train(0)≠serve(>0) 스큐.
+    serving 이 edi→wk(code_standardizer.get_wk)→PrescriptionRecord 재구성→
+    calculate_overlaps_for_patient→count_ddi_severities(학습과 동일 공용함수)를 호출하므로
+    날짜 미겹침(major_no_overlap)도 overlap 0 → DDI 0 으로 학습과 일치(all-pairs 스큐 제거).
     """
     train = _training_ddi(drugs)
     serve = _serving_ddi(drugs)

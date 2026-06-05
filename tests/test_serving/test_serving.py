@@ -161,19 +161,22 @@ class TestPredictionLogic:
         assert vec.ndim == 1
         assert len(vec) > 0
 
-    def test_feature_builder_ddi_counts(self, warfarin_nsaid_drugs):
-        """ATC 기반 DDI 카운트 계산."""
+    def test_feature_builder_ddi_requires_bridge(self, warfarin_nsaid_drugs):
+        """Task B: DDI 피처는 edi→wk(code_standardizer)+drug_master+overlap 경로 필요.
+
+        구 ATC all-pairs 경로는 제거됨(프로덕션 ddi_matrix 에 ATC 컬럼 없어 항상 0이던
+        깨진 경로). code_standardizer 없으면 degraded 로 0 — 실제 train/serve 정합 검증은
+        tests/test_serving/test_ddi_train_serve_parity.py 가 실데이터로 담당.
+        """
         import pandas as pd
-        # 간이 DDI 매트릭스
         ddi_df = pd.DataFrame([{
-            "drug_a_atc": "B01AA03", "drug_b_atc": "M01AE01",
-            "severity": "Contraindicated",
+            "drug_a_id": "DB001", "drug_b_id": "DB002", "severity": "Contraindicated",
             "drug_a_name": "warfarin", "drug_b_name": "ibuprofen",
         }])
-        builder = RequestFeatureBuilder(ddi_matrix=ddi_df)
+        builder = RequestFeatureBuilder(ddi_matrix=ddi_df)  # code_standardizer 없음
         req = PredictRequest(patient_id="P001", drugs=warfarin_nsaid_drugs)
         vec, feat = builder.build(req)
-        assert feat["ddi_contraindicated"] == 1.0
+        assert feat["ddi_contraindicated"] == 0.0  # 브릿지 없으면 미평가(0)
 
     def test_ml_classify_threshold(self):
         from serving.predictor import MLModel

@@ -204,27 +204,25 @@ def _get_ddi_lookup(ddi_matrix: pd.DataFrame) -> dict[frozenset, str]:
     return ddi_lookup
 
 
-def _fill_ddi_features(
-    features: PatientFeatures,
+def ddi_pair_severities(
     pairs: list[DrugOverlapPair],
     ddi_matrix: pd.DataFrame,
     drug_master: DrugMaster | None = None,
-) -> None:
-    """
-    동시복용 쌍 × DDI 매트릭스 → 심각도별 카운트.
+) -> list[tuple[DrugOverlapPair, str]]:
+    """각 동시복용 쌍의 최고 DDI 심각도. (pair, severity) 리스트(미평가 쌍 제외).
 
-    DDI 조회 경로 (우선순위):
-      1. DrugMaster: WK_COMPN_CD → 성분명 → DDI ID (drug_a_id/drug_b_id)
-         - 복합제의 경우 각 성분의 ID 쌍을 cross-product로 검사
-      2. Fallback: WK_COMPN_CD 직접 비교 (DrugMaster 미사용 시)
+    학습·서빙 **단일 출처**: DrugMaster WK_COMPN_CD → 성분명 → DDI ID, 복합제는 성분 ID
+    쌍 cross-product 에서 최고 심각도. count_ddi_severities·서빙 DDI 피처·DDI 알림이 모두
+    이 함수를 거쳐 train/serve 스큐를 차단한다(d201743 전례).
     """
-    if "severity" not in ddi_matrix.columns:
-        return
+    out: list[tuple[DrugOverlapPair, str]] = []
+    if "severity" not in ddi_matrix.columns or drug_master is None:
+        # ddi_lookup 은 drug_a_id/drug_b_id 기반 → drug_master 없으면 WK 직접조회 불가 → 미평가.
+        return out
 
     ddi_lookup = _get_ddi_lookup(ddi_matrix)
 
     def _best_severity_for_pair(ids_a: list[str], ids_b: list[str]) -> str | None:
-        """두 약물의 DDI ID 목록 cross-product에서 최고 심각도 반환."""
         best: str | None = None
         for ia in ids_a:
             for ib in ids_b:
@@ -234,29 +232,41 @@ def _fill_ddi_features(
         return best
 
     for pair in pairs:
-        severity = None
+        ids_a = drug_master.get_ddi_ids(pair.drug_a_wk_compn)
+        ids_b = drug_master.get_ddi_ids(pair.drug_b_wk_compn)
+        if not (ids_a and ids_b):
+            continue
+        severity = _best_severity_for_pair(ids_a, ids_b)
+        if severity:
+            out.append((pair, severity))
+    return out
 
-        if drug_master is not None:
-            # ── 성분명 기반 조회 (복합제 전개 포함) ────────────────────────
-            ids_a = drug_master.get_ddi_ids(pair.drug_a_wk_compn)
-            ids_b = drug_master.get_ddi_ids(pair.drug_b_wk_compn)
-            if ids_a and ids_b:
-                severity = _best_severity_for_pair(ids_a, ids_b)
 
-        if severity is None:
-            # DrugMaster 없거나 미매핑 쌍: ddi_lookup은 drug_a_id/drug_b_id 기반이므로
-            # WK_COMPN_CD로 조회하면 다른 식별자 공간 → 항상 미매칭.
-            # 잘못된 폴백 대신 해당 쌍은 미평가 처리(severity=None 유지).
-            pass
+def count_ddi_severities(
+    pairs: list[DrugOverlapPair],
+    ddi_matrix: pd.DataFrame,
+    drug_master: DrugMaster | None = None,
+) -> dict[str, int]:
+    """동시복용 쌍 → 심각도별 카운트 dict. ddi_pair_severities 위에 구성(단일 출처)."""
+    counts = {"Contraindicated": 0, "Major": 0, "Moderate": 0, "Minor": 0}
+    for _pair, sev in ddi_pair_severities(pairs, ddi_matrix, drug_master):
+        if sev in counts:
+            counts[sev] += 1
+    return counts
 
-        if severity == "Contraindicated":
-            features.ddi_contraindicated += 1
-        elif severity == "Major":
-            features.ddi_major += 1
-        elif severity == "Moderate":
-            features.ddi_moderate += 1
-        elif severity == "Minor":
-            features.ddi_minor += 1
+
+def _fill_ddi_features(
+    features: PatientFeatures,
+    pairs: list[DrugOverlapPair],
+    ddi_matrix: pd.DataFrame,
+    drug_master: DrugMaster | None = None,
+) -> None:
+    """동시복용 쌍 × DDI → features.ddi_* 누적. 카운트는 count_ddi_severities(공용)."""
+    counts = count_ddi_severities(pairs, ddi_matrix, drug_master)
+    features.ddi_contraindicated += counts["Contraindicated"]
+    features.ddi_major += counts["Major"]
+    features.ddi_moderate += counts["Moderate"]
+    features.ddi_minor += counts["Minor"]
 
 
 def _fill_dup_features(
