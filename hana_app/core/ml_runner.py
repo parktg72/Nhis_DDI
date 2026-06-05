@@ -384,22 +384,38 @@ def _flush_features_to_parquet(
 
 
 def load_features_from_parquet(
-    parquet_path: "str | Path",
+    parquet_path: "str | Path | list[str | Path]",
     columns: list[str] | None = None,
     memory_limit_mb: int = 0,
 ) -> pd.DataFrame:
-    """DuckDB로 피처 Parquet 읽기 (디스크 스필 지원). 단일 파일 또는 glob."""
-    p = Path(parquet_path)
+    """DuckDB로 피처 Parquet 읽기 (디스크 스필 지원).
+
+    `parquet_path` 는 단일 파일/ glob 문자열, 또는 **여러 파일 경로의 리스트**를
+    받는다 (다운로드 Raw / 디스크기반 피처빌드는 배치당 Parquet 한 개씩 → list 반환).
+    DuckDB `read_parquet([...])` 는 파일 목록을 네이티브로 지원한다.
+    """
     mem = max(256, (memory_limit_mb // 2) if memory_limit_mb > 0 else PROCESS_MEMORY_LIMIT_MB // 2)
     cols = ", ".join(columns) if columns else "*"
 
+    is_list = isinstance(parquet_path, (list, tuple))
+    if is_list and not parquet_path:
+        raise ValueError("load_features_from_parquet: 빈 경로 리스트")
+
     if _duckdb_available():
-        # glob 패턴 또는 단일 파일
-        pattern = p.as_posix()
+        if is_list:
+            posix = [Path(x).as_posix() for x in parquet_path]
+            src = "[" + ", ".join(f"'{x}'" for x in posix) + "]"  # read_parquet(['a','b'])
+        else:
+            src = f"'{Path(parquet_path).as_posix()}'"            # 단일 파일/glob
         with _duck_con(memory_limit_mb=mem) as con:
-            return con.execute(f"SELECT {cols} FROM read_parquet('{pattern}')").df()
+            return con.execute(f"SELECT {cols} FROM read_parquet({src})").df()
     else:
-        return pd.read_parquet(p, columns=columns)
+        if is_list:
+            return pd.concat(
+                [pd.read_parquet(x, columns=columns) for x in parquet_path],
+                ignore_index=True,
+            )
+        return pd.read_parquet(Path(parquet_path), columns=columns)
 
 
 # ── 피처 Parquet 디렉토리 ────────────────────────────────────────────────
@@ -714,6 +730,7 @@ def build_patient_features(
     # DDI 매트릭스 로드 시도
     ddi_matrix = _load_ddi_matrix()
     dup_groups = _load_dup_groups()
+    drug_master = _load_drug_master()   # 성분명 기반 DDI 중증도 매칭(없으면 ddi_*=0)
     age_map = _load_age_map()
     demographics = _load_demographics()
     cyp_ext = _load_cyp_extractor()
@@ -754,6 +771,7 @@ def build_patient_features(
             age=age_map.get(pid),
             sex=demo.get("sex_type"),
             addr_cd=demo.get("addr_cd"),
+            drug_master=drug_master,
             cyp_extractor=cyp_ext,
         )
         features_list.append(feat)
@@ -935,6 +953,7 @@ def build_patient_features_from_parquet(
 
     ddi_matrix = _load_ddi_matrix()
     dup_groups = _load_dup_groups()
+    drug_master = _load_drug_master()   # 성분명 기반 DDI 중증도 매칭(없으면 ddi_*=0)
     age_map = _load_age_map()
     demographics = _load_demographics()
     cyp_ext = _load_cyp_extractor()
@@ -971,7 +990,7 @@ def build_patient_features_from_parquet(
         return _build_features_simple(
             parquet_paths, ddi_matrix, dup_groups,
             window_days, poly_threshold, patient_batch_size, progress_cb,
-            progress_pct_cb, memory_limit_mb=mem_limit,
+            progress_pct_cb, memory_limit_mb=mem_limit, drug_master=drug_master,
         )
 
     # ── Phase 2: 디스크 기반 해시 파티셔닝 ────────────────────────
@@ -1121,6 +1140,7 @@ def build_patient_features_from_parquet(
                                 age=age_map.get(pid),
                                 sex=demo.get("sex_type"),
                                 addr_cd=demo.get("addr_cd"),
+                                drug_master=drug_master,
                                 cyp_extractor=cyp_ext,
                             )
                             _flush_buf.append(feat)
@@ -1174,6 +1194,7 @@ def build_patient_features_from_parquet(
                         age=age_map.get(pid),
                         sex=demo.get("sex_type"),
                         addr_cd=demo.get("addr_cd"),
+                        drug_master=drug_master,
                         cyp_extractor=cyp_ext,
                     )
                     _flush_buf.append(feat)
@@ -1216,6 +1237,7 @@ def _build_features_simple(
     progress_cb: Callable[[str], None] | None,
     progress_pct_cb: Callable[[float], None] | None = None,
     memory_limit_mb: int = 0,
+    drug_master=None,
 ) -> list[PatientFeatures]:
     """소량 데이터용 – 전체 로드 후 배치 처리. DuckDB 사용 시 디스크 스필."""
     import gc
@@ -1326,6 +1348,7 @@ def _build_features_simple(
                 age=age_map.get(pid),
                 sex=demo.get("sex_type"),
                 addr_cd=demo.get("addr_cd"),
+                drug_master=drug_master,
                 cyp_extractor=cyp_ext,
             )
             _flush_buf.append(feat)
@@ -1376,6 +1399,39 @@ def _load_dup_groups() -> pd.DataFrame | None:
         ROOT / "data" / "processed" / "efcy_duplicate_groups.parquet",
         ROOT / "drugbank" / "efcy_duplicate_groups.parquet",
     ])
+
+
+_DRUG_MASTER_CACHE: dict = {"obj": None, "loaded": False}
+
+
+def _load_drug_master():
+    """HIRA DrugMaster (WK_COMPN_CD→성분명→DDI ID) 로드 — 캐시. 없으면 None.
+
+    이 객체가 None 이면 `_fill_ddi_features` 가 성분명 기반 DDI 매칭을 못 해
+    ddi_contraindicated/major/moderate/minor 가 전부 0 이 되고, 결과적으로 Red·
+    Y_DDI_MAJOR/MOD 라벨이 소실된다(2026-06-05 실증). 앱 피처빌더가 이걸 안
+    넘기던 것이 DDI 중증도=0 의 근본 원인이었다.
+    """
+    if _DRUG_MASTER_CACHE["loaded"]:
+        return _DRUG_MASTER_CACHE["obj"]
+    obj = None
+    try:
+        from scripts.etl.drug_master import DrugMaster
+        master_path = ROOT / "data" / "processed" / "hira_drug_master.parquet"
+        ddi_path = ROOT / "data" / "processed" / "ddi_matrix_final.parquet"
+        if master_path.exists():
+            obj = DrugMaster.load_parquet(parquet_path=master_path, ddi_matrix_path=ddi_path)
+            logger.info("DrugMaster 로드 완료 — DDI 중증도 매칭 활성화")
+        else:
+            logger.warning(
+                "hira_drug_master.parquet 없음(%s) — DDI 중증도 매칭 불가(ddi_*=0). "
+                "scripts/etl/drug_master.py build_and_save 로 생성 필요.", master_path,
+            )
+    except Exception as e:  # noqa: BLE001 — 로드 실패 시 degrade(현행 동작 유지)
+        logger.warning("DrugMaster 로드 실패: %s — DDI 중증도 0 으로 진행", e)
+    _DRUG_MASTER_CACHE["obj"] = obj
+    _DRUG_MASTER_CACHE["loaded"] = True
+    return obj
 
 
 AGE_MAP_PATH = ROOT / "data" / "raw" / "eligibility_ages.parquet"
