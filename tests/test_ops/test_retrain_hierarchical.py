@@ -125,3 +125,17 @@ def test_collect_raw_paths_sorted(tmp_path):
         (tmp_path / name).write_bytes(b"")
     paths = rh.collect_raw_paths(tmp_path)
     assert [p.name for p in paths] == ["records_a.parquet", "records_b.parquet"]
+
+
+def test_collect_raw_paths_multiple_globs(tmp_path):
+    """다중 glob 패턴 합집합·dedupe (윈도우 학습: 07~11 = Dec 제외)."""
+    for name in ("records_202407.parquet", "records_202411.parquet",
+                 "records_202412.parquet"):
+        (tmp_path / name).write_bytes(b"")
+    paths = rh.collect_raw_paths(
+        tmp_path, ["records_20240[7-9]*.parquet", "records_20241[01]*.parquet"])
+    names = [p.name for p in paths]
+    assert names == ["records_202407.parquet", "records_202411.parquet"]  # Dec 제외
+    # 패턴 겹쳐도 dedupe
+    dup = rh.collect_raw_paths(tmp_path, ["records_*.parquet", "records_202407.parquet"])
+    assert len(dup) == 3

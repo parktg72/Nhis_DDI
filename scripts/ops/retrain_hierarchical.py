@@ -39,14 +39,22 @@ from hana_app.core.hierarchical_runner import STAGE2_LABELS, train_hierarchical
 from scripts.etl.models import PatientFeatures
 
 
-def collect_raw_paths(raw_dir: str | Path, glob: str = "records_*.parquet") -> list[Path]:
-    """raw_dir 에서 glob 패턴에 맞는 Parquet 경로를 정렬해 반환 (flat)."""
+def collect_raw_paths(raw_dir: str | Path, glob="records_*.parquet") -> list[Path]:
+    """raw_dir 에서 glob 패턴(들)에 맞는 Parquet 경로를 정렬·dedupe 해 반환 (flat).
+
+    glob 은 단일 문자열 또는 패턴 리스트. 윈도우 학습(예: 07~11 = Dec 제외)에
+    여러 패턴(records_20240[7-9]*.parquet, records_20241[01]*.parquet)을 합집합.
+    """
     raw_path = Path(raw_dir)
     if not raw_path.exists():
         raise FileNotFoundError(f"raw-dir 없음: {raw_path}")
-    paths = sorted(raw_path.glob(glob))
+    patterns = [glob] if isinstance(glob, str) else list(glob)
+    matched: set[Path] = set()
+    for pat in patterns:
+        matched.update(raw_path.glob(pat))
+    paths = sorted(matched)
     if not paths:
-        raise FileNotFoundError(f"raw-dir 에 '{glob}' 매칭 파일 없음: {raw_path}")
+        raise FileNotFoundError(f"raw-dir 에 {patterns} 매칭 파일 없음: {raw_path}")
     return paths
 
 
@@ -116,7 +124,8 @@ def retrain_hierarchical(
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="계층 모델 헤드리스 재학습 (same-window, freeze-safe)")
     p.add_argument("--raw-dir", required=True, help="raw records_*.parquet 디렉터리 (예: data/Raw)")
-    p.add_argument("--glob", default="records_*.parquet", help="raw 파일 glob 패턴")
+    p.add_argument("--glob", nargs="+", default=["records_*.parquet"],
+                   help="raw 파일 glob 패턴(들). 다중 지정 시 합집합(예: 07~11 윈도우)")
     p.add_argument("--output-dir", default=None,
                    help="번들 출력 디렉터리 (기본: hana_app/models/hierarchical/retrain_<ts>)")
     p.add_argument("--window-days", type=int, default=90)
