@@ -315,6 +315,33 @@ def test_hierarchical_predictor_loads_current_7class(tmp_path):
     assert hp.loaded is True
 
 
+def test_hierarchical_predictor_rejects_old_ddi_version(tmp_path):
+    """Q5: 구 DDI 시맨틱(ddi=0/ATC)으로 학습된 번들은 로드 거부 (train/serve 스큐 방지)."""
+    import json
+    _train_7class_bundle(tmp_path)
+    meta_path = tmp_path / "stage_meta.json"
+    meta = json.loads(meta_path.read_text())
+    assert meta.get("ddi_feature_semantics_version")  # train_hierarchical 이 스탬프
+    meta["ddi_feature_semantics_version"] = "ddi.v1"   # 구버전으로 변조
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False))
+
+    hp = HierarchicalPredictor()
+    assert hp.load(tmp_path) is False, "구 DDI 시맨틱 번들이 로드됨 — 가드 실패"
+
+
+def test_hierarchical_predictor_rejects_missing_ddi_version(tmp_path):
+    """ddi_feature_semantics_version 누락 시 추측 대신 거부(재학습 필요)."""
+    import json
+    _train_7class_bundle(tmp_path)
+    meta_path = tmp_path / "stage_meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta.pop("ddi_feature_semantics_version", None)
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False))
+
+    hp = HierarchicalPredictor()
+    assert hp.load(tmp_path) is False, "DDI 버전 누락 번들이 로드됨 — 가드 실패"
+
+
 def test_hierarchical_predictor_missing_files(tmp_path):
     """stage1_red.joblib 없을 때 load() 는 False 반환."""
     # stage_meta.json 만 있고 나머지 없음

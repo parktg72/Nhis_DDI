@@ -179,6 +179,13 @@ def aggregate_patient_features(
 _ddi_lookup_cache: dict[int, dict[frozenset, str]] = {}
 _SEVERITY_ORDER = {"Contraindicated": 4, "Major": 3, "Moderate": 2, "Minor": 1}
 
+# DDI 피처 시맨틱 버전 (단일 출처). DDI 카운트의 **의미**가 바뀌면 올린다.
+#   v2: WK_COMPN_CD→DrugMaster→DB-code, overlap 쌍 기준(edi→wk 브릿지로 서빙 정합, Task B).
+#   v1/누락: 구 경로(ATC all-pairs 또는 drug_master 미전달 ddi=0) — 서빙과 비호환.
+# 학습 번들 메타에 기록하고, 서빙 reload 가드가 현재 버전과 불일치/누락 번들을 거부한다
+# (구 ddi=0 학습 모델이 실 DDI 계산 서빙에 로드되면 train/serve 스큐 — d201743 전례).
+DDI_FEATURE_SEMANTICS_VERSION = "ddi.v2"
+
 
 def _get_ddi_lookup(ddi_matrix: pd.DataFrame) -> dict[frozenset, str]:
     """DDI 매트릭스 → ID 쌍 기반 조회 딕셔너리 (캐시됨)."""

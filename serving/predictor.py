@@ -388,6 +388,29 @@ class MLModel:
             self._artifact_version = state.get("artifact_version", 1)
             self._partition = state.get("partition")
 
+            # DDI 시맨틱 버전 가드 (Q5) — ddi_* 피처를 쓰는 모델만 해당. 구 ddi 의미(ATC/
+            # ddi=0)로 학습된 모델이 실 DDI 계산 서빙에 로드되면 train/serve 스큐(d201743).
+            # 명시적 불일치는 거부. 누락은 경고(tabular 트레이너 스탬핑은 follow-on — 즉시
+            # 거부는 기존 배포 전부 차단하므로 보수적으로 경고; 계층 경로는 하드 거부).
+            if any(str(c).startswith("ddi_") for c in self._feature_names):
+                from scripts.etl.prescription_aggregator import (
+                    DDI_FEATURE_SEMANTICS_VERSION as _cur_ddi_ver,
+                )
+                _bundle_ddi_ver = state.get("ddi_feature_semantics_version")
+                if _bundle_ddi_ver is not None and _bundle_ddi_ver != _cur_ddi_ver:
+                    logger.error(
+                        "단일 ML 모델 DDI 시맨틱 버전 불일치 — 로드 거부: 번들=%r vs 현재=%r",
+                        _bundle_ddi_ver, _cur_ddi_ver,
+                    )
+                    self._model = None
+                    self._feature_names = []
+                    return False
+                if _bundle_ddi_ver is None:
+                    logger.warning(
+                        "단일 ML 모델에 ddi_feature_semantics_version 없음(ddi_* 피처 사용) "
+                        "— 재학습 권장(트레이너 스탬핑 follow-on).",
+                    )
+
             # Schema strict validation (Codex 2026-05-07 P1) — silent 0.0 drift 방지.
             # 학습 모델이 RequestFeatureBuilder 미산출 컬럼을 사용 중이면 로드 거부.
             _missing, _ok = _validate_feature_schema(
@@ -659,6 +682,21 @@ class HierarchicalPredictor:
                     "계층 모델 stage2 라벨 공간 불일치 — 로드 거부(재학습 필요): "
                     "번들=%s vs 현재(%d)=%s",
                     _meta_labels, len(_CURRENT_STAGE2_LABELS), list(_CURRENT_STAGE2_LABELS),
+                )
+                self._clear_state()
+                return False
+            # DDI 피처 시맨틱 버전 가드 (Q5) — 구 ddi=0/ATC 경로로 학습된 번들이 실 DDI
+            # 계산 서빙에 로드되면 train/serve 스큐(d201743). 메타 버전이 현재와 다르거나
+            # 없으면 로드 거부(재학습 필요). ddi_* 가 feature_cols 에 포함되므로 적용.
+            from scripts.etl.prescription_aggregator import (
+                DDI_FEATURE_SEMANTICS_VERSION as _CUR_DDI_VER,
+            )
+            _ddi_ver = self._meta.get("ddi_feature_semantics_version")
+            if _ddi_ver != _CUR_DDI_VER:
+                logger.error(
+                    "계층 모델 DDI 시맨틱 버전 불일치 — 로드 거부(재학습 필요): "
+                    "번들=%r vs 현재=%r",
+                    _ddi_ver, _CUR_DDI_VER,
                 )
                 self._clear_state()
                 return False
