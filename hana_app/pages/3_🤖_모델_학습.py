@@ -41,6 +41,40 @@ st.title("🤖 모델 선택 및 학습")
 cfg  = load_config()
 conn = get_connection(st.session_state)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 데이터 소스 모드 선택 — HANA 검증 게이트보다 **먼저** 렌더한다.
+#   게이트(검증·재연결)는 라이브 DB가 필요한 EXTRACT 모드 전용이며, RAW/SAVED 는
+#   로컬 parquet 만 읽으므로 게이트 위에서 모드를 고를 수 있어야 진입이 가능하다.
+#   (이전: 게이트가 라디오보다 먼저 st.stop() → HANA 미검증 시 RAW/SAVED 도달 불가)
+# ─────────────────────────────────────────────────────────────────────────────
+DATA_MODE_EXTRACT = "extract"
+DATA_MODE_SAVED   = "saved"
+DATA_MODE_RAW     = "raw"
+
+DATASET_DIR = Path(__file__).parent.parent / "data" / "datasets"
+DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _list_saved_datasets() -> list[Path]:
+    return sorted(DATASET_DIR.glob("features_*.parquet"), reverse=True)
+
+
+saved_files = _list_saved_datasets()
+
+_DATA_MODE_LABELS = {
+    DATA_MODE_EXTRACT: "🔗  DB / SAS 파일에서 추출",
+    DATA_MODE_SAVED:   f"📂  저장된 데이터 불러오기  ({len(saved_files)}개 보유)",
+    DATA_MODE_RAW:     "📥  다운로드 받은 Raw 데이터 (records_*.parquet)",
+}
+
+data_mode = st.radio(
+    "데이터 준비 방식",
+    options=[DATA_MODE_EXTRACT, DATA_MODE_SAVED, DATA_MODE_RAW],
+    format_func=lambda x: _DATA_MODE_LABELS[x],
+    horizontal=True,
+    key="data_mode",
+)
+
 
 def _quote_command(command: list[str]) -> str:
     import subprocess
@@ -115,8 +149,8 @@ def _render_sparse_research_section() -> None:
 
 _render_sparse_research_section()
 
-# ── validated 가드 ────────────────────────────────────────────────────────
-if is_hana(cfg) and not cfg.get("validated"):
+# ── validated 가드 (EXTRACT 모드 전용 — RAW/SAVED 는 라이브 DB 불필요) ──────
+if data_mode == DATA_MODE_EXTRACT and is_hana(cfg) and not cfg.get("validated"):
     st.warning("⚠️ HANA 테이블 검증이 완료되지 않았습니다.")
     st.page_link(
         "pages/1_🔌_연결_및_테이블설정.py",
@@ -124,14 +158,14 @@ if is_hana(cfg) and not cfg.get("validated"):
     )
     st.stop()
 
-if is_hana(cfg):
+if data_mode == DATA_MODE_EXTRACT and is_hana(cfg):
     if cfg.get("validated_host") and \
        cfg["validated_host"] != cfg["connection"]["host"]:
         st.warning("⚠️ 검증된 DB 호스트와 현재 연결 호스트가 다릅니다. 1번 페이지에서 재검증을 권장합니다.")
 
-# ── 자동 재연결 ───────────────────────────────────────────────────────────
+# ── 자동 재연결 (EXTRACT 모드 전용) ───────────────────────────────────────
 _hana_creds = st.session_state.get("hana_creds")
-if is_hana(cfg):
+if data_mode == DATA_MODE_EXTRACT and is_hana(cfg):
     if _hana_creds:
         try:
             conn.ensure_connected(_hana_creds, session_state=st.session_state)
@@ -145,15 +179,8 @@ if is_hana(cfg):
 using_hana = is_hana(cfg)
 using_sas  = is_sas(cfg)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 저장 데이터 디렉토리
-# ─────────────────────────────────────────────────────────────────────────────
-DATASET_DIR = Path(__file__).parent.parent / "data" / "datasets"
-DATASET_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _list_saved_datasets() -> list[Path]:
-    return sorted(DATASET_DIR.glob("features_*.parquet"), reverse=True)
+# DATASET_DIR / _list_saved_datasets / 데이터 모드 라디오는 페이지 상단(게이트 위)에서
+# 이미 정의·렌더했다.
 
 
 def _save_dataset(df: pd.DataFrame, meta: dict) -> Path:
@@ -250,29 +277,8 @@ def _ensure_demographics_from_raw(raw_dir: Path, log=None) -> str:
         return f"error:{e}"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 데이터 소스 모드 선택
-# ─────────────────────────────────────────────────────────────────────────────
-DATA_MODE_EXTRACT = "extract"
-DATA_MODE_SAVED   = "saved"
-DATA_MODE_RAW     = "raw"
-
-saved_files = _list_saved_datasets()
-
-_DATA_MODE_LABELS = {
-    DATA_MODE_EXTRACT: "🔗  DB / SAS 파일에서 추출",
-    DATA_MODE_SAVED:   f"📂  저장된 데이터 불러오기  ({len(saved_files)}개 보유)",
-    DATA_MODE_RAW:     "📥  다운로드 받은 Raw 데이터 (records_*.parquet)",
-}
-
-data_mode = st.radio(
-    "데이터 준비 방식",
-    options=[DATA_MODE_EXTRACT, DATA_MODE_SAVED, DATA_MODE_RAW],
-    format_func=lambda x: _DATA_MODE_LABELS[x],
-    horizontal=True,
-    key="data_mode",
-)
-
+# ── 데이터 소스 모드별 입력 UI ────────────────────────────────────────────────
+#   (모드 상수·saved_files·data_mode 라디오는 페이지 상단에서 이미 정의·렌더됨)
 # ── 저장된 데이터 불러오기 모드 ───────────────────────────────────────────────
 if data_mode == DATA_MODE_SAVED:
     st.markdown("---")
@@ -757,6 +763,10 @@ st.markdown("---")
 st.header("2️⃣ 모델 선택 및 하이퍼파라미터")
 
 # 예측 타겟
+# NOTE: 반드시 stable `key` 를 둔다. keyless selectbox 는 앞쪽 조건부 위젯이
+# rerun 마다 렌더/언렌더되면 structural id 가 흔들려 선택값이 config 기본값으로
+# 리셋된다(예: hierarchical 선택 → 학습 시작 시 risk_label/risk_binary 로 되돌아감).
+# key 를 주면 값이 session_state 에 고정되어 위치 변동·페이지 이동에도 보존된다.
 target = st.selectbox(
     "예측 타겟",
     options=["risk_binary", "hierarchical", "risk_label"],
@@ -770,6 +780,7 @@ target = st.selectbox(
         if trn.get("target") in ("risk_binary", "hierarchical", "risk_label")
         else "risk_binary"
     ),
+    key="train_target_select",
 )
 
 # ── Phase 탭 ─────────────────────────────────────────────────────────────
@@ -1112,6 +1123,13 @@ with col_run:
 # 학습 실행
 # ─────────────────────────────────────────────────────────────────────────────
 if run_btn:
+    # 어떤 타겟으로 분기하는지 항상 가시화 (계층 선택이 일반 분기로 새는 회귀 진단용)
+    _target_label = {
+        "risk_binary": "이진 분류 (risk_binary)",
+        "hierarchical": "계층 분류 (hierarchical)",
+        "risk_label": "4분류 risk_label (레거시)",
+    }.get(target, target)
+    st.caption(f"🎯 이번 학습 예측 타겟: **{_target_label}**")
     if not selected_features:
         st.error("최소 1개 이상의 피처를 선택하세요.")
         st.stop()
@@ -1834,6 +1852,7 @@ if run_btn:
                 recall_floor=recall_floor,
                 review_recall_target=review_recall_target,
                 cost_sensitive=use_cost_sensitive,
+                log_cb=log,
             )
         except Exception as e:
             st.error(f"❌ 계층 분류 학습 실패: {e}")
@@ -1847,13 +1866,28 @@ if run_btn:
         _meta = _json.loads((_hier_out / "stage_meta.json").read_text(encoding="utf-8"))
         thresholds = _meta.get("thresholds", {})
         label_counts = _meta.get("stage2_label_counts", {})
+        _stage1_trained = _meta.get("stage1_trained", True)
+        _red_cnt = _meta.get("stage1_red_count", 0)
 
         st.markdown("---")
         st.subheader("📊 계층 분류 학습 결과")
 
+        if not _stage1_trained:
+            st.warning(
+                f"⚠️ **Stage 1(Red 이진) 건너뜀** — 데이터의 Red 표본이 {_red_cnt:,}건뿐이라 "
+                "Red 분류기를 학습할 수 없어 '상수 비-Red' 더미로 대체했습니다. "
+                "**Stage 2(Yellow 세분화)만 학습**되었습니다. "
+                "이 모델을 그대로 배포하면 Red 를 탐지하지 못하므로, 운영 서빙 전에는 "
+                "Red 가 포함된 데이터로 Stage 1 을 재학습해야 합니다(τ 임계값은 무의미한 더미값)."
+            )
+
         _t_col1, _t_col2, _t_col3 = st.columns(3)
-        _t_col1.metric("τ_red", f"{thresholds.get('tau_red', '?'):.3f}" if isinstance(thresholds.get('tau_red'), float) else "?")
-        _t_col2.metric("τ_review", f"{thresholds.get('tau_review', '?'):.3f}" if isinstance(thresholds.get('tau_review'), float) else "?")
+        if _stage1_trained:
+            _t_col1.metric("τ_red", f"{thresholds.get('tau_red', '?'):.3f}" if isinstance(thresholds.get('tau_red'), float) else "?")
+            _t_col2.metric("τ_review", f"{thresholds.get('tau_review', '?'):.3f}" if isinstance(thresholds.get('tau_review'), float) else "?")
+        else:
+            _t_col1.metric("τ_red", "— (Stage1 미학습)")
+            _t_col2.metric("Red 표본", f"{_red_cnt:,}명")
         _t_col3.metric("Y_OTHER 제외", f"{_meta.get('y_other_excluded_count', 0):,}명")
 
         st.markdown("**Stage 2 라벨 분포**")
@@ -1888,7 +1922,11 @@ if run_btn:
 
         # predict_risk → features_df 에 red_suspect / action 컬럼 채우기
         # (page 4 의 yellow_subtype_view 가 이 컬럼을 사용)
-        _feat_df = st.session_state.get("features_df") if _train_parquet else _train_df
+        # _train_df 는 모든 모드에서 이 시점에 채워져 있다:
+        #   saved → session_state.features_df, raw/parquet → 1817 에서 로드, memory → features_df.
+        # 과거엔 _train_parquet 일 때 session_state.features_df(=Raw 모드에선 None) 를
+        # 참조해 predict_risk 가 통째로 스킵되고 Page 4 가 비어 보였다(계층 결과 누락).
+        _feat_df = _train_df
         if _feat_df is not None and selected_features and \
                 all(c in _feat_df.columns for c in selected_features):
             try:

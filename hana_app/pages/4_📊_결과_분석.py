@@ -25,9 +25,12 @@ st.set_page_config(page_title="결과 분석", page_icon="📊", layout="wide")
 st.title("📊 학습 결과 분석")
 
 _cfg = load_config()
+# NOTE: 결과 분석은 session_state/디스크(RESULTS_DIR)의 결과만 읽고 라이브 HANA 를
+# 쿼리하지 않는다. 따라서 HANA 테이블 검증 게이트로 페이지를 막으면 안 된다
+# (RAW/저장 데이터로 학습한 결과를 미검증 HANA 설정 PC 에서 못 보던 버그 —
+#  Page 3 data_mode 게이트 회귀와 동일 계열). 미검증 시 안내만 노출하고 진행한다.
 if is_hana(_cfg) and not check_hana_validated(_cfg):
-    st.warning(get_validation_error(_cfg))
-    st.stop()
+    st.caption(f"ℹ️ {get_validation_error(_cfg)} (결과 분석은 검증 없이도 가능)")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 결과 선택
@@ -38,9 +41,14 @@ saved = list_saved_results()
 
 col_src, col_sel = st.columns([1, 3])
 with col_src:
+    # 현재 세션 결과가 없고 저장된 결과만 있으면 '저장된 결과'를 기본 선택한다.
+    # (그렇지 않으면 라디오가 '현재 세션'(빈 값)에 머물러 결과가 있는데도
+    #  '분석할 결과가 없습니다'로 잘못 막힌다 — 페이지 이동으로 세션 결과 유실 시.)
+    _src_index = 0 if current else (1 if saved else 0)
     source = st.radio(
         "결과 소스",
         ["현재 세션", "저장된 결과"],
+        index=_src_index,
         disabled=(current is None and not saved),
     )
 
@@ -70,14 +78,40 @@ target = result.get("target", "risk_binary")
 # ─────────────────────────────────────────────────────────────────────────────
 st.subheader(f"📌 {model_name} – 핵심 지표")
 
-mc1, mc2, mc3, mc4, mc5 = st.columns(5)
-mc1.metric("Accuracy", f"{metrics.get('accuracy', 0):.4f}")
-mc2.metric("F1 (macro)", f"{metrics.get('f1_macro', 0):.4f}")
-mc3.metric("AUC", f"{metrics.get('roc_auc', metrics.get('roc_auc_ovr', 0)):.4f}")
-mc4.metric("CV 평균", f"{metrics.get('cv_mean', 0):.4f}")
-mc5.metric("CV 표준편차", f"±{metrics.get('cv_std', 0):.4f}")
 
-st.markdown(f"학습 {metrics.get('train_size', '?'):,}건 | 테스트 {metrics.get('test_size', '?'):,}건")
+def _fmt_n(v) -> str:
+    """정수/실수만 천단위 콤마, 그 외('?')는 그대로 — `f'{\"?\":,}'` ValueError 방지."""
+    return f"{v:,}" if isinstance(v, (int, float)) else str(v)
+
+
+if target == "hierarchical":
+    # 계층 결과 metrics 에는 accuracy/auc/train_size 가 없다(τ 임계값·f1_macro 만).
+    # flat 지표/포맷을 그대로 쓰면 train_size='?' 에 콤마 포맷 → ValueError 로
+    # 페이지가 제목만 뜨고 빈 화면처럼 보였다. 임계값 위주로 표시한다.
+    _th = {**metrics, **result.get("meta", {}).get("thresholds", {})}
+    _tau_red = _th.get("tau_red")
+    _tau_review = _th.get("tau_review")
+    hc1, hc2, hc3 = st.columns(3)
+    hc1.metric("τ_red", f"{_tau_red:.3f}" if isinstance(_tau_red, (int, float)) else "?")
+    hc2.metric("τ_review", f"{_tau_review:.3f}" if isinstance(_tau_review, (int, float)) else "?")
+    hc3.metric("F1 (macro)", f"{metrics.get('f1_macro', 0):.4f}")
+    st.info(
+        "계층 분류 결과입니다. 아래 **🧮 위험도 분포** 탭에서 Yellow 세분화"
+        "(yellow_subtype)·Red 의심(red_suspect) 분포를 확인하세요. "
+        "Accuracy/AUC·혼동행렬 등 단일 분류기 지표는 계층 모델에 적용되지 않습니다."
+    )
+else:
+    mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+    mc1.metric("Accuracy", f"{metrics.get('accuracy', 0):.4f}")
+    mc2.metric("F1 (macro)", f"{metrics.get('f1_macro', 0):.4f}")
+    mc3.metric("AUC", f"{metrics.get('roc_auc', metrics.get('roc_auc_ovr', 0)):.4f}")
+    mc4.metric("CV 평균", f"{metrics.get('cv_mean', 0):.4f}")
+    mc5.metric("CV 표준편차", f"±{metrics.get('cv_std', 0):.4f}")
+
+    st.markdown(
+        f"학습 {_fmt_n(metrics.get('train_size', '?'))}건 | "
+        f"테스트 {_fmt_n(metrics.get('test_size', '?'))}건"
+    )
 
 st.markdown("---")
 

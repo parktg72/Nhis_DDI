@@ -588,3 +588,64 @@ def test_end_to_end_meta_has_clinical_standards_version(tmp_path):
     assert "stage2_sha256" in meta
     assert "stage2_label_counts" in meta
     assert "y_other_excluded_count" in meta
+
+
+# ─── Red 0건 → Stage 1 자동 degrade (Stage 2 만 학습) ────────────────────────
+def _no_red_df(n=400, seed=0):
+    """Red 0건, Yellow(서브타입)+Green 만 있는 df — 다운로드 Raw same-window 표본 모사."""
+    rng = np.random.default_rng(seed)
+    n_green = 40
+    n_yellow = n - n_green
+    ysub = (["Y_MIX", "Y_DDI_MAJOR", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"] * ((n_yellow // 5) + 1))[:n_yellow]
+    return pd.DataFrame({
+        "patient_id": [f"P{i}" for i in range(n)],
+        "feat_a": rng.random(n),
+        "feat_b": rng.random(n),
+        "risk_level": (["Yellow"] * n_yellow + ["Green"] * n_green),
+        "yellow_subtype": (ysub + [None] * n_green),
+    })
+
+
+def test_train_hierarchical_degrades_stage1_when_no_red(tmp_path):
+    """Red 0건이면 ValueError 대신 상수 비-Red Stage1 로 degrade, Stage2 정상 학습."""
+    from hana_app.core.hierarchical_runner import train_hierarchical, _ConstantNegativeStage1
+    import json
+
+    df = _no_red_df()
+    result = train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b"], output_dir=tmp_path, seed=0,
+    )
+    assert result["stage1_trained"] is False
+    assert result["stage1_red_count"] == 0
+    assert isinstance(result["stage1_model"], _ConstantNegativeStage1)
+    # 번들 구조는 그대로(서빙 호환): 세 파일 모두 존재
+    assert (tmp_path / "stage1_red.joblib").exists()
+    assert (tmp_path / "stage2_yellow.joblib").exists()
+    meta = json.loads((tmp_path / "stage_meta.json").read_text(encoding="utf-8"))
+    assert meta["stage1_trained"] is False
+    # 불변식 유지: tau_review < tau_red
+    assert result["thresholds"]["tau_review"] < result["thresholds"]["tau_red"]
+
+
+def test_degraded_predict_risk_routes_all_to_stage2(tmp_path):
+    """degrade 모델로 predict_risk: 아무도 Red/red_suspect 아니고 모두 Stage2 라벨."""
+    from hana_app.core.hierarchical_runner import train_hierarchical, predict_risk
+    import joblib
+
+    df = _no_red_df()
+    result = train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b"], output_dir=tmp_path, seed=0,
+    )
+    bundle = joblib.load(tmp_path / "stage2_yellow.joblib")  # 라운드트립(서빙 경로 모사)
+    preds = predict_risk(
+        df[["feat_a", "feat_b"]].to_numpy(),
+        stage1_model=joblib.load(tmp_path / "stage1_red.joblib"),
+        stage2_model=bundle["model"],
+        stage2_encoder=result["stage2_encoder"],
+        thresholds=result["thresholds"],
+        classes_present=bundle["classes_present"],
+    )
+    assert len(preds) == len(df)
+    assert all(p["risk_level"] != "Red" for p in preds)
+    assert all(p["red_suspect"] is False for p in preds)
+    assert all(p["p_red"] == 0.0 for p in preds)
