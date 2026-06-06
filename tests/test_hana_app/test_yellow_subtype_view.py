@@ -87,8 +87,9 @@ def test_summarize_actions_includes_red():
     })
     out = summarize_actions(df)
     actions = dict(zip(out["action"], out["count"]))
-    assert actions[RED_ACTION] == 4               # Red → 즉각 개입
-    assert actions["의료인 전화"] == 3            # Y_TRIPLE → 의료인 전화
+    # Red(4) + Y_TRIPLE(3) 모두 즉각 개입 (2026-06-06 재설계: Y_TRIPLE 액션 상향)
+    assert actions[RED_ACTION] == 7
+    assert "의료인 전화" not in actions
     # count 내림차순 정렬 보장
     assert list(out["count"]) == sorted(out["count"], reverse=True)
 

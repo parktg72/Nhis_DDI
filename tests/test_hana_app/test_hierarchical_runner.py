@@ -360,7 +360,7 @@ def test_dispatch_red_suspect_between_thresholds():
     )
     assert r["risk_level"] == "Y_TRIPLE"
     assert r["red_suspect"] is True
-    assert "의료인 전화" in r["action"]
+    assert r["action"] == "즉각 개입"   # Y_TRIPLE 액션 상향(2026-06-06 재설계)
 
 
 def test_predict_risk_end_to_end(tmp_path):

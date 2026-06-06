@@ -53,23 +53,12 @@ def _predict(pred):
         return pred.predict(req)
 
 
-# 활성 백스톱 = DDI(contra/major3)만 (2026-06-06 보류: broad 트리거는 임상 재검토까지 hold).
-@pytest.mark.parametrize("trigger", ["RED_CONTRAINDICATED", "RED_MAJOR_3PLUS"])
-def test_active_ddi_trigger_forces_red(trigger):
-    """DDI 트리거(명백·narrow)는 ML/SafetyNet 무관하게 RED + 사유 노출."""
-    res = _predict(_predictor({trigger}))
+# 활성 백스톱 = 금기(RED_CONTRAINDICATED)만 (2026-06-06 재설계: 나머지는 Y_TRIPLE 즉시개입).
+def test_contraindicated_forces_red():
+    """금기(RED_CONTRAINDICATED)는 ML/SafetyNet 무관하게 RED + 사유 노출."""
+    res = _predict(_predictor({"RED_CONTRAINDICATED"}))
     assert res.risk_level == RiskLevel.RED
-    assert trigger in res.risk_reasons
-
-
-@pytest.mark.parametrize("trigger", [
-    "RED_TRIPLE_WHAMMY", "RED_10DRUG_HIGHRISK", "RED_ELDERLY_ORGAN",
-])
-def test_broad_trigger_held_no_forced_red(trigger):
-    """broad 트리거(triple/10drug/elderly)는 보류 — 백스톱서 Red 강제 안 함(25.8% 과도 → 임상 재검토)."""
-    res = _predict(_predictor({trigger}))
-    assert res.risk_level != RiskLevel.RED
-    assert trigger not in res.risk_reasons
+    assert "RED_CONTRAINDICATED" in res.risk_reasons
 
 
 def test_no_trigger_no_forced_red():
@@ -78,17 +67,10 @@ def test_no_trigger_no_forced_red():
 
 
 def test_backstop_is_one_way_escalation():
-    """ML 이 NORMAL 이어도 활성 DDI 트리거가 RED 로 상향(단방향)."""
+    """ML 이 NORMAL 이어도 금기 트리거가 RED 로 상향(단방향)."""
     pred = _predictor({"RED_CONTRAINDICATED"})
     pred._ml.loaded = True
     pred._ml.predict_proba = MagicMock(return_value=0.0)
     pred._ml.classify = MagicMock(return_value=RiskLevel.NORMAL)
     res = _predict(pred)
     assert res.risk_level == RiskLevel.RED
-
-
-def test_multiple_active_triggers_in_reasons():
-    res = _predict(_predictor({"RED_CONTRAINDICATED", "RED_MAJOR_3PLUS"}))
-    assert res.risk_level == RiskLevel.RED
-    assert "RED_CONTRAINDICATED" in res.risk_reasons
-    assert "RED_MAJOR_3PLUS" in res.risk_reasons

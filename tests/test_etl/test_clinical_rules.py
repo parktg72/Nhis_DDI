@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from scripts.etl.clinical_rules import (
     CLINICAL_STANDARDS_VERSION,
     collect_red_triggers,
+    collect_severe_immediate_triggers,
     collect_yellow_triggers,
 )
 
@@ -39,47 +40,46 @@ class TestCollectRedTriggers:
     def test_contraindicated(self):
         assert collect_red_triggers(_features(ddi_contraindicated=1)) == {"RED_CONTRAINDICATED"}
 
+    def test_demoted_triggers_not_red(self):
+        """2026-06-06 재설계: major3/triple/10drug/elderly 는 Red 아님(금기만 Red)."""
+        assert collect_red_triggers(_features(ddi_major=3)) == set()
+        assert collect_red_triggers(_features(triple_whammy=True)) == set()
+        assert collect_red_triggers(_features(drug_count=10, has_high_risk_drug=True)) == set()
+        assert collect_red_triggers(_features(age=80, drug_count=6, has_renal_risk_drug=True)) == set()
+
+    def test_only_contraindicated_is_red(self):
+        trg = collect_red_triggers(_features(ddi_contraindicated=1, triple_whammy=True, ddi_major=3))
+        assert trg == {"RED_CONTRAINDICATED"}  # 금기만 Red, 나머지는 severe(Y_TRIPLE)
+
+
+class TestCollectSevereImmediateTriggers:
+    """구 Red 트리거(금기 외) → 즉시개입 Y_TRIPLE 강제 조건."""
+    def test_empty_on_normal(self):
+        assert collect_severe_immediate_triggers(_features()) == set()
+
     def test_major_ge_3(self):
-        assert collect_red_triggers(_features(ddi_major=3)) == {"RED_MAJOR_3PLUS"}
-        assert collect_red_triggers(_features(ddi_major=2)) == set()
+        assert collect_severe_immediate_triggers(_features(ddi_major=3)) == {"SEV_MAJOR_3PLUS"}
+        assert collect_severe_immediate_triggers(_features(ddi_major=2)) == set()
 
     def test_triple_whammy(self):
-        assert collect_red_triggers(_features(triple_whammy=True)) == {"RED_TRIPLE_WHAMMY"}
+        assert collect_severe_immediate_triggers(_features(triple_whammy=True)) == {"SEV_TRIPLE_WHAMMY"}
 
     def test_10drug_high_risk(self):
-        assert collect_red_triggers(_features(drug_count=10, has_high_risk_drug=True)) == {"RED_10DRUG_HIGHRISK"}
-        assert collect_red_triggers(_features(drug_count=10, has_high_risk_drug=False)) == set()
+        assert collect_severe_immediate_triggers(_features(drug_count=10, has_high_risk_drug=True)) == {"SEV_10DRUG_HIGHRISK"}
+        assert collect_severe_immediate_triggers(_features(drug_count=10, has_high_risk_drug=False)) == set()
 
-    def test_elderly_polypharmacy_organ(self):
-        trg = collect_red_triggers(_features(age=75, drug_count=5, has_renal_risk_drug=True))
-        assert trg == {"RED_ELDERLY_ORGAN"}
-        trg = collect_red_triggers(_features(age=74, drug_count=5, has_renal_risk_drug=True))
-        assert trg == set()
+    def test_elderly_organ(self):
+        assert collect_severe_immediate_triggers(_features(age=75, drug_count=5, has_renal_risk_drug=True)) == {"SEV_ELDERLY_ORGAN"}
+        assert collect_severe_immediate_triggers(_features(age=74, drug_count=5, has_renal_risk_drug=True)) == set()
+        assert collect_severe_immediate_triggers(_features(age=80, drug_count=6, has_hepatic_risk_drug=True)) == {"SEV_ELDERLY_ORGAN"}
 
-    def test_multiple_triggers_all_returned(self):
-        trg = collect_red_triggers(_features(ddi_contraindicated=1, triple_whammy=True))
-        assert trg == {"RED_CONTRAINDICATED", "RED_TRIPLE_WHAMMY"}
+    def test_age_none_no_elderly(self):
+        assert "SEV_ELDERLY_ORGAN" not in collect_severe_immediate_triggers(
+            _features(age=None, drug_count=5, has_renal_risk_drug=True))
 
-    def test_age_none_does_not_trigger_elderly(self):
-        """age=None 가드: 다른 조건이 모두 맞아도 None 이면 트리거 안 됨."""
-        trg = collect_red_triggers(_features(
-            age=None, drug_count=5, has_renal_risk_drug=True,
-        ))
-        assert "RED_ELDERLY_ORGAN" not in trg
-
-    def test_hepatic_risk_path(self):
-        """elderly + 간기능 저하 약물로도 RED_ELDERLY_ORGAN 발동."""
-        trg = collect_red_triggers(_features(
-            age=80, drug_count=6, has_hepatic_risk_drug=True,
-        ))
-        assert trg == {"RED_ELDERLY_ORGAN"}
-
-    def test_drug_count_9_with_high_risk_not_triggered(self):
-        """10종 미만은 RED_10DRUG_HIGHRISK 트리거 안 됨 (경계 off-by-one 방지)."""
-        trg = collect_red_triggers(_features(
-            drug_count=9, has_high_risk_drug=True,
-        ))
-        assert "RED_10DRUG_HIGHRISK" not in trg
+    def test_drug_count_9_not_triggered(self):
+        assert "SEV_10DRUG_HIGHRISK" not in collect_severe_immediate_triggers(
+            _features(drug_count=9, has_high_risk_drug=True))
 
 
 class TestCollectYellowTriggers:

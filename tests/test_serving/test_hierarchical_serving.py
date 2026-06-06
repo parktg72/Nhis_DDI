@@ -132,7 +132,7 @@ def test_hierarchical_red_suspect_band(req_normal):
     assert resp.red_suspect is True
     assert resp.stage2_probs is not None
     assert set(resp.stage2_probs.keys()) == set(STAGE2_LABELS)
-    assert resp.action == "의료인 전화"
+    assert resp.action == "즉각 개입"   # Y_TRIPLE 액션 상향(2026-06-06 재설계)
     # 운영팀 검수 큐 reason 포함
     assert any("Red 의심" in r for r in resp.risk_reasons)
 
@@ -389,7 +389,7 @@ def test_hierarchical_http_roundtrip_serializes_new_fields():
             # 신규 필드 직렬화 검증
             assert body["yellow_subtype"] == "Y_TRIPLE"
             assert body["red_suspect"] is True
-            assert body["action"] == "의료인 전화"
+            assert body["action"] == "즉각 개입"   # Y_TRIPLE 액션 상향(2026-06-06 재설계)
             assert isinstance(body["stage2_probs"], dict)
             assert set(body["stage2_probs"].keys()) == set(STAGE2_LABELS)
             assert all(isinstance(v, float) for v in body["stage2_probs"].values())
