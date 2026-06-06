@@ -1402,14 +1402,19 @@ class HybridPredictor:
                 dl_error = str(e)
                 logger.warning("DL auxiliary inference failed: %s", e)
 
-        # Step 3.5: 결정적 Red 백스톱 — 학습 collect_red_triggers 전체를 edi→wk 피처에 직접
-        # 적용(Phase 2-2). ddi_contra/major + triple_whammy + drug_count·위험약물·age 를
-        # edi→wk→DrugMaster(학습과 동일 식별자·함수)로 산출. ML Stage1(룰파생 degenerate τ,
-        # ~10% 누락)·SafetyNet(약물명 미해석) 의존 제거 → Red 를 학습 룰과 정확 일치.
-        # model-independent(배포 모델 버전 무관) 안전 백스톱. 단방향 escalation(max only).
+        # Step 3.5: 결정적 Red 백스톱 — 학습 collect_red_triggers 를 edi→wk 피처에 적용
+        # (model-independent, 단방향 escalation). ML Stage1(룰파생 degenerate τ, ~10% 누락)·
+        # SafetyNet(약물명 미해석) 의존 제거.
+        # ⚠️ **활성 트리거 = DDI(contra/major3)만 한정**(2026-06-06 보류 결정): triple_whammy/
+        # has_high_risk/risk-flag 활성화 시 collect_red_triggers 전체 Red 율이 3.8%→25.8% 로
+        # 급증(RED_10DRUG_HIGHRISK·RED_ELDERLY_ORGAN 주동)함을 재학습서 확인. dead flag 로
+        # 마스킹됐던 진짜 CLINICAL_STANDARDS 룰이나 운영상 과도 → 임상 재검토까지 broad 트리거
+        # hold. DDI 두 트리거는 명백·narrow 라 유지(advisor MVP). 재검토 후 _BACKSTOP_ACTIVE 확장.
+        _BACKSTOP_ACTIVE = {"RED_CONTRAINDICATED", "RED_MAJOR_3PLUS"}
         _red_reasons: list[str] = []
         try:
-            _red_reasons = sorted(self._builder.red_triggers(req.drugs, ref, req.patient_age))
+            _red_reasons = sorted(t for t in self._builder.red_triggers(req.drugs, ref, req.patient_age)
+                                  if t in _BACKSTOP_ACTIVE)
         except Exception as e:  # 백스톱 실패는 비차단(기존 경로 유지)
             logger.warning("결정적 Red 백스톱 계산 실패(무시): %s", e)
 
