@@ -1347,10 +1347,29 @@ class HybridPredictor:
                 dl_error = str(e)
                 logger.warning("DL auxiliary inference failed: %s", e)
 
-        # Step 4: 최종 등급 = max(Rule, ML)
+        # Step 3.5: 결정적 DDI Red 백스톱 — 학습 collect_red_triggers 의 DDI 조건
+        # (ddi_contraindicated≥1 / ddi_major≥3)을 RequestFeatureBuilder 의 edi→wk DDI
+        # 카운트(Task B, 학습과 동일 경로)에 직접 적용. ML Stage1(룰 파생 라벨 → degenerate
+        # τ_red≈0.9998, recall 0.90 = ~10% 누락)·SafetyNet(약물명 기반, 실 edi 미해석)에만
+        # 의존하던 갭을 닫아 Red 를 학습 라벨과 정확 일치시킨다. 단방향 escalation(max only).
+        # triple_whammy/has_high_risk 등 나머지 트리거는 학습서 미산출(triple_whammy 항상 0)
+        # 이라 지금 적용 시 새 train/serve 스큐 → 제외(Phase 2: ETL 계산 추가+재학습 후).
+        _ddi_red_reasons: list[str] = []
+        try:
+            _dc = self._builder._count_ddi(req.drugs, ref)
+            if _dc.get("Contraindicated", 0) >= 1:
+                _ddi_red_reasons.append("RED_CONTRAINDICATED")
+            if _dc.get("Major", 0) >= 3:
+                _ddi_red_reasons.append("RED_MAJOR_3PLUS")
+        except Exception as e:  # 백스톱 실패는 비차단(기존 경로 유지)
+            logger.warning("결정적 DDI Red 백스톱 계산 실패(무시): %s", e)
+
+        # Step 4: 최종 등급 = max(Rule, ML, 결정적 DDI Red)
         final_level = rule_level
         if ml_level is not None:
             final_level = RiskLevel.max(rule_level, ml_level)
+        if _ddi_red_reasons:
+            final_level = RiskLevel.max(final_level, RiskLevel.RED)
 
         # Step 5: DDI 알림 보완 (ddi_matrix에서 추가)
         if self._ddi_matrix is not None:
@@ -1362,6 +1381,9 @@ class HybridPredictor:
 
         # dup_reasons는 등급과 무관하게 항상 포함 (설명 가능성)
         all_reasons = list(rule_reasons) + [r for r in dup_reasons if r not in rule_reasons]
+        for _r in _ddi_red_reasons:   # 결정적 DDI Red 사유 (canonical rule ID, dedupe)
+            if _r not in all_reasons:
+                all_reasons.append(_r)
         if ml_prob is not None and ml_prob > 0.3:
             all_reasons.append(f"ML 모델 Red 확률: {ml_prob:.1%}")
         if red_suspect:
