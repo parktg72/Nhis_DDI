@@ -138,6 +138,7 @@ def train_sparse_linear_temporal_smoke(
     lr: float = 1e-3,
     seed: int = 42,
     device: str = "cpu",
+    save_model_path: str | Path | None = None,
 ) -> dict:
     if X_train.shape[1] != X_val.shape[1]:
         raise ValueError("train and val input_dim must match")
@@ -196,6 +197,11 @@ def train_sparse_linear_temporal_smoke(
         n_positive_val=int(y_val.sum()),
         elapsed_sec=round(perf_counter() - start, 3),
     )
+    if save_model_path is not None:
+        # B0 익스포터(export_sparse_linear_bundle)용 — nn.Linear(input_dim,1) state_dict 저장.
+        p = Path(save_model_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), p)
     return asdict(result)
 
 
@@ -429,6 +435,7 @@ def _train_temporal_model(
             batch_size=batch_size,
             seed=seed,
             device=device,
+            save_model_path=save_model_path,
         )
         result["model"] = "linear"
         return result
