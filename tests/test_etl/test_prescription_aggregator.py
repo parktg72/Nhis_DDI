@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.etl.models import PatientFeatures, PrescriptionRecord
 from scripts.etl.prescription_aggregator import (
     _assign_risk_level,
+    _assign_yellow_subtype,
     _check_risk_drugs,
     _fill_dup_features,
     _fill_risk_drug_flags,
@@ -80,27 +81,34 @@ class TestAssignRiskLevel:
         _assign_risk_level(feat)
         assert feat.risk_level == "Red"
 
-    def test_major_ddi_3plus_is_red(self):
+    def test_major_ddi_3plus_is_severe_ytriple(self):
+        """2026-06-06 재설계: major DDI≥3 → Red 아닌 Yellow/Y_TRIPLE(즉시개입)."""
         feat = _make_features(ddi_major=3)
         _assign_risk_level(feat)
-        assert feat.risk_level == "Red"
+        assert feat.risk_level == "Yellow"
+        _assign_yellow_subtype(feat)
+        assert feat.yellow_subtype == "Y_TRIPLE"
 
     def test_major_ddi_2_is_yellow(self):
         feat = _make_features(ddi_major=2)
         _assign_risk_level(feat)
         assert feat.risk_level == "Yellow"
 
-    def test_triple_whammy_is_red(self):
+    def test_triple_whammy_is_severe_ytriple(self):
         feat = _make_features(triple_whammy=True)
         _assign_risk_level(feat)
-        assert feat.risk_level == "Red"
+        assert feat.risk_level == "Yellow"
+        _assign_yellow_subtype(feat)
+        assert feat.yellow_subtype == "Y_TRIPLE"
 
-    def test_10drugs_with_high_risk_is_red(self):
-        """10종 이상 + 고위험 약물 → Red."""
+    def test_10drugs_with_high_risk_is_severe_ytriple(self):
+        """10종 이상 + 고위험 약물 → Yellow/Y_TRIPLE(즉시개입), Red 아님."""
         feat = _make_features(drug_count=12, has_high_risk_drug=True)
         _assign_risk_level(feat)
-        assert feat.risk_level == "Red"
-        assert any("RED_10DRUG_HIGHRISK" in r for r in feat.risk_reasons)
+        assert feat.risk_level == "Yellow"
+        assert any("SEV_10DRUG_HIGHRISK" in r for r in feat.risk_reasons)
+        _assign_yellow_subtype(feat)
+        assert feat.yellow_subtype == "Y_TRIPLE"
 
     def test_10drugs_without_high_risk_not_red(self):
         """10종 이상이지만 고위험 약물 없으면 Red 아님."""
@@ -108,18 +116,22 @@ class TestAssignRiskLevel:
         _assign_risk_level(feat)
         assert feat.risk_level != "Red"
 
-    def test_elderly_with_renal_risk_is_red(self):
-        """75세 이상 + 5종 이상 + 신기능 저하 약물 → Red."""
+    def test_elderly_with_renal_risk_is_severe_ytriple(self):
+        """75세 이상 + 5종 이상 + 신기능 저하 약물 → Yellow/Y_TRIPLE(즉시개입)."""
         feat = _make_features(age=78, drug_count=6, has_renal_risk_drug=True)
         _assign_risk_level(feat)
-        assert feat.risk_level == "Red"
-        assert any("RED_ELDERLY_ORGAN" in r for r in feat.risk_reasons)
+        assert feat.risk_level == "Yellow"
+        assert any("SEV_ELDERLY_ORGAN" in r for r in feat.risk_reasons)
+        _assign_yellow_subtype(feat)
+        assert feat.yellow_subtype == "Y_TRIPLE"
 
-    def test_elderly_with_hepatic_risk_is_red(self):
-        """75세 이상 + 5종 이상 + 간기능 저하 약물 → Red."""
+    def test_elderly_with_hepatic_risk_is_severe_ytriple(self):
+        """75세 이상 + 5종 이상 + 간기능 저하 약물 → Yellow/Y_TRIPLE(즉시개입)."""
         feat = _make_features(age=80, drug_count=7, has_hepatic_risk_drug=True)
         _assign_risk_level(feat)
-        assert feat.risk_level == "Red"
+        assert feat.risk_level == "Yellow"
+        _assign_yellow_subtype(feat)
+        assert feat.yellow_subtype == "Y_TRIPLE"
 
     def test_elderly_without_organ_risk_not_red(self):
         """75세 이상 + 5종 이상이지만 신기능/간기능 약물 없으면 Red 아님."""
@@ -284,10 +296,11 @@ class TestAggregatePatientFeatures:
             dup_groups=None,
             age=78,  # 75세 이상
         )
-        # ibuprofen → has_renal_risk_drug=True, 75세+5종+ → Red
+        # ibuprofen → has_renal_risk_drug=True, 75세+5종+ → 중증 Yellow/Y_TRIPLE(즉시개입, 재설계)
         assert feat.age == 78
         assert feat.has_renal_risk_drug is True
-        assert feat.risk_level == "Red"
+        assert feat.risk_level == "Yellow"
+        assert feat.yellow_subtype == "Y_TRIPLE"
 
 
 # ─── ATC 계층 피처 계산 정확성 테스트 ────────────────────────────────────────
@@ -382,15 +395,16 @@ class TestAssignRiskLevelBackwardCompat:
         assert f.risk_level == "Red"
         assert any("Contraindicated" in r or "RED_CONTRAINDICATED" in r for r in f.risk_reasons)
 
-    def test_major_ge_3_red(self):
+    def test_major_ge_3_severe_yellow(self):
+        """재설계: major≥3 → Red 아닌 Yellow(Y_TRIPLE 즉시개입)."""
         f = self._make(ddi_major=3)
         _assign_risk_level(f)
-        assert f.risk_level == "Red"
+        assert f.risk_level == "Yellow"
 
-    def test_triple_whammy_red(self):
+    def test_triple_whammy_severe_yellow(self):
         f = self._make(triple_whammy=True)
         _assign_risk_level(f)
-        assert f.risk_level == "Red"
+        assert f.risk_level == "Yellow"
 
     def test_major_1_yellow(self):
         f = self._make(ddi_major=1)

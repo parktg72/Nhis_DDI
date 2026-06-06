@@ -635,12 +635,12 @@ def train_hierarchical(
 RED_ACTION: str = "즉각 개입"
 
 # Yellow 세부 라벨별 권장 개입.
-# 계수 기반(Y_TRIPLE/Y_DOUBLE)은 위험 차원 개수로 개입 강도를 구분한다:
-#   Y_TRIPLE(3차원) → 의료인 전화, Y_DOUBLE(2차원) → 문자 알림.
+# Y_TRIPLE = 중증(금기 외 즉시개입 조건 또는 3차원) → **즉각 개입**(Red 와 동일 긴급도,
+#   단 risk_level 은 Red 보다 낮음, 2026-06-06 재설계). Y_DOUBLE(2차원) → 문자 알림.
 # 단일 차원이라도 major 상호작용(Y_DDI_MAJOR)은 임상 중대성이 커 의료인 전화로
 # 상향(단일 major 가 Y_DOUBLE 보다 약해지는 역전 방지). 나머지 단일 라벨은 문자/문서.
 ACTION_BY_LABEL: dict[str, str] = {
-    "Y_TRIPLE":     "의료인 전화",
+    "Y_TRIPLE":     RED_ACTION,   # 즉각 개입 (Red 바로 아래 수준)
     "Y_DOUBLE":     "문자 알림",
     "Y_DDI_MAJOR":  "의료인 전화",
     "Y_DDI_MOD":    "문자 알림",

@@ -17,7 +17,9 @@ from typing import Optional
 
 import pandas as pd
 
-from .clinical_rules import collect_red_triggers, collect_yellow_triggers
+from .clinical_rules import (
+    collect_red_triggers, collect_yellow_triggers, collect_severe_immediate_triggers,
+)
 from .drug_master import DrugMaster
 from .models import DrugOverlapPair, PatientFeatures, PrescriptionRecord
 from .overlap_calculator import calculate_overlaps_for_patient, get_concurrent_drug_count
@@ -461,10 +463,13 @@ def _assign_risk_level(features: PatientFeatures) -> None:
         features.risk_reasons = sorted(red_triggers)
         return
 
+    # 금기 외 중증(즉시개입) + 일반 Yellow 차원 트리거 모두 Yellow. 중증은 _assign_yellow_subtype
+    # 이 Y_TRIPLE 로 분류(즉시개입). 중증만 있고 차원 트리거 없어도 Yellow(중증 신호 보존).
+    severe_triggers = collect_severe_immediate_triggers(features)
     yellow_triggers = collect_yellow_triggers(features)
-    if yellow_triggers:
+    if severe_triggers or yellow_triggers:
         features.risk_level = "Yellow"
-        features.risk_reasons = sorted(yellow_triggers)
+        features.risk_reasons = sorted(severe_triggers | yellow_triggers)
         return
 
     # TODO: Green 트리거도 collect_green_triggers 로 clinical_rules 에 이관 예정
@@ -500,6 +505,11 @@ def _assign_yellow_subtype(features: PatientFeatures) -> None:
     """
     if features.risk_level != "Yellow":
         features.yellow_subtype = None
+        return
+
+    # 중증(즉시개입) 조건 = Y_TRIPLE (Red 바로 아래, action 즉시개입). 차원 개수보다 우선.
+    if collect_severe_immediate_triggers(features):
+        features.yellow_subtype = "Y_TRIPLE"
         return
 
     triggers = collect_yellow_triggers(features)

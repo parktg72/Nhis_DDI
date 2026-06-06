@@ -21,28 +21,38 @@ CLINICAL_STANDARDS_VERSION = "v1.0"
 
 
 def collect_red_triggers(f: Any) -> set[str]:
-    """Red 조건 집합. 비어 있으면 Red 아님.
+    """Red 조건 = 절대 **금기(contraindicated DDI)만**. 즉시개입 최상위.
 
-    Parameters
-    ----------
-    f : PatientFeatures 또는 동일 attribute 를 가진 객체
+    2026-06-06 재설계: major3/triple_whammy/10drug+고위험/고령+장기 는 활성화 시 Red 율이
+    25.8% 로 과도 → Y_TRIPLE(즉시개입이되 Red 보다 낮은 수준)로 강등.
+    collect_severe_immediate_triggers 참조. f: PatientFeatures 또는 동일 attribute 객체.
     """
     triggers: set[str] = set()
     if f.ddi_contraindicated >= 1:
         triggers.add("RED_CONTRAINDICATED")
+    return triggers
+
+
+def collect_severe_immediate_triggers(f: Any) -> set[str]:
+    """Y_TRIPLE(즉시개입, Red 바로 아래 수준) 강제 조건 — 구 Red 트리거 중 금기 외.
+
+    즉시개입(Red 와 동일 긴급도)이 필요하나 절대 금기는 아니므로 risk_level=Yellow·
+    yellow_subtype=Y_TRIPLE(action=즉시개입). 비어 있으면 일반 Yellow 차원 로직 적용.
+    """
+    triggers: set[str] = set()
     if f.ddi_major >= 3:
-        triggers.add("RED_MAJOR_3PLUS")
+        triggers.add("SEV_MAJOR_3PLUS")
     if f.triple_whammy:
-        triggers.add("RED_TRIPLE_WHAMMY")
+        triggers.add("SEV_TRIPLE_WHAMMY")
     if f.drug_count >= 10 and f.has_high_risk_drug:
-        triggers.add("RED_10DRUG_HIGHRISK")
+        triggers.add("SEV_10DRUG_HIGHRISK")
     if (
         f.age is not None
         and f.age >= 75
         and f.drug_count >= 5
         and (f.has_renal_risk_drug or f.has_hepatic_risk_drug)
     ):
-        triggers.add("RED_ELDERLY_ORGAN")
+        triggers.add("SEV_ELDERLY_ORGAN")
     return triggers
 
 
