@@ -593,10 +593,13 @@ def train_hierarchical(
 
     label_counts = dict(Counter(labels_str))
 
-    from scripts.etl.prescription_aggregator import DDI_FEATURE_SEMANTICS_VERSION
+    from scripts.etl.prescription_aggregator import (
+        DDI_FEATURE_SEMANTICS_VERSION, FEATURE_SEMANTICS_VERSION,
+    )
     meta = {
         "clinical_standards_version": CLINICAL_STANDARDS_VERSION,
         "ddi_feature_semantics_version": DDI_FEATURE_SEMANTICS_VERSION,
+        "feature_semantics_version": FEATURE_SEMANTICS_VERSION,
         "feature_cols": list(feature_cols),
         "thresholds": thresholds,
         "stage2_labels": list(STAGE2_LABELS),
