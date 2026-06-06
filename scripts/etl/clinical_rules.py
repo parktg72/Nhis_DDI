@@ -39,9 +39,8 @@ def collect_severe_immediate_triggers(f: Any) -> set[str]:
     즉시개입(Red 와 동일 긴급도)이 필요하나 절대 금기는 아니므로 risk_level=Yellow·
     yellow_subtype=Y_TRIPLE(action=즉시개입). 비어 있으면 일반 Yellow 차원 로직 적용.
     """
+    # major DDI(≥3 포함)는 DDI-Major(Y_DDI_MAJOR, 약사전화)로 별도 처리 — severe 아님(2026-06-07).
     triggers: set[str] = set()
-    if f.ddi_major >= 3:
-        triggers.add("SEV_MAJOR_3PLUS")
     if f.triple_whammy:
         triggers.add("SEV_TRIPLE_WHAMMY")
     if f.drug_count >= 10 and f.has_high_risk_drug:

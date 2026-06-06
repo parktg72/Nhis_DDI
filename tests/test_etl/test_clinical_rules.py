@@ -57,9 +57,10 @@ class TestCollectSevereImmediateTriggers:
     def test_empty_on_normal(self):
         assert collect_severe_immediate_triggers(_features()) == set()
 
-    def test_major_ge_3(self):
-        assert collect_severe_immediate_triggers(_features(ddi_major=3)) == {"SEV_MAJOR_3PLUS"}
-        assert collect_severe_immediate_triggers(_features(ddi_major=2)) == set()
+    def test_major_not_severe(self):
+        """2026-06-07: major DDI(≥3 포함)는 severe 아님 — Y_DDI_MAJOR(약사전화)로 별도."""
+        assert collect_severe_immediate_triggers(_features(ddi_major=3)) == set()
+        assert collect_severe_immediate_triggers(_features(ddi_major=10)) == set()
 
     def test_triple_whammy(self):
         assert collect_severe_immediate_triggers(_features(triple_whammy=True)) == {"SEV_TRIPLE_WHAMMY"}

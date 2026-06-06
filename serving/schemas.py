@@ -280,9 +280,11 @@ class ModelInfoResponse(BaseModel):
 # 개입 주기 매핑
 # ─────────────────────────────────────────────────────────────────────────────
 
+# 2026-06-07 개입 위계: Red=즉각 개입. Yellow 는 subtype 별 action(약사전화/문자안내/모니터링)이
+# 실질 — intervention 은 레벨 일반값. Green·Normal = 관여 안 함.
 INTERVENTION_MAP: dict[RiskLevel, str] = {
-    RiskLevel.RED:    "즉각 개입 (당일 약사 면담 필요)",
-    RiskLevel.YELLOW: "월 1회 복약 상담",
-    RiskLevel.GREEN:  "분기 1회 복약 상담",
-    RiskLevel.NORMAL: "정기 모니터링",
+    RiskLevel.RED:    "즉각 개입",
+    RiskLevel.YELLOW: "복약 상담",
+    RiskLevel.GREEN:  "관여 안 함",
+    RiskLevel.NORMAL: "관여 안 함",
 }

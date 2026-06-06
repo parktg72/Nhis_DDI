@@ -132,7 +132,7 @@ def test_hierarchical_red_suspect_band(req_normal):
     assert resp.red_suspect is True
     assert resp.stage2_probs is not None
     assert set(resp.stage2_probs.keys()) == set(STAGE2_LABELS)
-    assert resp.action == "즉각 개입"   # Y_TRIPLE 액션 상향(2026-06-06 재설계)
+    assert resp.action == "문자 안내"   # Y_TRIPLE → 문자 안내(2026-06-07 위계 재설계)
     # 운영팀 검수 큐 reason 포함
     assert any("Red 의심" in r for r in resp.risk_reasons)
 
@@ -147,10 +147,10 @@ def test_hierarchical_yellow_subtype_clean(req_normal):
     pred = _make_hybrid_with_hierarchical(hp)
     resp = pred.predict(req_normal)
 
-    assert resp.yellow_subtype == "Y_DDI_MOD"
+    assert resp.yellow_subtype == "Y_DDI_MOD"  # 단일 중등도DDI
     assert resp.red_suspect is False
     assert resp.ml_level == RiskLevel.YELLOW
-    assert resp.action == "문자 알림"
+    assert resp.action == "모니터링"   # Y_DDI_MOD 단일차원 → 모니터링(2026-06-07)
     assert resp.ml_probability == pytest.approx(0.10)
 
 
@@ -167,7 +167,7 @@ def test_hierarchical_no_alert(req_normal):
     assert resp.yellow_subtype is None
     assert resp.red_suspect is False
     assert resp.ml_level == RiskLevel.NORMAL
-    assert resp.action == "알림 없음"
+    assert resp.action == "관여 안 함"   # No_Alert(2026-06-07)
     assert resp.stage2_probs is not None  # No_Alert 도 분포 유지
 
 
@@ -389,7 +389,7 @@ def test_hierarchical_http_roundtrip_serializes_new_fields():
             # 신규 필드 직렬화 검증
             assert body["yellow_subtype"] == "Y_TRIPLE"
             assert body["red_suspect"] is True
-            assert body["action"] == "즉각 개입"   # Y_TRIPLE 액션 상향(2026-06-06 재설계)
+            assert body["action"] == "문자 안내"   # Y_TRIPLE → 문자 안내(2026-06-07)
             assert isinstance(body["stage2_probs"], dict)
             assert set(body["stage2_probs"].keys()) == set(STAGE2_LABELS)
             assert all(isinstance(v, float) for v in body["stage2_probs"].values())

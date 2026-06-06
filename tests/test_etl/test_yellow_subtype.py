@@ -76,8 +76,8 @@ def test_single_frag_is_y_frag():
 
 
 def test_two_dimensions_is_y_double():
-    """상호작용 + 중복 = 2 위험차원 → Y_DOUBLE (Red 조건 미충족)."""
-    f = _make(ddi_major=1, dup_same_ingredient=1)
+    """상호작용(중등도) + 중복 = 2 위험차원 → Y_DOUBLE. (major 는 별도 Y_DDI_MAJOR, 2026-06-07)."""
+    f = _make(ddi_moderate=2, dup_same_ingredient=1)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)
     assert f.risk_level == "Yellow"
@@ -85,8 +85,8 @@ def test_two_dimensions_is_y_double():
 
 
 def test_three_dimensions_is_y_triple():
-    """상호작용 + 중복 + 다기관 = 3 위험차원 → Y_TRIPLE."""
-    f = _make(ddi_major=1, dup_same_ingredient=1, institution_count=3)
+    """상호작용(중등도) + 중복 + 다기관 = 3 위험차원 → Y_TRIPLE."""
+    f = _make(ddi_moderate=2, dup_same_ingredient=1, institution_count=3)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)
     assert f.yellow_subtype == "Y_TRIPLE"
@@ -101,20 +101,26 @@ def test_major_and_mod_collapse_to_one_dimension():
     assert f.yellow_subtype == "Y_DDI_MAJOR"
 
 
-def test_interaction_with_frag_is_double_not_triple():
-    """상호작용(major+mod) + 다기관 = 2 차원 → Y_DOUBLE (상호작용 2트리거는 1차원)."""
-    f = _make(ddi_major=1, ddi_moderate=2, institution_count=3)
+def test_interaction_mod_with_frag_is_double():
+    """중등도 상호작용 + 다기관 = 2 차원 → Y_DOUBLE."""
+    f = _make(ddi_moderate=2, institution_count=3)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)
     assert f.yellow_subtype == "Y_DOUBLE"
 
 
 def test_all_dimensions_is_y_triple():
-    """4 트리거(상호작용 major+mod + 중복 + 다기관) = 3 차원 → Y_TRIPLE."""
-    f = _make(ddi_major=1, ddi_moderate=2, dup_same_ingredient=1, institution_count=3)
+    """중등도상호작용 + 중복 + 다기관 = 3 차원 → Y_TRIPLE. (major 동반 시 Y_DDI_MAJOR 우선)."""
+    f = _make(ddi_moderate=2, dup_same_ingredient=1, institution_count=3)
     _assign_risk_level(f)
     _assign_yellow_subtype(f)
     assert f.yellow_subtype == "Y_TRIPLE"
+
+    # major 동반 → Y_DDI_MAJOR 우선(약사전화)
+    f2 = _make(ddi_major=1, dup_same_ingredient=1, institution_count=3)
+    _assign_risk_level(f2)
+    _assign_yellow_subtype(f2)
+    assert f2.yellow_subtype == "Y_DDI_MAJOR"
 
 
 def test_count_label_excluded_when_red():
