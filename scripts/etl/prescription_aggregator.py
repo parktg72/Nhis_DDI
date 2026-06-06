@@ -205,6 +205,13 @@ _SEVERITY_ORDER = {"Contraindicated": 4, "Major": 3, "Moderate": 2, "Minor": 1}
 # (구 ddi=0 학습 모델이 실 DDI 계산 서빙에 로드되면 train/serve 스큐 — d201743 전례).
 DDI_FEATURE_SEMANTICS_VERSION = "ddi.v2"
 
+# 룰 파생 피처(triple_whammy + has_high_risk/renal/hepatic) 시맨틱 버전 (Phase 2-2).
+#   rulefeat.v1: 성분 키워드(get_components)로 triple_whammy·위험약물 플래그 산출(활성).
+#   누락: 구 경로(항상 0, dead feature). 학습 번들 메타에 기록 → 서빙 reload 가드가
+#   누락/구버전 번들 거부(구 ddi=0 류 silent skew 방지). 서빙은 이 버전 번들에 한해
+#   triple_whammy/위험플래그를 edi→wk→components 로 산출.
+FEATURE_SEMANTICS_VERSION = "rulefeat.v1"
+
 
 def _get_ddi_lookup(ddi_matrix: pd.DataFrame) -> dict[frozenset, str]:
     """DDI 매트릭스 → ID 쌍 기반 조회 딕셔너리 (캐시됨)."""
@@ -371,6 +378,23 @@ def detect_triple_whammy(wk_codes: list[str], drug_master: DrugMaster | None = N
         if a and k and n:
             return True
     return a and k and n
+
+
+def detect_risk_drug(wk_codes: list[str], drug_master: DrugMaster | None, keywords) -> bool:
+    """wk 집합의 성분명(get_components)이 위험약물 키워드 집합에 매칭되는지 (학습·서빙 공용).
+
+    _check_risk_drugs 의 성분 경로와 동일 로직 — 서빙(edi→wk)이 학습과 동일 판정하도록.
+    """
+    if drug_master is None or not wk_codes:
+        return False
+    for wk in wk_codes:
+        if not wk:
+            continue
+        for comp in drug_master.get_components(wk):
+            c = comp.lower()
+            if any(kw in c for kw in keywords):
+                return True
+    return False
 
 
 def _fill_dup_features(

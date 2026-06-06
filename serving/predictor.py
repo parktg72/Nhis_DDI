@@ -937,6 +937,38 @@ class RequestFeatureBuilder:
             "dup_efmdc": float(_dup.dup_efmdc),
         }
 
+    def red_triggers(self, drugs: list, ref: date, patient_age=None) -> set:
+        """학습 collect_red_triggers 를 edi→wk 피처에 직접 적용 → 결정적 Red 트리거 집합.
+
+        model-independent 안전 백스톱(Phase 2-2): ddi(_count_ddi)·triple_whammy·위험약물·
+        drug_count 를 edi→wk→DrugMaster 로 산출(학습과 동일 식별자·함수) 후 collect_red_triggers.
+        ML Stage1(degenerate τ)·SafetyNet(약물명 미해석) 의존 제거, 학습 Red 룰과 정확 일치.
+        std/drug_master 부재 시 빈 set(비차단).
+        """
+        from types import SimpleNamespace
+        drug_master = self._drug_master()
+        if self._std is None or drug_master is None:
+            return set()
+        from scripts.etl.clinical_rules import collect_red_triggers
+        from scripts.etl.prescription_aggregator import (
+            detect_triple_whammy, detect_risk_drug,
+            _HIGH_RISK_KEYWORDS, _RENAL_RISK_KEYWORDS, _HEPATIC_RISK_KEYWORDS,
+        )
+        ddi = self._count_ddi(drugs, ref)
+        cdup = self._count_dup_features(drugs, ref) or {}
+        mapped_wks = [w for w in (self._std.get_wk(d.edi_code) for d in drugs) if w]
+        f = SimpleNamespace(
+            ddi_contraindicated=ddi.get("Contraindicated", 0),
+            ddi_major=ddi.get("Major", 0),
+            triple_whammy=detect_triple_whammy(mapped_wks, drug_master),
+            drug_count=cdup.get("drug_count", float(len({d.edi_code for d in drugs}))),
+            has_high_risk_drug=detect_risk_drug(mapped_wks, drug_master, _HIGH_RISK_KEYWORDS),
+            has_renal_risk_drug=detect_risk_drug(mapped_wks, drug_master, _RENAL_RISK_KEYWORDS),
+            has_hepatic_risk_drug=detect_risk_drug(mapped_wks, drug_master, _HEPATIC_RISK_KEYWORDS),
+            age=patient_age,
+        )
+        return collect_red_triggers(f)
+
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None) -> tuple[np.ndarray, dict]:
         """
         요청 → (피처 벡터, 피처 딕셔너리).
@@ -1347,28 +1379,22 @@ class HybridPredictor:
                 dl_error = str(e)
                 logger.warning("DL auxiliary inference failed: %s", e)
 
-        # Step 3.5: 결정적 DDI Red 백스톱 — 학습 collect_red_triggers 의 DDI 조건
-        # (ddi_contraindicated≥1 / ddi_major≥3)을 RequestFeatureBuilder 의 edi→wk DDI
-        # 카운트(Task B, 학습과 동일 경로)에 직접 적용. ML Stage1(룰 파생 라벨 → degenerate
-        # τ_red≈0.9998, recall 0.90 = ~10% 누락)·SafetyNet(약물명 기반, 실 edi 미해석)에만
-        # 의존하던 갭을 닫아 Red 를 학습 라벨과 정확 일치시킨다. 단방향 escalation(max only).
-        # triple_whammy/has_high_risk 등 나머지 트리거는 학습서 미산출(triple_whammy 항상 0)
-        # 이라 지금 적용 시 새 train/serve 스큐 → 제외(Phase 2: ETL 계산 추가+재학습 후).
-        _ddi_red_reasons: list[str] = []
+        # Step 3.5: 결정적 Red 백스톱 — 학습 collect_red_triggers 전체를 edi→wk 피처에 직접
+        # 적용(Phase 2-2). ddi_contra/major + triple_whammy + drug_count·위험약물·age 를
+        # edi→wk→DrugMaster(학습과 동일 식별자·함수)로 산출. ML Stage1(룰파생 degenerate τ,
+        # ~10% 누락)·SafetyNet(약물명 미해석) 의존 제거 → Red 를 학습 룰과 정확 일치.
+        # model-independent(배포 모델 버전 무관) 안전 백스톱. 단방향 escalation(max only).
+        _red_reasons: list[str] = []
         try:
-            _dc = self._builder._count_ddi(req.drugs, ref)
-            if _dc.get("Contraindicated", 0) >= 1:
-                _ddi_red_reasons.append("RED_CONTRAINDICATED")
-            if _dc.get("Major", 0) >= 3:
-                _ddi_red_reasons.append("RED_MAJOR_3PLUS")
+            _red_reasons = sorted(self._builder.red_triggers(req.drugs, ref, req.patient_age))
         except Exception as e:  # 백스톱 실패는 비차단(기존 경로 유지)
-            logger.warning("결정적 DDI Red 백스톱 계산 실패(무시): %s", e)
+            logger.warning("결정적 Red 백스톱 계산 실패(무시): %s", e)
 
-        # Step 4: 최종 등급 = max(Rule, ML, 결정적 DDI Red)
+        # Step 4: 최종 등급 = max(Rule, ML, 결정적 Red 백스톱)
         final_level = rule_level
         if ml_level is not None:
             final_level = RiskLevel.max(rule_level, ml_level)
-        if _ddi_red_reasons:
+        if _red_reasons:
             final_level = RiskLevel.max(final_level, RiskLevel.RED)
 
         # Step 5: DDI 알림 보완 (ddi_matrix에서 추가)
@@ -1381,7 +1407,7 @@ class HybridPredictor:
 
         # dup_reasons는 등급과 무관하게 항상 포함 (설명 가능성)
         all_reasons = list(rule_reasons) + [r for r in dup_reasons if r not in rule_reasons]
-        for _r in _ddi_red_reasons:   # 결정적 DDI Red 사유 (canonical rule ID, dedupe)
+        for _r in _red_reasons:   # 결정적 Red 백스톱 사유 (canonical rule ID, dedupe)
             if _r not in all_reasons:
                 all_reasons.append(_r)
         if ml_prob is not None and ml_prob > 0.3:
