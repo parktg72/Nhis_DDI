@@ -61,8 +61,12 @@ print(dl.predict(hist)["probabilities"]["high"])   # == 원 Linear sigmoid(z)
 - `/predict` 응답에서 DL 출력은 **`dl_prediction` 보조 필드**(다기관 위험 low/high)로 노출.
   **주 `risk_level`은 hierarchical**(별 모델). DL 번들은 gitignored 배포 아티팩트(비커밋).
 
-## 5. 남은 결정 (별도 cross-family)
+## 5. 임상 노출 결정 — ✅ cross-family 완료 (Decision A, 2026-06-06)
 
-- **DL 출력의 임상 위험 노출**(`dl_prediction`을 proxy 위험 라벨로 격상)은 별도 cross-family
-  사인오프 — 본 절차는 "서빙 가능·parity 검증"까지. ([[app-feature-builder-missing-drugmaster-ddi-zero]])
+cross-family(Claude LO ↔ Codex) 거버넌스 리뷰 결과 **A = info-only 유지**(임상 위험 구동
+미승인). dl_prediction 은 `/predict` **정보 필드만**, risk_level 불변 — **현재 코드가 이미 올바름**
+(코드 변경 불필요). 근거: ① CLINICAL_REVIEW_AUTHORIZED≠위험구동 인가 ② same-window 라벨이
+FRAG 룰(institution_count≥3) 미러 → DL 부가가치 한계 ③ val_best_threshold=F1-max(임상임계 아님).
+승인범위·B/C 선결조건·OOV 모니터링은 **모델 카드** `docs/model_cards/sparse_linear_multi_inst_t6.md`.
+
 - (선택) `DL_MODEL_DIR` startup env 추가 시 reload_dl 없이 부팅 로드 가능 — 서빙 변경이라 별도.
