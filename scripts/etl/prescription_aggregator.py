@@ -44,11 +44,23 @@ def _check_risk_drugs(
     prescriptions: list[PrescriptionRecord],
     keywords: set[str],
     atc_prefixes: tuple[str, ...],
+    drug_master: DrugMaster | None = None,
 ) -> bool:
-    """처방 목록에서 특정 위험 약물 포함 여부 확인 (이름 + ATC 이중 매칭)."""
+    """처방 목록에서 특정 위험 약물 포함 여부 (성분 + 이름 + ATC 매칭).
+
+    학습 records 는 drug_name/atc_code 가 없어(df_row_to_record) 이름·ATC 경로는
+    프로덕션서 dead. → DrugMaster.get_components(wk) 성분명 키워드 매칭이 실 경로
+    (Phase 2-3). 학습·서빙(향후 edi→wk) 공용 식별자(wk→components). 키워드는 기존
+    risk_drug_constants 단일출처(새 정의 아님 — 식별자만 수정).
+    """
     for p in prescriptions:
+        if drug_master is not None and p.wk_compn_cd:
+            for comp in drug_master.get_components(p.wk_compn_cd):
+                c = comp.lower()
+                if any(kw in c for kw in keywords):
+                    return True
         name = (p.drug_name or "").lower()
-        if any(kw in name for kw in keywords):
+        if name and any(kw in name for kw in keywords):
             return True
         atc = p.atc_code or ""
         if atc and atc.startswith(atc_prefixes):
@@ -59,16 +71,17 @@ def _check_risk_drugs(
 def _fill_risk_drug_flags(
     features: PatientFeatures,
     prescriptions: list[PrescriptionRecord],
+    drug_master: DrugMaster | None = None,
 ) -> None:
-    """고위험/신기능/간기능 저하 위험 약물 포함 여부 플래그 설정."""
+    """고위험/신기능/간기능 저하 위험 약물 포함 여부 플래그 설정 (성분 키워드, Phase 2-3)."""
     features.has_high_risk_drug = _check_risk_drugs(
-        prescriptions, _HIGH_RISK_KEYWORDS, _HIGH_RISK_ATC_PREFIXES,
+        prescriptions, _HIGH_RISK_KEYWORDS, _HIGH_RISK_ATC_PREFIXES, drug_master,
     )
     features.has_renal_risk_drug = _check_risk_drugs(
-        prescriptions, _RENAL_RISK_KEYWORDS, _RENAL_RISK_ATC_PREFIXES,
+        prescriptions, _RENAL_RISK_KEYWORDS, _RENAL_RISK_ATC_PREFIXES, drug_master,
     )
     features.has_hepatic_risk_drug = _check_risk_drugs(
-        prescriptions, _HEPATIC_RISK_KEYWORDS, _HEPATIC_RISK_ATC_PREFIXES,
+        prescriptions, _HEPATIC_RISK_KEYWORDS, _HEPATIC_RISK_ATC_PREFIXES, drug_master,
     )
 
 
@@ -164,7 +177,7 @@ def aggregate_patient_features(
     features.triple_whammy = detect_triple_whammy(unique_wk, drug_master)
 
     # ── 고위험/신기능/간기능 약물 플래그 ─────────────────────────────────────
-    _fill_risk_drug_flags(features, prescriptions)
+    _fill_risk_drug_flags(features, prescriptions, drug_master)
 
     # ── CYP450 피처 ────────────────────────────────────────────────────────
     if cyp_extractor is not None:
