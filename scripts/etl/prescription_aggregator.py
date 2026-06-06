@@ -157,6 +157,12 @@ def aggregate_patient_features(
     if dup_groups is not None:
         _fill_dup_features(features, prescriptions, dup_groups, drug_master)
 
+    # ── Triple Whammy (ACEi/ARB+K이뇨제+NSAID, 성분 키워드) ───────────────────
+    # 직전까지 미계산(항상 False)이던 것을 산출. Red 트리거(collect_red_triggers)에 들어가
+    # 라벨이 바뀌므로 **다음 재학습부터 반영**(기존 배포모델엔 inert). 서빙 활성화는
+    # 재학습·배포 후(현재 서빙 모델피처 triple_whammy 는 배포모델=0 과 맞춰 0 유지).
+    features.triple_whammy = detect_triple_whammy(unique_wk, drug_master)
+
     # ── 고위험/신기능/간기능 약물 플래그 ─────────────────────────────────────
     _fill_risk_drug_flags(features, prescriptions)
 
@@ -299,6 +305,59 @@ def count_same_ingredient_dups(
         return sum(1 for c in cnt.values() if c >= 2)
     cnt_wk = Counter(wk_codes)
     return sum(1 for c in cnt_wk.values() if c >= 2)
+
+
+# ── Triple Whammy 성분 클래스 (학습·서빙 공용 단일출처) ────────────────────────
+# ACEi/ARB + K보존 이뇨제 + NSAID 동시 → 급성 신손상 위험(Red 트리거).
+# wk→ATC 매핑이 부재(HIRA 무, DrugBank 크로스워크는 K이뇨제/일부 NSAID 미해석)라
+# **성분명 키워드**로 판정(get_components). ACEi='...pril', ARB='...sartan' 접미사 +
+# K이뇨제·NSAID 명시 목록. 키워드 완전성은 추후 보강(임상 큐레이션). 변경 시 재학습 필요.
+_TW_ACEI_ARB_SUFFIX = ("pril", "sartan")
+_TW_KSPARING = frozenset({
+    "spironolactone", "eplerenone", "amiloride", "triamterene", "canrenone",
+})
+_TW_NSAID = frozenset({
+    "ibuprofen", "dexibuprofen", "naproxen", "diclofenac", "aceclofenac",
+    "celecoxib", "etoricoxib", "meloxicam", "lornoxicam", "piroxicam", "tenoxicam",
+    "ketoprofen", "dexketoprofen", "loxoprofen", "zaltoprofen", "flurbiprofen",
+    "etodolac", "nabumetone", "sulindac", "indomethacin", "mefenamic", "talniflumate",
+    "nimesulide", "ketorolac", "pelubiprofen", "polmacoxib", "fenbufen", "nabumeton",
+})
+
+
+def _wk_ingredient_classes(wk: str, drug_master: DrugMaster) -> tuple[bool, bool, bool]:
+    """단일 wk 의 성분명 → (ACEi/ARB, K이뇨제, NSAID) 클래스 보유 여부."""
+    acei_arb = ksparing = nsaid = False
+    for comp in drug_master.get_components(wk):
+        c = comp.lower()
+        if c.endswith(_TW_ACEI_ARB_SUFFIX):
+            acei_arb = True
+        if any(k in c for k in _TW_KSPARING):
+            ksparing = True
+        if any(n in c for n in _TW_NSAID):
+            nsaid = True
+    return acei_arb, ksparing, nsaid
+
+
+def detect_triple_whammy(wk_codes: list[str], drug_master: DrugMaster | None = None) -> bool:
+    """ACEi/ARB + K보존이뇨제 + NSAID 동시복용 여부 (학습·서빙 공용 단일출처).
+
+    DrugMaster.get_components(wk) 성분명 키워드 기반(ATC 부재 대응). drug_master 없으면 False.
+    학습(aggregate_patient_features)·서빙(edi→wk 후)이 동일 wk 집합으로 호출 → parity by construction.
+    """
+    if drug_master is None or not wk_codes:
+        return False
+    a = k = n = False
+    for wk in wk_codes:
+        if not wk:
+            continue
+        wa, wk_, wn = _wk_ingredient_classes(wk, drug_master)
+        a = a or wa
+        k = k or wk_
+        n = n or wn
+        if a and k and n:
+            return True
+    return a and k and n
 
 
 def _fill_dup_features(
