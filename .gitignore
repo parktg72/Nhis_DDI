@@ -98,3 +98,9 @@ web-user-guide.md
 
 # Binary report exports
 /docs/reports/*.docx
+
+# 로컬 산출물·도구·에디터 설정 (추적 제외)
+.agents/
+cache/
+hana_app/results/
+*.code-workspace
