@@ -634,19 +634,18 @@ def train_hierarchical(
 # ACTION_BY_LABEL 에 없고, _dispatch_result(확정 Red)와 결과분석 개입 분포가 공유한다.
 RED_ACTION: str = "즉각 개입"
 
-# Yellow 세부 라벨별 권장 개입.
-# Y_TRIPLE = 중증(금기 외 즉시개입 조건 또는 3차원) → **즉각 개입**(Red 와 동일 긴급도,
-#   단 risk_level 은 Red 보다 낮음, 2026-06-06 재설계). Y_DOUBLE(2차원) → 문자 알림.
-# 단일 차원이라도 major 상호작용(Y_DDI_MAJOR)은 임상 중대성이 커 의료인 전화로
-# 상향(단일 major 가 Y_DOUBLE 보다 약해지는 역전 방지). 나머지 단일 라벨은 문자/문서.
+# Yellow 세부 라벨별 권장 개입 (2026-06-07 개입 위계 재설계).
+# Red(금기)=즉각 개입 > Y_DDI_MAJOR(major DDI)=약사 전화 > Y_TRIPLE(중증: triple_whammy/
+# 10drug+고위험/고령+장기 또는 3차원)=문자 안내 > Y_DOUBLE·단일차원(중등도DDI/중복/다기관)=
+# 모니터링 > No_Alert·Green·Normal=관여 안 함.
 ACTION_BY_LABEL: dict[str, str] = {
-    "Y_TRIPLE":     RED_ACTION,   # 즉각 개입 (Red 바로 아래 수준)
-    "Y_DOUBLE":     "문자 알림",
-    "Y_DDI_MAJOR":  "의료인 전화",
-    "Y_DDI_MOD":    "문자 알림",
-    "Y_DUP":        "문서 + 문자 알림",
-    "Y_FRAG":       "문자 알림",
-    "No_Alert":     "알림 없음",
+    "Y_DDI_MAJOR":  "약사 전화",
+    "Y_TRIPLE":     "문자 안내",
+    "Y_DOUBLE":     "모니터링",
+    "Y_DDI_MOD":    "모니터링",
+    "Y_DUP":        "모니터링",
+    "Y_FRAG":       "모니터링",
+    "No_Alert":     "관여 안 함",
 }
 
 

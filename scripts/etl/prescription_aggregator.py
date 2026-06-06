@@ -507,15 +507,20 @@ def _assign_yellow_subtype(features: PatientFeatures) -> None:
         features.yellow_subtype = None
         return
 
-    # 중증(즉시개입) 조건 = Y_TRIPLE (Red 바로 아래, action 즉시개입). 차원 개수보다 우선.
+    # 위계(2026-06-07 재설계, 액션 기준):
+    #   1) major DDI(≥1) → Y_DDI_MAJOR (DDI-Major, 약사전화) — 최우선.
+    #   2) 중증(triple_whammy/10drug+고위험/고령+장기) → Y_TRIPLE (문자안내).
+    #   3) 나머지 차원(중등도DDI/중복/다기관) 개수: 3=Y_TRIPLE, 2=Y_DOUBLE, 1=단일(모니터링).
+    if features.ddi_major >= 1:
+        features.yellow_subtype = "Y_DDI_MAJOR"
+        return
     if collect_severe_immediate_triggers(features):
         features.yellow_subtype = "Y_TRIPLE"
         return
 
     triggers = collect_yellow_triggers(features)
-    # 계수는 trigger 가 아니라 **위험 차원** 개수로 센다(4대 위험 기준).
-    # 상호작용(DDI_MAJOR|DDI_MOD)은 한 차원으로 묶이므로 major+mod 동시발동도 1.
-    interaction = "DDI_MAJOR" in triggers or "DDI_MOD" in triggers
+    # major 는 위에서 처리됨 → 차원은 중등도DDI·중복·다기관만.
+    interaction = "DDI_MOD" in triggers
     duplication = "DUP" in triggers
     multi_inst = "FRAG" in triggers
     dim_count = int(interaction) + int(duplication) + int(multi_inst)
@@ -528,8 +533,7 @@ def _assign_yellow_subtype(features: PatientFeatures) -> None:
         return
     if dim_count == 1:
         if interaction:
-            # 상호작용 단일 차원 — major 가 mod 보다 우선(더 중한 신호).
-            features.yellow_subtype = "Y_DDI_MAJOR" if "DDI_MAJOR" in triggers else "Y_DDI_MOD"
+            features.yellow_subtype = "Y_DDI_MOD"
         elif duplication:
             features.yellow_subtype = "Y_DUP"
         else:  # multi_inst

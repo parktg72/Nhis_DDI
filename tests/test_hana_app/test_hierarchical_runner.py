@@ -335,7 +335,7 @@ def test_dispatch_no_alert_action():
         tau_red=0.7, tau_review=0.3,
     )
     assert r["risk_level"] == "No_Alert"
-    assert r["action"] == "알림 없음"
+    assert r["action"] == "관여 안 함"   # No_Alert(2026-06-07)
 
 
 def test_dispatch_red_confirmed_above_tau_red():
@@ -360,7 +360,7 @@ def test_dispatch_red_suspect_between_thresholds():
     )
     assert r["risk_level"] == "Y_TRIPLE"
     assert r["red_suspect"] is True
-    assert r["action"] == "즉각 개입"   # Y_TRIPLE 액션 상향(2026-06-06 재설계)
+    assert r["action"] == "문자 안내"   # Y_TRIPLE → 문자 안내(2026-06-07)
 
 
 def test_predict_risk_end_to_end(tmp_path):
@@ -496,13 +496,13 @@ def test_end_to_end_train_predict(tmp_path):
     # Red (30)
     for _ in range(30):
         features.append(_ft(ddi_contraindicated=1, drug_count=rng.randint(3, 8)))
-    # Y_DOUBLE (30) — yellow 요소 2개 (DDI_MAJOR + DUP)
+    # Y_DOUBLE (30) — 2 위험차원 (중등도 상호작용 + 중복). major 는 Y_DDI_MAJOR 이므로 mod 사용.
     for _ in range(30):
-        features.append(_ft(ddi_major=1, dup_same_ingredient=1,
+        features.append(_ft(ddi_moderate=2, dup_same_ingredient=1,
                              drug_count=rng.randint(3, 8)))
-    # Y_TRIPLE (30) — 3 위험차원 (상호작용 + 중복 + 다기관)
+    # Y_TRIPLE (30) — 3 위험차원 (중등도 상호작용 + 중복 + 다기관)
     for _ in range(30):
-        features.append(_ft(ddi_major=1, dup_same_ingredient=1, institution_count=3,
+        features.append(_ft(ddi_moderate=2, dup_same_ingredient=1, institution_count=3,
                              drug_count=rng.randint(3, 8)))
     # Y_DDI_MAJOR (30)
     for _ in range(30):

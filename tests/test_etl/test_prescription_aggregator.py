@@ -81,13 +81,13 @@ class TestAssignRiskLevel:
         _assign_risk_level(feat)
         assert feat.risk_level == "Red"
 
-    def test_major_ddi_3plus_is_severe_ytriple(self):
-        """2026-06-06 재설계: major DDI≥3 → Red 아닌 Yellow/Y_TRIPLE(즉시개입)."""
+    def test_major_ddi_is_ddi_major_pharmacist(self):
+        """2026-06-07: major DDI(≥1, ≥3 포함) → Y_DDI_MAJOR(약사전화), Red/Y_TRIPLE 아님."""
         feat = _make_features(ddi_major=3)
         _assign_risk_level(feat)
         assert feat.risk_level == "Yellow"
         _assign_yellow_subtype(feat)
-        assert feat.yellow_subtype == "Y_TRIPLE"
+        assert feat.yellow_subtype == "Y_DDI_MAJOR"
 
     def test_major_ddi_2_is_yellow(self):
         feat = _make_features(ddi_major=2)

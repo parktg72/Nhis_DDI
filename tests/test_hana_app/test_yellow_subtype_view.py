@@ -87,23 +87,22 @@ def test_summarize_actions_includes_red():
     })
     out = summarize_actions(df)
     actions = dict(zip(out["action"], out["count"]))
-    # Red(4) + Y_TRIPLE(3) 모두 즉각 개입 (2026-06-06 재설계: Y_TRIPLE 액션 상향)
-    assert actions[RED_ACTION] == 7
-    assert "의료인 전화" not in actions
+    # Red(4)=즉각 개입, Y_TRIPLE(3)=문자 안내 (2026-06-07 위계 재설계 — 분리)
+    assert actions[RED_ACTION] == 4
+    assert actions["문자 안내"] == 3
     # count 내림차순 정렬 보장
     assert list(out["count"]) == sorted(out["count"], reverse=True)
 
 
 def test_summarize_actions_merges_same_action():
-    """같은 action(Y_DOUBLE/Y_DDI_MOD/Y_FRAG = '문자 알림')은 합산된다."""
+    """같은 action(Y_DOUBLE/Y_DDI_MOD/Y_FRAG/Y_DUP = '모니터링', 2026-06-07)은 합산된다."""
     df = pd.DataFrame({
         "risk_level": ["Yellow"] * 5,
         "yellow_subtype": ["Y_DOUBLE", "Y_DDI_MOD", "Y_FRAG", "Y_DOUBLE", "Y_DUP"],
     })
     out = summarize_actions(df)
     actions = dict(zip(out["action"], out["count"]))
-    assert actions["문자 알림"] == 4              # Y_DOUBLE×2 + Y_DDI_MOD + Y_FRAG
-    assert actions["문서 + 문자 알림"] == 1       # Y_DUP
+    assert actions["모니터링"] == 5              # Y_DOUBLE×2 + Y_DDI_MOD + Y_FRAG + Y_DUP
 
 
 def test_summarize_actions_empty_without_red_or_yellow():
