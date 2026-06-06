@@ -66,12 +66,12 @@ def test_summary_includes_accepted_label_and_model(tmp_path) -> None:
         generated_at="2026-05-23T18:00:00+09:00",
     )
 
-    assert summary["decision"]["accepted_label"] == "multi_institution_t6_exact30_patient_disjoint"
+    assert summary["decision"]["accepted_label"] == "multi_institution_t6_aligned_patient_disjoint"
     assert summary["decision"]["accepted_model"] == "sparse_linear"
     assert summary["model_comparison"]["sparse_linear"]["val_auc"] == 0.84914
     assert summary["model_comparison"]["xgboost_quick"]["decision"] == "HELD"
     assert summary["feature_schema"]["input_dim"] == 14705
-    assert summary["version"] == "2"
+    assert summary["version"] == "3"
     assert summary["future_outcome_track"]["decision"] == "WEAK_FEASIBLE_RESEARCH_TRACK"
     assert summary["future_outcome_track"]["baseline_replacement"] is False
     assert summary["future_outcome_track"]["dataset"]["n_evaluable"] == 42168
@@ -94,7 +94,9 @@ def test_summary_rejected_ddi_includes_reason(tmp_path) -> None:
     ddi = next(item for item in summary["label_candidates"] if item["label"] == "ddi_contraindicated")
     assert ddi["decision"] == "REJECTED"
     assert "D000718" in ddi["reason"]
-    assert summary["cohort_scale_note"].startswith("40K =")
+    note = summary["cohort_scale_note"]
+    assert "153 daily record files" in note   # 07~11 same-window 코호트
+    assert "patient-disjoint" in note          # aligned 60-day patient-disjoint 방법론
 
 
 def test_summary_markdown_has_key_sections(tmp_path) -> None:

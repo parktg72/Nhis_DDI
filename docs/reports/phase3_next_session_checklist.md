@@ -1,205 +1,255 @@
 # Phase 3 Next Session Checklist
 
-Last updated: 2026-05-23
+Last updated: 2026-05-29
 
 ## Current State
 
-- Baseline status: `BASELINE_LOCKED`
-- Accepted label: `multi_institution_t6_exact30_patient_disjoint`
+- Baseline status: `CLINICAL_REVIEW_AUTHORIZED`
+- Accepted label: `multi_institution_t6_aligned_patient_disjoint`
 - Accepted model: `sparse_linear`
-- Baseline reference result: patient-disjoint temporal AUC `0.849140`, PR-AUC `0.650496`
-- Future outcome track: `WEAK_FEASIBLE_RESEARCH_TRACK`
-- Raw coverage currently available: `2024-10-01..2024-11-30`
-- Current blocker: no 2024-12 Raw month
+- Baseline reference result: 60-day aligned perfect patient-disjoint temporal AUC `0.844954`, PR-AUC `0.799161`
+- Raw coverage currently available: `2024-07-01..2024-11-30` (5 months sampling data)
+- Next Step Blocker: Bypassed. Transitioning from research track to official clinical review.
 - Repo handoff state: DAG, Smoke DL serving, packaging, hana_app, and cleanup
-  slices are committed and pushed through `2a4fbe7`
-  (`chore(gitignore): ignore local artifacts`).
-- Gate 0 rechecked on 2026-05-23: local `data/Raw` still has 61 daily
-  `records_2024*.parquet` files for `2024-10-01..2024-11-30` and no
-  `records_202412*.parquet` files.
+  slices are committed and pushed.
 
 Decision documents:
 
 - `docs/reports/phase3_baseline_summary.md`
-- `data/reports/phase3_baseline_summary.json`
-- Obsidian: `mode_11_hana_2026-05-18.md`
+- Obsidian: `mode_11_hana.md` (and related logs)
 
-## Resume Here When 2024-12 Raw Arrives
 
-Place the December exports under `data/Raw` with these filenames:
+## 2026-05-28 Gate Correction And Raw Data Verification
 
-- `data/Raw/records_20241201.parquet`
-- ...
-- `data/Raw/records_20241231.parquet`
+### FROZEN — Nov->Dec Holdout Remains Exhausted
 
-Then start from **Gate 0** below. Do not skip directly to model training.
-The first successful run must prove that all 31 files exist and that
-`records_20241231.parquet` has the expected schema.
+Do not run additional model, feature, or hyperparameter experiments against
+the current Nov->Dec patient-disjoint holdout. The holdout is frozen because it
+has already been used for repeated ablations and XGBoost robustness checks.
+Per the 2026-06-02 correction: the dataset is finalized at 6 months
+(2024-07..12); **Jan 2025 / Gate 5A acquisition is cancelled and Gate 5B is
+retired. There is no remaining future-onset unlock condition — the holdout is
+parked.**
 
-First command to run:
+Freeze references:
 
-```bash
-ls data/Raw/records_202412*.parquet | wc -l
-```
+- ledger: `data/reports/future_onset_research_freeze_ledger.json`
+- handoff: `data/reports/future_onset_research_freeze_handoff.md`
+- split manifest: `data/reports/future_onset_research_freeze_datasplit_manifest.csv`
+- frozen model: `data/models/future_onset_xgb_efmdc_demo_frozen_20260526.ubj`
 
-If the count is `31`, continue with Gate 1. If fewer than 31 files exist,
-stop and fix the export/copy before running any dataset build.
+### 2024-07..11 Raw Data Verification (Hermes confirmed)
 
-## Gate 0: Confirm 2024-12 Raw Arrived
+- Total record files: `153` (`records_20240701.parquet` .. `records_20241130.parquet`)
+- Monthly counts: `202407=31`, `202408=31`, `202409=30`, `202410=31`, `202411=30`
+- Total prescription rows: `40,380,615`
+- Unique patients in records: `493,875`; unique EDI codes: `21,278`
+- Source mix: `T30=22,340,091` / `T60=18,040,524`
+- Eligibility files: `eligibility_ages.parquet=500,000 rows`, `eligibility_demographics.parquet=500,000 rows`
+- Schema diffs across records files: `0`
+- Required columns present in all records files: `patient_id`, `edi_code`, `start_date`, `institution_id`, `efmdc_clsf_no`, `wk_compn_cd`
+- Null rates for `patient_id`, `edi_code`, `start_date`, `institution_id`: `0.0%`
+- Targeted ops regression: `71 passed in 4.68s` (Windows `.venv_hana`, 2026-05-29)
+- Feature/serving schema guard regression: `48 passed in 2.50s` (Windows `.venv_hana`, 2026-05-29)
 
-```bash
-ls data/Raw/records_202412*.parquet | sed -n '1,5p'
-ls data/Raw/records_202412*.parquet | wc -l
-```
+Status: `2024-07..11` data is established training/context/clinical-review
+baseline data. It is **not** a frozen Nov->Dec holdout unlock condition.
 
-Pass criteria:
+Dataset scope (2026-06-02) — **Jan 2025 / Gate 5A CANCELLED**:
 
-- Expected count: 31 daily parquet files for `2024-12-01..2024-12-31`
-- Required file for reference-date workflows: `data/Raw/records_20241231.parquet`
+The dataset is finalized at 6 months (2024-07..12, 500k sample). Dec 2024 Raw was
+added and verified on 2026-06-02 (31 files, schema/null QA clean). **Jan 2025 Raw
+will not be acquired**, so the former Gate 5A unlock trigger is cancelled and
+Gate 5B is retired. There is no remaining future-onset unlock condition.
 
-If the files are absent, stop. Do not run more model experiments on the current two-month data.
+The Nov→Dec future-onset holdout remains frozen (parked). Do not run model,
+feature, or hyperparameter experiments or related code changes against it.
+Proceed only with freeze-safe same-window baseline and DL operationalization work.
 
-Next external action: acquire December 2024 daily Raw exports from HANA
-`10.1.67.115:30015`, then start at Gate 1. If only a sample arrives first,
-run `inspect_parquet_history.bat` before any dataset build.
+### Gate 1 — Schema And Integrity
 
-## Gate 1: Schema And Integrity Check
+- `records_20241130.parquet` rows: 351,697
+- `records_20241231.parquet` rows: 801,730
+- Missing/new Dec columns vs Nov: none
+- Required missing Dec columns: none
+- Null rates for `patient_id`, `edi_code`, `start_date`, `institution_id`: 0.0% in both Nov and Dec
 
-Compare 2024-12 schema with known-good 2024-11 schema.
+### Gate 2 — Dec Same-Window Dataset
 
-```bash
-cmd.exe /c '.venv_hana\Scripts\python.exe -c "import pyarrow.parquet as pq, json; a=pq.ParquetFile(r\"data\Raw\records_20241130.parquet\").schema_arrow; b=pq.ParquetFile(r\"data\Raw\records_20241231.parquet\").schema_arrow; print(json.dumps({\"missing_in_dec\": sorted(set(a.names)-set(b.names)), \"new_in_dec\": sorted(set(b.names)-set(a.names))}, ensure_ascii=False, indent=2))"'
-```
+- dataset: `data/datasets/multi_inst_t6_20241231_l29`
+- n_patients: 85,907
+- input_dim: 14,705
+- positive_rate_pct: 25.0364
+- unknown_drug_rate_pct: 0.6499
+- zero_vector_rate_pct: 0.0
+- note: Dec row/patient counts are about 2x Nov; schema/null/vocab checks are normal, so record as likely year-end prescribing concentration.
 
-Required columns:
+### Gate 3 — Oct→Dec Same-Window Temporal Smoke
 
-- `patient_id`
-- `edi_code`
-- `start_date`
-- `institution_id`
-- `efmdc_clsf_no`
-- `wk_compn_cd`
+- report: `data/datasets/multi_inst_t6_temporal_20241031_to_20241231/sparse_training_smoke_report.json`
+- val_auc: 0.843441
+- val_pr_auc: 0.674430
+- best_f1: 0.625442
+- precision@top5%: 0.873371
+- patient_overlap_count: 10,871
+- patient_overlap_val_rate_pct: 12.6544
+- decision: metric pass, but do not claim patient-disjoint generalization from this Dec smoke because overlap is nonzero.
 
-Null-rate spot check:
+Patient-disjoint rerun:
 
-```bash
-cmd.exe /c '.venv_hana\Scripts\python.exe -c "import pandas as pd, json; cols=[\"patient_id\",\"edi_code\",\"start_date\",\"institution_id\"]; df=pd.read_parquet(r\"data\Raw\records_20241231.parquet\", columns=cols); print(json.dumps({c: round(float(df[c].isna().mean()*100),4) for c in cols}, indent=2))"'
-```
+- filtered validation dataset: `data/datasets/multi_inst_t6_20241231_l29_disjoint_oct`
+- removed overlap patients: 10,871 (12.6544% of Dec source)
+- filtered positive_rate_pct: 24.6015
+- report: `data/datasets/multi_inst_t6_temporal_20241031_to_20241231_disjoint_oct/sparse_training_smoke_report.json`
+- val_auc: 0.839296
+- val_pr_auc: 0.663741
+- precision@top5%: 0.866205
+- patient_overlap_val_rate_pct: 0.0
+- decision: same-window sparse-linear signal remains robust under patient-disjoint Dec validation.
 
-Pass criteria:
+### Gate 4 — Future Outcome 3-Window Track
 
-- No missing required columns
-- `patient_id`, `edi_code`, `start_date` null rate is effectively `0%`
-- `institution_id` null rate does not materially exceed prior-month levels
+- validation dataset: `data/datasets/future_multi_inst_onset_t6_20241130_to_20241231_with_oct_inst_count`
+- temporal report: `data/datasets/future_multi_inst_onset_t6_temporal_20241031_to_20241231/sparse_training_smoke_report.json`
+- n_val_dataset: 25,749
+- val_positive_rate_pct: 13.2627
+- censoring_rate_pct: 13.2556
+- input_dim: 14,706 (`drug_vocab` + prior institution count scalar)
+- val_auc: 0.647111
+- val_pr_auc: 0.211640
+- precision@top1%: 0.325581
+- precision@top5%: 0.287267
+- patient_overlap_val_rate_pct: 14.7889
+- decision: not confirmed for generalization (`AUC < 0.70`), but top-K precision remains above prevalence; keep as research track only.
+- next feature directions: medication class features, demographics, trend/delta features, and institution utilization trajectory.
 
-Fallback:
+Patient-disjoint rerun:
 
-- If required columns are missing, stop and fix ETL/export.
-- If null rates spike, run schema/data-quality audit before any model evaluation.
+- filtered validation dataset: `data/datasets/future_mi_t6_20241231_disjoint_octnov`
+- removed overlap patients: 3,808 (14.7889% of Nov->Dec source)
+- filtered positive_rate_pct: 14.0787
+- excluded overlap positive_rate_pct: 8.5609
+- report: `data/datasets/future_mi_t6_temporal_20241031_to_20241231_disjoint/sparse_training_smoke_report.json`
+- val_auc: 0.630412
+- val_pr_auc: 0.215572
+- precision@top5%: 0.297814
+- patient_overlap_val_rate_pct: 0.0
+- decision: future outcome remains not confirmed. The lower disjoint AUC strengthens the research-only conclusion.
+- asymmetry note: same-window overlap patients have higher positive rate, but future-onset overlap patients have lower new-onset rate; this is consistent with persistence suppressing marginal new onset.
 
-## Gate 2: Build 2024-12 Same-Window Holdout
+Demographics v1 rerun:
 
-Use the locked vocabulary unless a deliberate vocab rebuild is being evaluated. The baseline summary currently expects `input_dim=14705`.
+- feature source: `data/Raw/eligibility_demographics.parquet`
+- added features: `age_years_div_100`, `sex_type_1_flag`
+- train dataset: `data/datasets/future_mi_t6_20241031_to_20241130_with_inst_demo`
+- patient-disjoint validation dataset: `data/datasets/future_mi_t6_20241130_to_20241231_with_inst_demo_disjoint_octnov`
+- input_dim: 14,708 (`drug_vocab` + prior institution count + 2 demographics scalars)
+- demographics_missing_patient_rate_pct: 0.0
+- report: `data/datasets/future_mi_t6_temporal_20241031_to_20241231_disjoint_inst_demo/sparse_training_smoke_report.json`
+- val_auc: 0.633293
+- val_pr_auc: 0.216363
+- precision@top1%: 0.322727
+- precision@top5%: 0.292350
+- recall@top5%: 0.103917
+- patient_overlap_val_rate_pct: 0.0
+- decision: demographics add only a tiny AUC gain vs patient-disjoint drug+institution baseline (`0.633293` vs `0.630412`) and do not meet the `0.64` marginal-signal threshold. Move next to medication class features before any clinical claim.
 
-```bash
-cmd.exe /c '.venv_hana\Scripts\python.exe scripts\ops\build_sparse_training_dataset.py --raw-dir data\Raw --vocab-path data\vocab\drug_vocab.json --output-dir data\datasets\multi_inst_t6_20241231_l29 --reference-date 20241231 --lookback-days 29 --label-source multi_institution --multi-institution-threshold 6'
-```
+Medication-class v1 rerun:
 
-Inspect metadata:
+- feature source: `efmdc_clsf_no` from feature-window Raw records
+- vocab strategy: train feature-window vocab with `__NULL_EFMDC__` and `__UNK_EFMDC__`; validation reuses train vocab
+- train dataset: `data/datasets/future_mi_t6_20241031_to_20241130_with_inst_efmdc`
+- patient-disjoint validation dataset: `data/datasets/future_mi_t6_20241130_to_20241231_with_inst_efmdc_disjoint_octnov`
+- class vocab size: 116 (`114` nonblank train classes + null + unknown)
+- input_dim: 14,822 (`drug_vocab` + prior institution count + 116 medication class columns)
+- train class null row rate: 39.7552% within evaluable kept rows
+- validation class null row rate: 38.1858% before patient-disjoint filtering
+- validation class OOV row rate: 0.0%
+- report: `data/datasets/future_mi_t6_temporal_20241031_to_20241231_disjoint_inst_efmdc/sparse_training_smoke_report.json`
+- val_auc: 0.642860
+- val_pr_auc: 0.226443
+- precision@top1%: 0.345455
+- precision@top5%: 0.303279
+- recall@top5%: 0.107802
+- patient_overlap_val_rate_pct: 0.0
+- decision: medication class is the first richer feature with material patient-disjoint gain vs drug+institution baseline (`AUC +0.012448`, `PR-AUC +0.010871`, top5 precision +0.005465), but it remains below the `0.70` continuation threshold. Keep future-onset research-only.
 
-```bash
-python3 -c 'import json; d=json.load(open("data/datasets/multi_inst_t6_20241231_l29/metadata.json",encoding="utf-8")); print(json.dumps({k:d[k] for k in ["n_patients","input_dim","label_positive_rate_pct","unknown_drug_rate_pct","zero_vector_rate_pct"]}, ensure_ascii=False, indent=2))'
-```
+Medication-class + demographics ablation:
 
-Pass criteria:
+- train dataset: `data/datasets/future_mi_t6_20241031_to_20241130_with_inst_efmdc_demo`
+- patient-disjoint validation dataset: `data/datasets/future_mi_t6_20241130_to_20241231_with_inst_efmdc_demo_disjoint_octnov`
+- input_dim: 14,824 (`drug_vocab` + prior institution count + 2 demographics scalars + 116 medication class columns)
+- report: `data/datasets/future_mi_t6_temporal_20241031_to_20241231_disjoint_inst_efmdc_demo/sparse_training_smoke_report.json`
+- val_auc: 0.645007
+- val_pr_auc: 0.227231
+- precision@top1%: 0.345455
+- precision@top5%: 0.310565
+- recall@top5%: 0.110392
+- patient_overlap_val_rate_pct: 0.0
+- decision: current best sparse-linear future-onset research feature bundle. It improves over class-only (`AUC +0.002147`, top5 precision +0.007286), but still remains below `AUC=0.70`; do not promote to baseline or clinical claim.
 
-- `input_dim` remains `14705`
-- label positive rate is not wildly outside the Oct/Nov range (`~22-24%`)
-- `zero_vector_rate_pct` remains low
-- unknown drug rate is not a schema/export failure signal
+XGBoost research-only comparison:
 
-## Gate 3: Same-Window 3-Month Temporal Holdout
+- feature bundle: drug multi-hot + prior institution count + medication class + demographics
+- train dataset: `data/datasets/future_mi_t6_20241031_to_20241130_with_inst_efmdc_demo`
+- patient-disjoint validation dataset: `data/datasets/future_mi_t6_20241130_to_20241231_with_inst_efmdc_demo_disjoint_octnov`
+- quick pilot report: `data/datasets/future_mi_t6_temporal_20241031_to_20241231_disjoint_inst_efmdc_demo_xgb50_d4/sparse_training_smoke_report.json`
+- quick pilot result: AUC 0.679427, PR-AUC 0.250919, precision@top5% 0.326047, elapsed 71.841 sec
+- full report: `data/datasets/future_mi_t6_temporal_20241031_to_20241231_disjoint_inst_efmdc_demo_xgb300_d6/sparse_training_smoke_report.json`
+- full config: `n_estimators=300`, `max_depth=6`, `early_stopping_rounds=20`, `n_estimators_used=83`
+- val_auc: 0.680783
+- val_pr_auc: 0.253017
+- precision@top1%: 0.445455
+- precision@top5%: 0.333333
+- recall@top5%: 0.118485
+- patient_overlap_val_rate_pct: 0.0
+- elapsed_sec: 141.192
+- decision: XGBoost breaks the sparse-linear ceiling (`AUC +0.035776` vs best linear class+demo), but it still misses the `AUC >= 0.70` milestone. Keep future-onset as research-only and do not promote to clinical or baseline status.
+- research state: drug+institution+efmdc_class+demographics with XGBoost depth 6, early stopped at 83 trees, reached AUC 0.681 and precision@top1 0.445 (about 3.2x random prevalence) on patient-disjoint Nov->Dec holdout; research track only.
 
-Train on the October locked training dataset and validate on December.
+XGBoost seed sensitivity:
 
-```bash
-cmd.exe /c '.venv_hana\Scripts\python.exe scripts\ops\sparse_training_smoke.py --model linear --train-dataset-dir data\datasets\multi_inst_t6_20241031_l29 --val-dataset-dir data\datasets\multi_inst_t6_20241231_l29 --output-dir data\datasets\multi_inst_t6_temporal_20241031_to_20241231 --epochs 20 --batch-size 2048 --seed 42 --device cpu'
-```
+- config: `xgb50_depth4`, same fixed class+demographics train/validation datasets
+- seeds: 7, 42, 99
+- report summary: `data/reports/xgb_seed_sensitivity_summary.json`
+- auc values: 0.678496, 0.679427, 0.681903
+- auc_mean: 0.679942
+- auc_std: 0.001438
+- auc_min: 0.678496
+- pr_auc_mean: 0.250639
+- precision@top5_mean: 0.334244
+- decision: robustly above sparse-linear ceiling because `min_auc >= 0.665` and `auc_std < 0.010`. Still below the `0.70` milestone, so keep research-only.
 
-Review overlap in the output report:
+Future-onset research freeze:
 
-```bash
-python3 -c 'import json; d=json.load(open("data/datasets/multi_inst_t6_temporal_20241031_to_20241231/sparse_training_smoke_report.json",encoding="utf-8")); print(json.dumps({k:d[k] for k in ["patient_overlap_count","patient_overlap_val_rate_pct","train_label_positive_rate_pct","val_label_positive_rate_pct"]}, ensure_ascii=False, indent=2)); print(json.dumps(d["train"], ensure_ascii=False, indent=2))'
-```
+- status: `RESEARCH_TRACK_FROZEN`
+- freeze date: 2026-05-26
+- reason: Dec patient-disjoint holdout has been used for multiple ablations; further tuning on this holdout would create implicit validation overfit.
+- frozen model: `data/models/future_onset_xgb_efmdc_demo_frozen_20260526.ubj`
+- frozen model sha256: `118bc77ce5c0023bbd59f11b029736dbab8177104ed9b788353d00f68daa4458`
+- freeze ledger: `data/reports/future_onset_research_freeze_ledger.json`
+- datasplit manifest: `data/reports/future_onset_research_freeze_datasplit_manifest.csv`
+- handoff README: `data/reports/future_onset_research_freeze_handoff.md`
+- guardrail: do not run model, feature, or hyperparameter experiments or related code changes against the same Nov→Dec holdout.
+- allowed next step: none for future-onset — dataset finalized at 6 months (2024-07..12); Jan 2025 / Gate 5A acquisition cancelled and Gate 5B retired. The holdout is parked; proceed only with freeze-safe same-window / DL work.
 
-Success criteria:
+## Future-onset Track: Parked (Jan 2025 / Gate 5A Cancelled, 2026-06-02)
 
-- Primary: temporal holdout AUC `>= 0.80`
-- Strong pass: AUC drop from Nov patient-disjoint baseline (`0.849140`) is `< 0.05`
-- PR-AUC remains materially above prevalence
-- Patient overlap is reported. If overlap is high, create a patient-disjoint December validation variant before claiming pass.
+The former "Resume When Gate 5A Arrives" protocol is cancelled. The dataset is
+finalized at 6 months (2024-07..12); Jan 2025 Raw will not be acquired, so there
+is no Dec→Jan new unseen holdout and no future-onset unlock trigger. Gate 5A and
+Gate 5B are both retired.
 
-Fallback:
-
-- If AUC drops below `0.80`, inspect label prevalence shift and unknown drug rate first.
-- If patient overlap is high, do not compare against the patient-disjoint baseline until overlap is removed.
-
-## Gate 4: Future Outcome 3-Window Track
-
-The current future outcome track is `WEAK_FEASIBLE` using internal random split only. With December Raw, build a true temporal pair:
-
-- Train dataset: Oct features -> Nov label
-- Validation dataset: Nov features -> Dec label
-
-Build the Nov -> Dec dataset:
-
-```bash
-cmd.exe /c '.venv_hana\Scripts\python.exe scripts\ops\build_future_outcome_dataset.py --raw-dir data\Raw --vocab-path data\vocab\drug_vocab.json --output-dir data\datasets\future_multi_inst_onset_t6_20241130_to_20241231_with_oct_inst_count --feature-reference-date 20241130 --outcome-reference-date 20241231 --lookback-days 29 --threshold 6 --add-institution-count-feature'
-```
-
-Run temporal feasibility:
-
-```bash
-cmd.exe /c '.venv_hana\Scripts\python.exe scripts\ops\sparse_training_smoke.py --model linear --train-dataset-dir data\datasets\future_multi_inst_onset_t6_20241031_to_20241130_with_oct_inst_count --val-dataset-dir data\datasets\future_multi_inst_onset_t6_20241130_to_20241231_with_oct_inst_count --output-dir data\datasets\future_multi_inst_onset_t6_temporal_20241031_to_20241231 --epochs 20 --batch-size 2048 --seed 42 --device cpu'
-```
-
-Success criteria:
-
-- This track becomes worth continued modeling if temporal AUC `>= 0.70`
-- PR-AUC should exceed outcome prevalence by a meaningful margin
-- precision@top5% should materially exceed base positive rate
-
-Fallback:
-
-- If temporal AUC remains `< 0.70`, keep future outcome as a research track and prioritize richer features.
-- Candidate richer features: medication class features, demographics, trend features, prior institution count deltas.
-
-## Gate 5: Update Decision Trail
-
-After any December holdout run:
-
-```bash
-cmd.exe /c '.venv_hana\Scripts\python.exe scripts\ops\phase3_baseline_summary.py --output-dir data\reports'
-cp data/reports/phase3_baseline_summary.md docs/reports/phase3_baseline_summary.md
-```
-
-Also update Obsidian:
-
-- `C:\Users\ptg\OneDrive\문서\Obsidian Vault\mode_11_hana_2026-05-18.md`
-
-Record:
-
-- Raw coverage
-- dataset paths
-- same-window holdout result
-- future outcome temporal result
-- pass/fail decision
-- whether baseline remains locked or changes
+The Nov→Dec future-onset holdout remains frozen (parked) because it was already
+used for repeated ablations. Do not run model, feature, or hyperparameter
+experiments or related code changes against it. Future-onset research is parked
+indefinitely; proceed only with freeze-safe same-window baseline and DL
+operationalization work.
 
 ## Do Not Do
 
-- Do not claim temporal generalization from the current two-month internal split.
-- Do not replace the locked baseline unless December holdout passes the criteria above.
-- Do not treat missing December records as negative labels in future outcome tasks.
-- Do not rebuild vocabulary just because 2024-12 arrived. Reuse `data/vocab/drug_vocab.json` (`input_dim=14705`) so train/validation dimensions stay aligned; new drug codes should map to `_unk`.
+- Do not reintroduce Gate 5A/5B or a Jan 2025 acquisition; the dataset is finalized at 6 months (2024-07..12) and the future-onset track is parked.
+- Do not run model, feature, or hyperparameter experiments or related code changes against the frozen Nov→Dec holdout.
+- Do not claim future-onset clinical generalization from the frozen Nov->Dec research track.
 - Do not rebuild vocabulary silently; if vocab changes, record `input_dim`, SHA256, and reason.
+- Do not change serving feature schema unless the training feature schema and serving `RequestFeatureBuilder` are updated and tested together.

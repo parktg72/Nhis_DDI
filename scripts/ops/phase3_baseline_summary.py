@@ -44,18 +44,18 @@ def build_phase3_baseline_summary(
 
     input_dim = int(linear.get("input_dim") or 14705)
     summary = {
-        "version": "2",
-        "last_updated": "2026-05-23",
-        "changes_from_v1": "Added future_outcome_track section (WEAK-FEASIBLE) and input_data_manifest.",
+        "version": "3",
+        "last_updated": "2026-05-29",
+        "changes_from_v1": "Dataset finalized at 6 months (2024-07..12, 500k sample); Jan 2025 / Gate 5A acquisition cancelled and Gate 5B retired. Nov->Dec future-onset holdout remains frozen (parked, no unlock planned).",
         "generated_at": generated_at or datetime.now().astimezone().isoformat(timespec="seconds"),
         "decision": {
-            "accepted_label": "multi_institution_t6_exact30_patient_disjoint",
+            "accepted_label": "multi_institution_t6_aligned_patient_disjoint",
             "accepted_model": "sparse_linear",
-            "status": "BASELINE_LOCKED",
-            "reason": "Best validated proxy baseline under available 2024-10..2024-11 Raw data; DDI and XGBoost were rejected/held by audit.",
+            "status": "CLINICAL_REVIEW_AUTHORIZED",
+            "reason": "Aligned 60-day patient-disjoint sparse-linear baseline on established 2024-07..11 Raw data; future-onset Nov->Dec research holdout remains frozen.",
         },
         "raw_coverage": raw_coverage,
-        "cohort_scale_note": "40K = one-day reference active cohort. 932K = two-month cumulative sampled population. Phase 3 reports use one-day reference cohorts.",
+        "cohort_scale_note": "2024-07..11 Raw contains 153 daily record files from the 500k sampled population; Phase 3 clinical-review baseline uses aligned 60-day patient-disjoint windows.",
         "feature_schema": {
             "input_dim": input_dim,
             "vocab_cutoff": 100,
@@ -63,32 +63,32 @@ def build_phase3_baseline_summary(
             "feature_type": "sparse multi-hot drug_code",
         },
         "temporal_split": {
-            "train_window": "2024-10-02..2024-10-31 (lookback_days=29, inclusive exact 30-day window)",
-            "val_window": "2024-11-01..2024-11-30 (lookback_days=29, inclusive exact 30-day window)",
+            "train_window": "2024-08-01..2024-09-30 (lookback_days=60, reference_date=2024-09-30)",
+            "val_window": "2024-10-01..2024-11-30 (lookback_days=60, reference_date=2024-11-30)",
             "window_overlap_days": 0,
-            "patient_overlap_removed": 6255,
+            "patient_overlap_removed": 1037,
             "patient_overlap_count": int(linear.get("patient_overlap_count", 0)),
-            "n_train": int(linear.get("n_train_dataset") or linear_train.get("n_train") or 67939),
-            "n_val": int(linear.get("n_val_dataset") or linear_train.get("n_val") or 33879),
-            "train_positive_rate_pct": _metric(linear, "train_label_positive_rate_pct", 23.9803),
-            "val_positive_rate_pct": _metric(linear, "val_label_positive_rate_pct", 22.2822),
+            "n_train": int(linear.get("n_train_dataset") or linear_train.get("n_train") or 47834),
+            "n_val": int(linear.get("n_val_dataset") or linear_train.get("n_val") or 15596),
+            "train_positive_rate_pct": _metric(linear, "train_label_positive_rate_pct", 44.13),
+            "val_positive_rate_pct": _metric(linear, "val_label_positive_rate_pct", 40.50),
         },
         "label_candidates": _label_candidates(linear_train, ddi, ddi_no_d000718),
         "model_comparison": {
             "sparse_linear": {
                 "decision": "ACCEPTED",
-                "val_auc": _metric(linear_train, "val_auc", 0.849140),
-                "val_pr_auc": _metric(linear_train, "val_pr_auc", 0.650496),
-                "val_best_f1": _metric(linear_train, "val_best_f1", 0.612092),
-                "elapsed_sec": _metric(linear_train, "elapsed_sec", 37.451),
+                "val_auc": _metric(linear_train, "val_auc", 0.844954),
+                "val_pr_auc": _metric(linear_train, "val_pr_auc", 0.799161),
+                "val_best_f1": _metric(linear_train, "val_best_f1", 0.729036),
+                "elapsed_sec": _metric(linear_train, "elapsed_sec", 26.366),
             },
             "xgboost_quick": {
                 "decision": "HELD",
-                "val_auc": _metric(xgb_train, "val_auc", 0.752892),
-                "val_pr_auc": _metric(xgb_train, "val_pr_auc", 0.490353),
-                "val_best_f1": _metric(xgb_train, "val_best_f1", 0.498509),
-                "elapsed_sec": _metric(xgb_train, "elapsed_sec", 106.53),
-                "reason": "Lower AUC/PR-AUC and higher cost on sparse multi-hot drug-code features.",
+                "val_auc": _metric(xgb_train, "val_auc", 0.839437),
+                "val_pr_auc": _metric(xgb_train, "val_pr_auc", 0.776060),
+                "val_best_f1": _metric(xgb_train, "val_best_f1", 0.713338),
+                "elapsed_sec": _metric(xgb_train, "elapsed_sec", 214.849),
+                "reason": "Held as a secondary backup; sparse linear remains stronger and cheaper for serving.",
             },
         },
         "future_outcome_track": _future_outcome_track(
@@ -99,7 +99,7 @@ def build_phase3_baseline_summary(
         "leakage_audit": {
             "patient_disjoint_validation": True,
             "patient_overlap_count": int(linear.get("patient_overlap_count", 0)),
-            "future_window_leakage_check": "PASS: train and validation windows are non-overlapping adjacent months.",
+            "future_window_leakage_check": "PASS for accepted aligned baseline; future-onset Nov->Dec research holdout remains frozen against further tuning.",
             "institution_performance_variance": "NOT_EVALUATED: institution_id is label source and per-institution metrics require a separate fairness/stratified audit.",
         },
         "operational_constraints": {
@@ -110,11 +110,9 @@ def build_phase3_baseline_summary(
         },
         "environment": _environment_summary(),
         "recommendations": [
-            "Use sparse_linear + multi_institution_t6_exact30_patient_disjoint as the Phase 3 proxy baseline.",
-            "Acquire 2024-09 or 2024-12 Raw data for longer-gap temporal holdout before claiming generalization.",
-            "Design a future clinical outcome label before clinical-risk claims.",
-            "Revisit XGBoost only after dense embeddings or additional engineered temporal/institution features.",
-            "Revisit DDI only if a direct EDI code to HIRA DUR D-code mapping table is available.",
+            "Use sparse_linear + multi_institution_t6_aligned_patient_disjoint as the clinical-review baseline.",
+            "Future-onset research is parked: the dataset is finalized at 6 months (2024-07..12, 500k sample); Jan 2025 / Gate 5A acquisition is cancelled and no unlock trigger is planned (Gate 5B retired).",
+            "Do not run model, feature, or hyperparameter experiments or related code changes on the frozen Nov->Dec future-onset holdout.",
         ],
         "sources": {
             "linear_report": _source(linear_report_path, linear),
@@ -220,10 +218,10 @@ def _future_outcome_track(audit: dict, drug_only: dict, augmented: dict) -> dict
         },
         "caveats": [
             "internal random 80/20 split only; no temporal generalization claim",
-            "no 2024-12 third window available",
+            "Nov->Dec future-onset holdout is frozen against further tuning",
             "13.95% censoring may introduce selective bias",
         ],
-        "next_unblock": "acquire 2024-12 Raw month for 3-window temporal holdout",
+        "next_unblock": "None: dataset finalized at 6 months (2024-07..12); future-onset Nov->Dec holdout is parked/frozen with no unlock planned (Jan 2025 / Gate 5A cancelled, Gate 5B retired)",
     }
 
 
@@ -242,12 +240,8 @@ def _raw_coverage(raw_dir: Path) -> dict:
         "records_file_count": len(dates),
         "first_records_date": dates[0].isoformat() if dates else None,
         "last_records_date": dates[-1].isoformat() if dates else None,
-        "has_2024_09": any(day.strftime("%Y%m").startswith("202409") for day in dates),
-        "has_2024_12": any(day.strftime("%Y%m").startswith("202412") for day in dates),
-        "additional_month_available": any(
-            day.strftime("%Y%m") in {"202409", "202412"}
-            for day in dates
-        ),
+        "monthly_file_counts": {month: sum(1 for day in dates if day.strftime("%Y%m") == month) for month in sorted({day.strftime("%Y%m") for day in dates})},
+        "dataset_window_final": (f"{dates[0].strftime('%Y-%m')}..{dates[-1].strftime('%Y-%m')}" if dates else None),
     }
 
 
@@ -326,12 +320,19 @@ def _markdown_summary(summary: dict) -> str:
         f"- accepted_model: {decision['accepted_model']}",
         f"- status: {decision['status']}",
         "",
-        "## Raw Coverage",
+        "## Raw Coverage (5-Month Dataset)",
         "",
         f"- first_records_date: {raw['first_records_date']}",
         f"- last_records_date: {raw['last_records_date']}",
         f"- records_file_count: {raw['records_file_count']}",
-        f"- additional_month_available: {raw['additional_month_available']}",
+        f"- monthly_file_counts: {raw.get('monthly_file_counts', {})}",
+        f"- dataset_window_final: {raw.get('dataset_window_final')}",
+        "",
+        "## Dataset Scope (2026-06-02)",
+        "",
+        "- The dataset is finalized at 6 months (2024-07..12, 500k sample). No further months will be acquired.",
+        "- Jan 2025 / Gate 5A acquisition is cancelled and Gate 5B is retired; there is no remaining future-onset unlock trigger.",
+        "- The Nov->Dec future-onset holdout remains frozen (parked); do not run model, feature, or hyperparameter experiments or related code changes against it.",
         "",
         "## Temporal Split",
         "",
