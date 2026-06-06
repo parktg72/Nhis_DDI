@@ -163,6 +163,35 @@ def test_xgboost_temporal_smoke_trains_when_available() -> None:
     assert result["n_estimators_used"] >= 1
 
 
+def test_xgboost_temporal_smoke_can_save_model(tmp_path) -> None:
+    pytest.importorskip("xgboost")
+    from scripts.ops.sparse_training_smoke import train_sparse_xgboost_temporal_smoke
+
+    X_train = sparse.random(40, 20, density=0.15, format="csr", random_state=46, dtype=np.float32)
+    X_val = sparse.random(20, 20, density=0.15, format="csr", random_state=47, dtype=np.float32)
+    y_train = np.array([1] * 12 + [0] * 28, dtype=np.int8)
+    y_val = np.array([1] * 6 + [0] * 14, dtype=np.int8)
+    model_path = tmp_path / "model.ubj"
+
+    result = train_sparse_xgboost_temporal_smoke(
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+        n_estimators=5,
+        max_depth=2,
+        min_child_weight=1,
+        early_stopping_rounds=2,
+        seed=42,
+        n_jobs=1,
+        save_model_path=model_path,
+    )
+
+    assert model_path.exists()
+    assert model_path.stat().st_size > 0
+    assert result["model_path"] == str(model_path)
+
+
 def test_run_sparse_temporal_training_smoke_routes_xgboost(tmp_path) -> None:
     pytest.importorskip("xgboost")
     import json

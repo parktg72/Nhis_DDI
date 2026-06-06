@@ -181,7 +181,8 @@ def train_mlp_smoke(
     val_fraction: float = 0.2,
     seed: int = 42,
     device: str = "cpu",
-) -> SmokeTrainResult:
+    return_model: bool = False,
+):
     torch = _torch()
     nn = _nn()
     start = perf_counter()
@@ -222,7 +223,7 @@ def train_mlp_smoke(
     with torch.no_grad():
         scores = torch.sigmoid(model(X_val)).detach().cpu().numpy().reshape(-1)
     y_val = y[val_idx].astype(np.int64)
-    return SmokeTrainResult(
+    result = SmokeTrainResult(
         train_loss_final=round(final_loss, 6),
         val_auc=round(_roc_auc(y_val, scores), 6),
         val_precision=round(_precision(y_val, scores), 6),
@@ -233,6 +234,11 @@ def train_mlp_smoke(
         n_positive_val=int(y[val_idx].sum()),
         elapsed_sec=round(perf_counter() - start, 3),
     )
+    # return_model=True 면 학습된 모델(eval 모드)을 함께 반환해 저장에 쓸 수 있게 한다.
+    # 기본 False 는 기존 호출부/테스트 하위호환(SmokeTrainResult 단일 반환).
+    if return_model:
+        return result, model
+    return result
 
 
 def run_raw_training_smoke(
@@ -280,16 +286,17 @@ def run_raw_training_smoke(
         reference_date=resolved_reference_date,
         lookback_days=lookback_days,
     )
-    train_result = train_mlp_smoke(
+    train_result, trained_model = train_mlp_smoke(
         X,
         y,
         epochs=epochs,
         batch_size=batch_size,
         seed=seed,
         device=device,
+        return_model=True,
     )
     if save_model_path is not None:
-        _save_model_smoke(X.shape[1], save_model_path)
+        _save_model_smoke(trained_model, X.shape[1], save_model_path, device=device)
     return {
         "reference_date": resolved_reference_date.isoformat(),
         "lookback_days": lookback_days,
@@ -383,12 +390,22 @@ def _parse_date(value: str | None) -> date | None:
     return datetime.strptime(value, "%Y%m%d").date()
 
 
-def _save_model_smoke(input_dim: int, path: str | Path) -> None:
+def _save_model_smoke(model, input_dim: int, path: str | Path, *, device: str = "cpu") -> None:
+    """학습된 모델을 TorchScript(model.pt)로 저장한다.
+
+    서빙 로더(serving.dl_predictor.DLModel)가 ``torch.jit.load`` 로 model.pt 를
+    로드하므로, state_dict 가 아니라 jit.trace 결과를 저장해야 한다. 또한 방금
+    학습한 ``model`` 을 그대로 저장한다(과거엔 새 untrained 모델을 만들어 저장하던
+    결함이 있었음). 입력은 (1, input_dim) multi-hot 벡터 형태.
+    """
     torch = _torch()
-    model = MultiHotMLP(input_dim=input_dim)
+    model.eval()
+    example = torch.zeros(1, int(input_dim), dtype=torch.float32, device=device)
+    with torch.no_grad():
+        traced = torch.jit.trace(model, example)
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), out)
+    traced.save(str(out))
 
 
 def _pct(numerator: int, denominator: int) -> float:

@@ -215,6 +215,7 @@ def train_sparse_xgboost_temporal_smoke(
     seed: int = 42,
     n_jobs: int = -1,
     device: str = "cpu",
+    save_model_path: str | Path | None = None,
 ) -> dict:
     if X_train.shape[1] != X_val.shape[1]:
         raise ValueError("train and val input_dim must match")
@@ -253,6 +254,10 @@ def train_sparse_xgboost_temporal_smoke(
         eval_set=[(X_val, y_val)],
         verbose=False,
     )
+    if save_model_path is not None:
+        model_path = Path(save_model_path)
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        model.save_model(model_path)
     scores = model.predict_proba(X_val)[:, 1]
     pr_metrics = _precision_recall_metrics(y_val, scores)
     result = {
@@ -283,6 +288,7 @@ def train_sparse_xgboost_temporal_smoke(
         "scale_pos_weight": round(float(scale_pos_weight), 6),
         "early_stopping_rounds": int(early_stopping_rounds),
         "xgb_device": device,
+        "model_path": str(save_model_path) if save_model_path is not None else None,
     }
     return result
 
@@ -342,6 +348,7 @@ def run_sparse_temporal_training_smoke(
     xgb_min_child_weight: float = 5.0,
     xgb_early_stopping_rounds: int = 20,
     xgb_n_jobs: int = -1,
+    save_model_path: str | Path | None = None,
 ) -> dict:
     train_path = Path(train_dataset_dir)
     val_path = Path(val_dataset_dir)
@@ -367,6 +374,7 @@ def run_sparse_temporal_training_smoke(
         xgb_min_child_weight=xgb_min_child_weight,
         xgb_early_stopping_rounds=xgb_early_stopping_rounds,
         xgb_n_jobs=xgb_n_jobs,
+        save_model_path=save_model_path,
     )
     return {
         "model": model,
@@ -409,6 +417,7 @@ def _train_temporal_model(
     xgb_min_child_weight: float,
     xgb_early_stopping_rounds: int,
     xgb_n_jobs: int,
+    save_model_path: str | Path | None,
 ) -> dict:
     if model == "linear":
         result = train_sparse_linear_temporal_smoke(
@@ -439,6 +448,7 @@ def _train_temporal_model(
             seed=seed,
             n_jobs=xgb_n_jobs,
             device=device,
+            save_model_path=save_model_path,
         )
     raise ValueError(f"unsupported model: {model}")
 
@@ -676,6 +686,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--xgb-min-child-weight", type=float, default=5.0)
     parser.add_argument("--xgb-early-stopping-rounds", type=int, default=20)
     parser.add_argument("--xgb-n-jobs", type=int, default=-1)
+    parser.add_argument("--save-model-path", default=None)
     return parser
 
 
@@ -698,6 +709,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             xgb_min_child_weight=args.xgb_min_child_weight,
             xgb_early_stopping_rounds=args.xgb_early_stopping_rounds,
             xgb_n_jobs=args.xgb_n_jobs,
+            save_model_path=args.save_model_path,
         )
     else:
         if args.dataset_dir is None:
