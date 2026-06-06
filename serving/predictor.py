@@ -766,6 +766,11 @@ class HierarchicalPredictor:
     def feature_cols(self) -> list[str]:
         return list(self._feature_cols)
 
+    @property
+    def feature_semantics_version(self):
+        """번들 메타의 feature_semantics_version (triple_whammy/위험플래그 활성 버전). 없으면 None."""
+        return self._meta.get("feature_semantics_version")
+
     def predict_risk_single(self, X: np.ndarray) -> dict:
         """단일 샘플 계층 추론 — 반환: {risk_level, p_red, stage2_probs, red_suspect, action}."""
         import sys as _sys
@@ -969,7 +974,8 @@ class RequestFeatureBuilder:
         )
         return collect_red_triggers(f)
 
-    def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None) -> tuple[np.ndarray, dict]:
+    def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None,
+              rule_features_active: bool = False) -> tuple[np.ndarray, dict]:
         """
         요청 → (피처 벡터, 피처 딕셔너리).
         피처 딕셔너리는 logging/debugging용.
@@ -1044,17 +1050,29 @@ class RequestFeatureBuilder:
             feat["cyp_high_risk_pairs"] = 0.0
             feat["cyp_max_enzyme_risk"] = 0.0
 
-        # ── 위험 약물 플래그 ──────────────────────────────────────────────
-        drug_names_lower = [(d.drug_name or "").lower() for d in drugs]
-        feat["has_high_risk_drug"]    = float(_has_risk_drug(
-            drug_names_lower, atc_codes, _HIGH_RISK_KEYWORDS, _HIGH_RISK_ATC_PREFIXES))
-        feat["has_renal_risk_drug"]   = float(_has_risk_drug(
-            drug_names_lower, atc_codes, _RENAL_RISK_KEYWORDS, _RENAL_RISK_ATC_PREFIXES))
-        feat["has_hepatic_risk_drug"] = float(_has_risk_drug(
-            drug_names_lower, atc_codes, _HEPATIC_RISK_KEYWORDS, _HEPATIC_RISK_ATC_PREFIXES))
+        # ── 위험 약물 플래그 + triple_whammy ──────────────────────────────
+        # rule_features_active(로드된 번들 feature_semantics_version=rulefeat.v1) 면 학습과
+        # 동일 edi→wk→DrugMaster components 키워드로 산출(Phase 2-2). 아니면(구 번들/tabular)
+        # 기존 atc/name 경로 — 실 edi 요청은 ~0 으로 구 번들(=0)과 정합 유지(skew 방지 게이팅).
+        _rf_dm = self._drug_master() if rule_features_active else None
+        if _rf_dm is not None and self._std is not None:
+            from scripts.etl.prescription_aggregator import detect_triple_whammy, detect_risk_drug
+            _wks = [w for w in (self._std.get_wk(d.edi_code) for d in drugs) if w]
+            feat["has_high_risk_drug"]    = float(detect_risk_drug(_wks, _rf_dm, _HIGH_RISK_KEYWORDS))
+            feat["has_renal_risk_drug"]   = float(detect_risk_drug(_wks, _rf_dm, _RENAL_RISK_KEYWORDS))
+            feat["has_hepatic_risk_drug"] = float(detect_risk_drug(_wks, _rf_dm, _HEPATIC_RISK_KEYWORDS))
+            feat["triple_whammy"]         = float(detect_triple_whammy(_wks, _rf_dm))
+        else:
+            drug_names_lower = [(d.drug_name or "").lower() for d in drugs]
+            feat["has_high_risk_drug"]    = float(_has_risk_drug(
+                drug_names_lower, atc_codes, _HIGH_RISK_KEYWORDS, _HIGH_RISK_ATC_PREFIXES))
+            feat["has_renal_risk_drug"]   = float(_has_risk_drug(
+                drug_names_lower, atc_codes, _RENAL_RISK_KEYWORDS, _RENAL_RISK_ATC_PREFIXES))
+            feat["has_hepatic_risk_drug"] = float(_has_risk_drug(
+                drug_names_lower, atc_codes, _HEPATIC_RISK_KEYWORDS, _HEPATIC_RISK_ATC_PREFIXES))
+            feat["triple_whammy"] = float(_check_triple_whammy(atc_codes))
 
-        # Triple Whammy, QT 카운트 (단순 ATC prefix 기반)
-        feat["triple_whammy"] = float(_check_triple_whammy(atc_codes))
+        # QT 카운트 (단순 ATC prefix 기반)
         feat["qt_risk_count"] = float(_count_qt_drugs(atc_codes))
         feat["drug_count_7d"] = (_cdup["drug_count_7d"] if _cdup is not None
                                  else feat["drug_count"])  # 학습=concurrent@ref, fallback=copy
@@ -1334,9 +1352,14 @@ class HybridPredictor:
         with self._hier_lock:
             _hier = self._hierarchical
         if _hier is not None and _hier.loaded:
+            # rulefeat.v1 번들이면 triple_whammy/위험플래그를 edi→wk 로 산출(Phase 2-2 모델
+            # 피처 정합). 구 번들이면 비활성(0) → 구 번들 학습값과 정합 유지(skew 방지 게이팅).
+            from scripts.etl.prescription_aggregator import FEATURE_SEMANTICS_VERSION
+            _rf_active = (_hier.feature_semantics_version == FEATURE_SEMANTICS_VERSION)
             feat_vec, _ = self._builder.build(
                 req,
                 feature_names=_hier.feature_cols or None,
+                rule_features_active=_rf_active,
             )
             h = _hier.predict_risk_single(feat_vec)
             ml_prob = float(h["p_red"])
