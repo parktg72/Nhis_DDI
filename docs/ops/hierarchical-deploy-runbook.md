@@ -1,20 +1,21 @@
-# 계층 모델 배포 런북 (retrain_prod_0711_hierarchy)
+# 계층 모델 배포 런북 (retrain_prod_0711_hierarchy_cur)
 
 개입 위계 재설계(2026-06-07) 반영 번들 배포 절차. 배포 = `HIERARCHICAL_MODEL_DIR` 환경변수
 지정 후 serving 기동/리로드 (코드·설정 하드코딩 없음, env 전용).
 
 ## 배포 번들
 ```
-hana_app/models/hierarchical/retrain_prod_0711_hierarchy
+hana_app/models/hierarchical/retrain_prod_0711_hierarchy_cur
 ```
 - 453,677 환자, 7-class, feature_semantics_version=`rulefeat.v1`, stage1_trained=True.
-- 개입 분포: 즉각개입(Red) 0.37% / 약사전화(Y_DDI_MAJOR) 16.7% / 문자안내(Y_TRIPLE) 46.3% /
-  모니터링(Y_DOUBLE·단일) ~36.6% / 관여안함(No_Alert·Green·Normal).
+- triple_whammy 키워드 큐레이션(ACEi/ARB 염형태·finerenone·morniflumate, 2026-06-07) batch 반영.
+- 개입 분포: 즉각개입(Red) 0.37%(1,660) / 약사전화(Y_DDI_MAJOR) 16.7%(75,979) /
+  문자안내(Y_TRIPLE) 46.3%(210,008) / 모니터링(Y_DOUBLE·단일) ~36.6% / 관여안함(No_Alert).
 
 ## 전환 절차
 1. 환경변수 지정 (운영 PC):
    ```
-   set HIERARCHICAL_MODEL_DIR=C:\model\MODE_11_hana\hana_app\models\hierarchical\retrain_prod_0711_hierarchy
+   set HIERARCHICAL_MODEL_DIR=C:\model\MODE_11_hana\hana_app\models\hierarchical\retrain_prod_0711_hierarchy_cur
    ```
 2. serving 기동(재기동) 또는 무중단 리로드:
    - 재기동: serving 프로세스 재시작 (lifespan 이 env 읽어 init_predictor).
@@ -37,5 +38,5 @@ hana_app/models/hierarchical/retrain_prod_0711_hierarchy
 
 ## 주의
 - 구 번들(retrain_prod_0711/_rulefeat/_redesign)은 라벨/개입 정의가 현재 코드와 불일치 →
-  배포 금지(정리 대상). 신 배포는 retrain_prod_0711_hierarchy 만.
+  배포 금지(정리 대상). 신 배포는 retrain_prod_0711_hierarchy_cur 만.
 - 번들은 gitignored — 운영 PC 로 별도 전송 필요.
