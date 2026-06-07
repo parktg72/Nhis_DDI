@@ -60,6 +60,38 @@ def test_non_triple_whammy_drugs_false():
     assert detect_triple_whammy(["A", "B"], dm) is False
 
 
+def test_arb_salt_form_caught():
+    """2026-06-07 큐레이션: ARB 염형태(azilsartan medoxomil)도 'sartan' 부분일치로 포착."""
+    dm = _DM({"A": ["azilsartan medoxomil"], "K": ["spironolactone"], "N": ["ibuprofen"]})
+    assert detect_triple_whammy(["A", "K", "N"], dm) is True
+
+
+def test_morniflumate_is_nsaid():
+    """2026-06-07 큐레이션: morniflumate(니플룸산 에스터) NSAID 추가."""
+    dm = _DM({"A": ["enalapril"], "K": ["amiloride"], "N": ["morniflumate"]})
+    assert detect_triple_whammy(["A", "K", "N"], dm) is True
+
+
+def test_prilocaine_not_acei_false_positive():
+    """prilocaine(국소마취, 'pril' 미종결)은 ACEi 오탐 아님."""
+    dm = _DM({"X": ["prilocaine"], "K": ["amiloride"], "N": ["ibuprofen"]})
+    assert detect_triple_whammy(["X", "K", "N"], dm) is False
+
+
+def test_acei_salt_form_caught():
+    """2026-06-07 큐레이션: ACEi 염형태(perindopril erbumine/arginine)도 단어단위 'pril' 종결로 포착."""
+    dm = _DM({"A": ["perindopril erbumine"], "K": ["amiloride"], "N": ["ibuprofen"]})
+    assert detect_triple_whammy(["A", "K", "N"], dm) is True
+    dm2 = _DM({"A": ["perindopril arginine"], "K": ["spironolactone"], "N": ["naproxen"]})
+    assert detect_triple_whammy(["A", "K", "N"], dm2) is True
+
+
+def test_finerenone_is_ksparing():
+    """2026-06-07 큐레이션: finerenone(nonsteroidal MRA) K보존이뇨제로 추가."""
+    dm = _DM({"A": ["enalapril"], "K": ["finerenone"], "N": ["ibuprofen"]})
+    assert detect_triple_whammy(["A", "K", "N"], dm) is True
+
+
 @pytest.mark.skipif(
     not (ROOT / "data" / "processed" / "hira_drug_master.parquet").exists(),
     reason="DrugMaster 데이터 없음",

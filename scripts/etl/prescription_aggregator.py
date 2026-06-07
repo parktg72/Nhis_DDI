@@ -332,18 +332,22 @@ def count_same_ingredient_dups(
 # ── Triple Whammy 성분 클래스 (학습·서빙 공용 단일출처) ────────────────────────
 # ACEi/ARB + K보존 이뇨제 + NSAID 동시 → 급성 신손상 위험(Red 트리거).
 # wk→ATC 매핑이 부재(HIRA 무, DrugBank 크로스워크는 K이뇨제/일부 NSAID 미해석)라
-# **성분명 키워드**로 판정(get_components). ACEi='...pril', ARB='...sartan' 접미사 +
-# K이뇨제·NSAID 명시 목록. 키워드 완전성은 추후 보강(임상 큐레이션). 변경 시 재학습 필요.
-_TW_ACEI_ARB_SUFFIX = ("pril", "sartan")
+# **성분명 키워드**로 판정(get_components). 변경 시 재학습 필요.
+# 2026-06-07 임상 큐레이션(단일성분 ATC gap 분석): ARB 는 stem 'sartan' 부분일치
+# (azilsartan medoxomil 등 염형태 포착, sartan 은 ARB 전용이라 오탐 없음). ACEi 는 'pril'
+# 접미사(prilocaine 은 'caine' 종결 → 오탐 없음). NSAID morniflumate 추가(니플룸산 에스터).
+_TW_ACEI_SUFFIX = "pril"
+_TW_ARB_SUBSTR = "sartan"
+# K보존이뇨제 + nonsteroidal MRA(finerenone) — drug_rules.yaml k_sparing_diuretics 와 정합(Codex).
 _TW_KSPARING = frozenset({
-    "spironolactone", "eplerenone", "amiloride", "triamterene", "canrenone",
+    "spironolactone", "eplerenone", "amiloride", "triamterene", "canrenone", "finerenone",
 })
 _TW_NSAID = frozenset({
     "ibuprofen", "dexibuprofen", "naproxen", "diclofenac", "aceclofenac",
     "celecoxib", "etoricoxib", "meloxicam", "lornoxicam", "piroxicam", "tenoxicam",
     "ketoprofen", "dexketoprofen", "loxoprofen", "zaltoprofen", "flurbiprofen",
     "etodolac", "nabumetone", "sulindac", "indomethacin", "mefenamic", "talniflumate",
-    "nimesulide", "ketorolac", "pelubiprofen", "polmacoxib", "fenbufen", "nabumeton",
+    "morniflumate", "nimesulide", "ketorolac", "pelubiprofen", "polmacoxib", "fenbufen",
 })
 
 
@@ -352,7 +356,9 @@ def _wk_ingredient_classes(wk: str, drug_master: DrugMaster) -> tuple[bool, bool
     acei_arb = ksparing = nsaid = False
     for comp in drug_master.get_components(wk):
         c = comp.lower()
-        if c.endswith(_TW_ACEI_ARB_SUFFIX):
+        # ACEi: 단어 단위 'pril' 종결(염형태 'perindopril erbumine/arginine' 포착, prilocaine 제외).
+        # ARB: 'sartan' 부분일치(ARB 전용 stem, 염형태 포착).
+        if any(w.endswith(_TW_ACEI_SUFFIX) for w in c.split()) or _TW_ARB_SUBSTR in c:
             acei_arb = True
         if any(k in c for k in _TW_KSPARING):
             ksparing = True
