@@ -978,15 +978,23 @@ class RequestFeatureBuilder:
         f = self._rule_namespace(drugs, ref, patient_age)
         return collect_red_triggers(f) if f is not None else set()
 
-    def severe_triggers(self, drugs: list, ref: date, patient_age=None) -> set:
-        """학습 collect_severe_immediate_triggers 를 edi→wk 피처에 적용 → 중증(Y_TRIPLE) 트리거.
+    def rule_floor(self, drugs: list, ref: date, patient_age=None) -> tuple:
+        """결정적 Yellow subtype floor — (subtype|None, 사유 set). _assign_yellow_subtype 위계 미러.
 
-        triple_whammy/10drug+고위험/고령+장기. model-independent severe→Y_TRIPLE 백스톱(floor)용.
-        std/drug_master 부재 시 빈 set(비차단).
+        major DDI(≥1)→Y_DDI_MAJOR(약사전화) > 중증(triple_whammy/10drug+고위험/고령+장기)→Y_TRIPLE
+        (문자안내). model-independent(edi→wk). 모델이 하향분류해도 최소 이 subtype 보장(floor)용.
+        Red(금기)는 red_triggers 가 별도 처리. std/drug_master 부재 시 (None, set()).
         """
         from scripts.etl.clinical_rules import collect_severe_immediate_triggers
         f = self._rule_namespace(drugs, ref, patient_age)
-        return collect_severe_immediate_triggers(f) if f is not None else set()
+        if f is None:
+            return None, set()
+        if f.ddi_major >= 1:
+            return "Y_DDI_MAJOR", ({"DDI_MAJOR_3PLUS"} if f.ddi_major >= 3 else {"DDI_MAJOR"})
+        sev = collect_severe_immediate_triggers(f)
+        if sev:
+            return "Y_TRIPLE", sev
+        return None, set()
 
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None,
               rule_features_active: bool = False) -> tuple[np.ndarray, dict]:
@@ -1436,22 +1444,24 @@ class HybridPredictor:
         if _red_reasons:
             final_level = RiskLevel.max(final_level, RiskLevel.RED)
 
-        # Step 4.5: 결정적 severe→Y_TRIPLE 백스톱 (model-independent floor) — 중증 조건
-        # (triple_whammy/10drug+고위험/고령+장기)은 학습상 Y_TRIPLE(문자안내). 모델이 하향분류해도
-        # 최소 Y_TRIPLE 보장(Red·Y_DDI_MAJOR 등 상위 subtype 은 유지). 단방향 escalation.
+        # Step 4.5: 결정적 Yellow subtype floor (model-independent) — major DDI→Y_DDI_MAJOR(약사전화)
+        # > 중증(triple_whammy/10drug+고위험/고령+장기)→Y_TRIPLE(문자안내). 학습 _assign_yellow_subtype
+        # 위계를 edi→wk 로 미러. 모델이 하향분류해도 최소 이 subtype 보장(Red·상위 subtype 은 유지, 단방향).
+        _floor_sub = None
         _severe_reasons: list[str] = []
         if final_level != RiskLevel.RED:
             try:
-                _severe_reasons = sorted(self._builder.severe_triggers(req.drugs, ref, req.patient_age))
+                _floor_sub, _fr = self._builder.rule_floor(req.drugs, ref, req.patient_age)
+                _severe_reasons = sorted(_fr)
             except Exception as e:  # 백스톱 실패는 비차단
-                logger.warning("결정적 severe 백스톱 계산 실패(무시): %s", e)
-        if _severe_reasons:
+                logger.warning("결정적 subtype floor 계산 실패(무시): %s", e)
+        if _floor_sub:
             from hana_app.core.hierarchical_runner import ACTION_BY_LABEL
             _SUB_RANK = {"Y_DDI_MAJOR": 4, "Y_TRIPLE": 3, "Y_DOUBLE": 2,
                          "Y_DDI_MOD": 1, "Y_DUP": 1, "Y_FRAG": 1}
-            if _SUB_RANK.get(yellow_subtype or "", 0) < _SUB_RANK["Y_TRIPLE"]:
-                yellow_subtype = "Y_TRIPLE"
-                action = ACTION_BY_LABEL["Y_TRIPLE"]   # 문자 안내
+            if _SUB_RANK.get(yellow_subtype or "", 0) < _SUB_RANK[_floor_sub]:
+                yellow_subtype = _floor_sub
+                action = ACTION_BY_LABEL[_floor_sub]
             final_level = RiskLevel.max(final_level, RiskLevel.YELLOW)
 
         # Step 5: DDI 알림 보완 (ddi_matrix에서 추가)
