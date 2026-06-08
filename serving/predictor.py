@@ -942,19 +942,15 @@ class RequestFeatureBuilder:
             "dup_efmdc": float(_dup.dup_efmdc),
         }
 
-    def red_triggers(self, drugs: list, ref: date, patient_age=None) -> set:
-        """학습 collect_red_triggers 를 edi→wk 피처에 직접 적용 → 결정적 Red 트리거 집합.
+    def _rule_namespace(self, drugs: list, ref: date, patient_age=None):
+        """학습 룰 함수가 기대하는 피처 객체를 edi→wk→DrugMaster 로 구성(학습과 동일 식별자).
 
-        model-independent 안전 백스톱(Phase 2-2): ddi(_count_ddi)·triple_whammy·위험약물·
-        drug_count 를 edi→wk→DrugMaster 로 산출(학습과 동일 식별자·함수) 후 collect_red_triggers.
-        ML Stage1(degenerate τ)·SafetyNet(약물명 미해석) 의존 제거, 학습 Red 룰과 정확 일치.
-        std/drug_master 부재 시 빈 set(비차단).
+        결정적 백스톱(red_triggers/severe_triggers) 공용. std/drug_master 부재 시 None.
         """
         from types import SimpleNamespace
         drug_master = self._drug_master()
         if self._std is None or drug_master is None:
-            return set()
-        from scripts.etl.clinical_rules import collect_red_triggers
+            return None
         from scripts.etl.prescription_aggregator import (
             detect_triple_whammy, detect_risk_drug,
             _HIGH_RISK_KEYWORDS, _RENAL_RISK_KEYWORDS, _HEPATIC_RISK_KEYWORDS,
@@ -962,7 +958,7 @@ class RequestFeatureBuilder:
         ddi = self._count_ddi(drugs, ref)
         cdup = self._count_dup_features(drugs, ref) or {}
         mapped_wks = [w for w in (self._std.get_wk(d.edi_code) for d in drugs) if w]
-        f = SimpleNamespace(
+        return SimpleNamespace(
             ddi_contraindicated=ddi.get("Contraindicated", 0),
             ddi_major=ddi.get("Major", 0),
             triple_whammy=detect_triple_whammy(mapped_wks, drug_master),
@@ -972,7 +968,25 @@ class RequestFeatureBuilder:
             has_hepatic_risk_drug=detect_risk_drug(mapped_wks, drug_master, _HEPATIC_RISK_KEYWORDS),
             age=patient_age,
         )
-        return collect_red_triggers(f)
+
+    def red_triggers(self, drugs: list, ref: date, patient_age=None) -> set:
+        """학습 collect_red_triggers 를 edi→wk 피처에 적용 → 결정적 Red 트리거 집합.
+
+        model-independent 안전 백스톱(Phase 2-2). std/drug_master 부재 시 빈 set(비차단).
+        """
+        from scripts.etl.clinical_rules import collect_red_triggers
+        f = self._rule_namespace(drugs, ref, patient_age)
+        return collect_red_triggers(f) if f is not None else set()
+
+    def severe_triggers(self, drugs: list, ref: date, patient_age=None) -> set:
+        """학습 collect_severe_immediate_triggers 를 edi→wk 피처에 적용 → 중증(Y_TRIPLE) 트리거.
+
+        triple_whammy/10drug+고위험/고령+장기. model-independent severe→Y_TRIPLE 백스톱(floor)용.
+        std/drug_master 부재 시 빈 set(비차단).
+        """
+        from scripts.etl.clinical_rules import collect_severe_immediate_triggers
+        f = self._rule_namespace(drugs, ref, patient_age)
+        return collect_severe_immediate_triggers(f) if f is not None else set()
 
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None,
               rule_features_active: bool = False) -> tuple[np.ndarray, dict]:
@@ -1422,6 +1436,24 @@ class HybridPredictor:
         if _red_reasons:
             final_level = RiskLevel.max(final_level, RiskLevel.RED)
 
+        # Step 4.5: 결정적 severe→Y_TRIPLE 백스톱 (model-independent floor) — 중증 조건
+        # (triple_whammy/10drug+고위험/고령+장기)은 학습상 Y_TRIPLE(문자안내). 모델이 하향분류해도
+        # 최소 Y_TRIPLE 보장(Red·Y_DDI_MAJOR 등 상위 subtype 은 유지). 단방향 escalation.
+        _severe_reasons: list[str] = []
+        if final_level != RiskLevel.RED:
+            try:
+                _severe_reasons = sorted(self._builder.severe_triggers(req.drugs, ref, req.patient_age))
+            except Exception as e:  # 백스톱 실패는 비차단
+                logger.warning("결정적 severe 백스톱 계산 실패(무시): %s", e)
+        if _severe_reasons:
+            from hana_app.core.hierarchical_runner import ACTION_BY_LABEL
+            _SUB_RANK = {"Y_DDI_MAJOR": 4, "Y_TRIPLE": 3, "Y_DOUBLE": 2,
+                         "Y_DDI_MOD": 1, "Y_DUP": 1, "Y_FRAG": 1}
+            if _SUB_RANK.get(yellow_subtype or "", 0) < _SUB_RANK["Y_TRIPLE"]:
+                yellow_subtype = "Y_TRIPLE"
+                action = ACTION_BY_LABEL["Y_TRIPLE"]   # 문자 안내
+            final_level = RiskLevel.max(final_level, RiskLevel.YELLOW)
+
         # Step 5: DDI 알림 보완 (ddi_matrix에서 추가)
         if self._ddi_matrix is not None:
             extra_alerts = self._build_ddi_alerts(req.drugs, ref)
@@ -1433,6 +1465,9 @@ class HybridPredictor:
         # dup_reasons는 등급과 무관하게 항상 포함 (설명 가능성)
         all_reasons = list(rule_reasons) + [r for r in dup_reasons if r not in rule_reasons]
         for _r in _red_reasons:   # 결정적 Red 백스톱 사유 (canonical rule ID, dedupe)
+            if _r not in all_reasons:
+                all_reasons.append(_r)
+        for _r in _severe_reasons:   # 결정적 severe→Y_TRIPLE 백스톱 사유 (SEV_*, dedupe)
             if _r not in all_reasons:
                 all_reasons.append(_r)
         if ml_prob is not None and ml_prob > 0.3:
