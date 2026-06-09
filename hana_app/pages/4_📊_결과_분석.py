@@ -1,6 +1,7 @@
 """
 페이지 4: 학습 결과 분석 – 피처 중요도 / ROC / 혼동행렬 / 위험도 분포
 """
+import datetime as dt
 import json
 import sys
 from pathlib import Path
@@ -20,6 +21,7 @@ from hana_app.core.ml_runner import list_saved_results, load_model, RISK_LABEL_M
 from hana_app.core.config import load_config, is_hana
 from hana_app.core.page_guards import check_hana_validated, get_validation_error
 from hana_app.core.yellow_subtype_view import render_yellow_subtype_section
+from hana_app.core.report_exporter import build_csv_bytes, build_docx_bytes, DOCX_AVAILABLE
 
 st.set_page_config(page_title="결과 분석", page_icon="📊", layout="wide")
 st.title("📊 학습 결과 분석")
@@ -423,3 +425,54 @@ with tab_compare:
             height=450,
         )
         st.plotly_chart(fig, use_container_width=True)
+
+
+# ── 다운로드 섹션 ─────────────────────────────────────────────────────────────
+st.divider()
+st.subheader("📥 결과 다운로드")
+
+_dl_df = st.session_state.get("features_df")
+_has_df = _dl_df is not None and not _dl_df.empty
+
+col_dl1, col_dl2 = st.columns(2)
+
+with col_dl1:
+    if not DOCX_AVAILABLE:
+        st.error("python-docx 미설치 — DOCX 내보내기 불가 (운영 PC: packages_win에 wheel 추가 필요)")
+    else:
+        try:
+            docx_bytes = build_docx_bytes(result, _dl_df)
+            _ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            st.download_button(
+                label="📄 DOCX 보고서 다운로드",
+                data=docx_bytes,
+                file_name=f"위험예측_보고서_{_ts}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        except Exception as _e:
+            st.error(f"DOCX 생성 오류: {_e}")
+
+with col_dl2:
+    if not _has_df:
+        st.button("📋 대상자 CSV 다운로드", disabled=True)
+        st.caption("현재 세션 학습 결과가 필요합니다 (저장된 결과에서는 비활성).")
+    else:
+        try:
+            csv_bytes = build_csv_bytes(_dl_df)
+            _ys = _dl_df.get("yellow_subtype", None)
+            _red_n = int((_dl_df["risk_level"] == "Red").sum())
+            _major_n = int((_ys == "Y_DDI_MAJOR").sum()) if _ys is not None else 0
+            _triple_n = int((_ys == "Y_TRIPLE").sum()) if _ys is not None else 0
+            _target_n = _red_n + _major_n + _triple_n
+            if _target_n == 0:
+                st.warning("추출 대상(Red / Y_DDI_MAJOR / Y_TRIPLE) 없음")
+            else:
+                _ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+                st.download_button(
+                    label=f"📋 대상자 CSV 다운로드 ({_target_n:,}명)",
+                    data=csv_bytes,
+                    file_name=f"대상자_위험분류_{_ts}.csv",
+                    mime="text/csv; charset=utf-8",
+                )
+        except Exception as _e:
+            st.error(f"CSV 생성 오류: {_e}")
