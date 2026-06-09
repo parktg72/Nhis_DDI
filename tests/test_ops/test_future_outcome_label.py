@@ -235,3 +235,8 @@ def test_run_audit_report_has_required_fields() -> None:
     assert report["label_positive_rate_pct"] == 50.0
     assert report["label_semantics"] == "positive when oct_institution_count < T and nov_institution_count >= T"
     assert "escalation" in report["onset_type_note"]
+    assert "no_third_month_caveat" not in report
+    assert report["temporal_holdout_status"] == (
+        "dataset finalized at 6 months (2024-07..12); Jan 2025 / Gate 5A acquisition cancelled; "
+        "Nov→Dec future-onset holdout remains frozen (parked, no unlock planned)"
+    )

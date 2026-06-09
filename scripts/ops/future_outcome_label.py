@@ -238,7 +238,7 @@ def _audit_report(
             "oct_history_rows >= 1 observability."
         ),
         "censoring_policy": "patients with zero Nov outcome-window rows are excluded, not treated as negative",
-        "no_third_month_caveat": "2024-12 Raw is unavailable; this audit supports single-period feasibility only",
+        "temporal_holdout_status": "dataset finalized at 6 months (2024-07..12); Jan 2025 / Gate 5A acquisition cancelled; Nov→Dec future-onset holdout remains frozen (parked, no unlock planned)",
     }
 
 

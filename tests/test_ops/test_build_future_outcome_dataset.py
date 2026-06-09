@@ -71,6 +71,10 @@ def test_unknown_oct_drug_maps_to_unk_and_nov_drugs_do_not_enter_features() -> N
     assert X[0, 1] == 0
     assert metadata["unknown_drug_count"] == 1
     assert metadata["total_drug_rows"] == 1
+    assert "no_third_month_caveat" not in metadata
+    assert metadata["temporal_holdout_status"] == (
+        "temporal holdout is available when a later feature/outcome pair is built"
+    )
 
 
 def test_write_future_outcome_dataset_outputs_artifacts(tmp_path) -> None:
@@ -129,3 +133,116 @@ def test_add_institution_count_feature_appends_normalized_scalar() -> None:
     assert metadata["add_institution_count_feature"] is True
     assert metadata["institution_count_feature_index"] == 2
     assert metadata["input_dim"] == 3
+
+
+def test_add_demographics_feature_appends_age_and_sex_scalars() -> None:
+    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
+
+    demographics = {
+        "P1": (0.44, 1.0),
+        "P2": (0.74, 0.0),
+    }
+
+    X, y, kept_patient_ids, metadata = build_future_outcome_sparse_dataset(
+        _hist([
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "A"},
+            {"patient_id": "P2", "drug_code": "D_A", "institution_id": "A"},
+        ]),
+        _hist([
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "A"},
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "B"},
+            {"patient_id": "P2", "drug_code": "D_A", "institution_id": "A"},
+        ]),
+        ["P1", "P2"],
+        {"_unk": 0, "D_A": 1},
+        threshold=2,
+        demographics_features=demographics,
+    )
+
+    assert kept_patient_ids == ["P1", "P2"]
+    assert y.tolist() == [1, 0]
+    assert X.shape == (2, 4)
+    assert X[0, 2] == 0.44
+    assert X[0, 3] == 1.0
+    assert X[1, 2] == 0.74
+    assert X[1, 3] == 0.0
+    assert metadata["add_demographics_feature"] is True
+    assert metadata["demographics_feature_indices"] == {
+        "age_years_div_100": 2,
+        "sex_type_1_flag": 3,
+    }
+    assert metadata["demographics_sex_semantics"] == (
+        "sex_type=1 -> 1.0, sex_type=2 -> 0.0, missing/other -> 0.5"
+    )
+    assert metadata["demographics_missing_patient_count"] == 0
+
+
+def test_add_demographics_feature_records_missing_defaults() -> None:
+    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
+
+    X, _, kept_patient_ids, metadata = build_future_outcome_sparse_dataset(
+        _hist([
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "A"},
+            {"patient_id": "P2", "drug_code": "D_A", "institution_id": "A"},
+        ]),
+        _hist([
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "A"},
+            {"patient_id": "P2", "drug_code": "D_A", "institution_id": "A"},
+        ]),
+        ["P1", "P2"],
+        {"_unk": 0, "D_A": 1},
+        threshold=2,
+        demographics_features={"P1": (0.44, 1.0)},
+    )
+
+    assert kept_patient_ids == ["P1", "P2"]
+    assert X.shape == (2, 4)
+    assert X[1, 2] == 0.0
+    assert X[1, 3] == 0.5
+    assert metadata["demographics_missing_patient_count"] == 1
+    assert metadata["demographics_missing_patient_rate_pct"] == 50.0
+
+
+def test_add_medication_class_feature_appends_class_multihot_after_institution() -> None:
+    from scripts.ops.medication_class_features import EFMDC_NULL_TOKEN, EFMDC_UNK_TOKEN
+    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
+
+    class_vocab = {
+        EFMDC_NULL_TOKEN: 0,
+        EFMDC_UNK_TOKEN: 1,
+        "222": 2,
+    }
+
+    X, y, kept_patient_ids, metadata = build_future_outcome_sparse_dataset(
+        _hist([
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "A", "efmdc_clsf_no": "222"},
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "B", "efmdc_clsf_no": None},
+            {"patient_id": "P2", "drug_code": "D_A", "institution_id": "A", "efmdc_clsf_no": "999"},
+        ]),
+        _hist([
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "A"},
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "B"},
+            {"patient_id": "P1", "drug_code": "D_A", "institution_id": "C"},
+            {"patient_id": "P2", "drug_code": "D_A", "institution_id": "A"},
+        ]),
+        ["P1", "P2"],
+        {"_unk": 0, "D_A": 1},
+        threshold=3,
+        add_institution_count_feature=True,
+        medication_class_vocab=class_vocab,
+    )
+
+    assert kept_patient_ids == ["P1", "P2"]
+    assert y.tolist() == [1, 0]
+    assert X.shape == (2, 6)
+    assert X[0, 2] == 1.0
+    assert X[0, 3] == 1.0
+    assert X[0, 5] == 1.0
+    assert X[1, 4] == 1.0
+    assert metadata["add_medication_class_feature"] is True
+    assert metadata["medication_class_feature_start_index"] == 3
+    assert metadata["medication_class_feature_count"] == 3
+    assert metadata["medication_class_null_token_index"] == 3
+    assert metadata["medication_class_unknown_token_index"] == 4
+    assert metadata["medication_class_null_row_rate_pct"] == 33.3333
+    assert metadata["medication_class_oov_row_rate_pct"] == 33.3333

@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import sys
 from time import perf_counter
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -18,9 +18,18 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.ops.full_cohort_history_loader import FullCohortHistoryLoader
+from scripts.ops.eligibility_loader import DEFAULT_DEMOGRAPHICS_FEATURE, load_demographics
 from scripts.ops.future_outcome_label import (
     FUTURE_MULTI_INSTITUTION_THRESHOLD,
     label_future_multi_institution_onset,
+)
+from scripts.ops.medication_class_features import (
+    EFMDC_NULL_TOKEN,
+    EFMDC_UNK_TOKEN,
+    build_medication_class_vocab,
+    patient_medication_class_pairs,
+    read_medication_class_vocab,
+    write_medication_class_vocab,
 )
 
 
@@ -32,6 +41,8 @@ def build_future_outcome_sparse_dataset(
     *,
     threshold: int = FUTURE_MULTI_INSTITUTION_THRESHOLD,
     add_institution_count_feature: bool = False,
+    demographics_features: Mapping[str, tuple[float, float]] | None = None,
+    medication_class_vocab: Mapping[str, int] | None = None,
 ) -> tuple[sparse.csr_matrix, np.ndarray, list[str], dict]:
     _validate_vocab(vocab)
     patient_id_list = [str(patient_id) for patient_id in patient_ids]
@@ -70,7 +81,12 @@ def build_future_outcome_sparse_dataset(
             row_indices.append(pair[0])
             col_indices.append(pair[1])
 
-    input_dim = len(vocab) + (1 if add_institution_count_feature else 0)
+    demographics_start_index = len(vocab) + (1 if add_institution_count_feature else 0)
+    add_demographics_feature = demographics_features is not None
+    medication_class_start_index = demographics_start_index + (2 if add_demographics_feature else 0)
+    add_medication_class_feature = medication_class_vocab is not None
+    medication_class_feature_count = len(medication_class_vocab or {})
+    input_dim = medication_class_start_index + medication_class_feature_count
     if add_institution_count_feature and kept_patient_ids:
         max_oct_count = max(label_result.oct_institution_counts[patient_id] for patient_id in kept_patient_ids)
         denominator = max(max_oct_count, 1)
@@ -100,6 +116,40 @@ def build_future_outcome_sparse_dataset(
         X = X.tolil()
         X[:, institution_column] = np.array(values, dtype=np.float32).reshape(-1, 1)
         X = X.tocsr()
+    demographics_missing_patient_count = 0
+    if add_demographics_feature and kept_patient_ids:
+        assert demographics_features is not None
+        age_column = demographics_start_index
+        sex_column = demographics_start_index + 1
+        age_values: list[float] = []
+        sex_values: list[float] = []
+        for patient_id in kept_patient_ids:
+            if patient_id not in demographics_features:
+                demographics_missing_patient_count += 1
+            age_value, sex_value = demographics_features.get(patient_id, DEFAULT_DEMOGRAPHICS_FEATURE)
+            age_values.append(float(age_value))
+            sex_values.append(float(sex_value))
+        X = X.tolil()
+        X[:, age_column] = np.array(age_values, dtype=np.float32).reshape(-1, 1)
+        X[:, sex_column] = np.array(sex_values, dtype=np.float32).reshape(-1, 1)
+        X = X.tocsr()
+    medication_class_stats = {
+        "medication_class_total_rows": 0,
+        "medication_class_null_row_count": 0,
+        "medication_class_oov_row_count": 0,
+    }
+    if add_medication_class_feature and kept_patient_ids:
+        assert medication_class_vocab is not None
+        class_pairs, medication_class_stats = patient_medication_class_pairs(
+            histories,
+            kept_patient_ids,
+            medication_class_vocab,
+        )
+        if class_pairs:
+            X = X.tolil()
+            for patient_id, class_index in class_pairs:
+                X[patient_row[patient_id], medication_class_start_index + int(class_index)] = 1.0
+            X = X.tocsr()
     y = np.array(
         [label_result.labels[patient_id] for patient_id in kept_patient_ids],
         dtype=np.int8,
@@ -125,6 +175,41 @@ def build_future_outcome_sparse_dataset(
         "add_institution_count_feature": add_institution_count_feature,
         "institution_count_feature_index": len(vocab) if add_institution_count_feature else None,
         "institution_count_feature_normalization": "oct_institution_count / max(oct_institution_count in kept dataset)" if add_institution_count_feature else None,
+        "add_demographics_feature": add_demographics_feature,
+        "demographics_feature_indices": {
+            "age_years_div_100": demographics_start_index,
+            "sex_type_1_flag": demographics_start_index + 1,
+        } if add_demographics_feature else None,
+        "demographics_feature_source": "eligibility_demographics.parquet" if add_demographics_feature else None,
+        "demographics_feature_normalization": "age uses reference_year - byear divided by 100; invalid byear falls back to eligibility age divided by 100; sex_type '1' -> 1.0, '2' -> 0.0, missing/other -> 0.5" if add_demographics_feature else None,
+        "demographics_sex_semantics": "sex_type=1 -> 1.0, sex_type=2 -> 0.0, missing/other -> 0.5" if add_demographics_feature else None,
+        "demographics_missing_patient_count": demographics_missing_patient_count if add_demographics_feature else None,
+        "demographics_missing_patient_rate_pct": _pct(demographics_missing_patient_count, len(kept_patient_ids)) if add_demographics_feature else None,
+        "add_medication_class_feature": add_medication_class_feature,
+        "medication_class_feature_start_index": medication_class_start_index if add_medication_class_feature else None,
+        "medication_class_feature_count": medication_class_feature_count if add_medication_class_feature else None,
+        "medication_class_null_token": EFMDC_NULL_TOKEN if add_medication_class_feature else None,
+        "medication_class_unknown_token": EFMDC_UNK_TOKEN if add_medication_class_feature else None,
+        "medication_class_null_token_index": (
+            medication_class_start_index + int(medication_class_vocab[EFMDC_NULL_TOKEN])
+            if add_medication_class_feature and medication_class_vocab is not None else None
+        ),
+        "medication_class_unknown_token_index": (
+            medication_class_start_index + int(medication_class_vocab[EFMDC_UNK_TOKEN])
+            if add_medication_class_feature and medication_class_vocab is not None else None
+        ),
+        "medication_class_total_rows": int(medication_class_stats["medication_class_total_rows"]) if add_medication_class_feature else None,
+        "medication_class_null_row_count": int(medication_class_stats["medication_class_null_row_count"]) if add_medication_class_feature else None,
+        "medication_class_null_row_rate_pct": _pct(
+            int(medication_class_stats["medication_class_null_row_count"]),
+            int(medication_class_stats["medication_class_total_rows"]),
+        ) if add_medication_class_feature else None,
+        "medication_class_oov_row_count": int(medication_class_stats["medication_class_oov_row_count"]) if add_medication_class_feature else None,
+        "medication_class_oov_row_rate_pct": _pct(
+            int(medication_class_stats["medication_class_oov_row_count"]),
+            int(medication_class_stats["medication_class_total_rows"]),
+        ) if add_medication_class_feature else None,
+        "medication_class_feature_semantics": "multi-hot efmdc_clsf_no class features from feature window only; blank/null rows map to __NULL_EFMDC__, unseen classes map to __UNK_EFMDC__" if add_medication_class_feature else None,
         "unknown_drug_count": unknown_drug_count,
         "total_drug_rows": total_drug_rows,
         "unknown_drug_rate_pct": _pct(unknown_drug_count, total_drug_rows),
@@ -134,7 +219,7 @@ def build_future_outcome_sparse_dataset(
             "Positive cases are escalation when oct_institution_count is 1..T-1 and nov_institution_count >= T. "
             "Clean de-novo onset may be absent under strict oct_history_rows >= 1 observability."
         ),
-        "no_third_month_caveat": "2024-12 Raw is unavailable; random split training is internal feasibility only",
+        "temporal_holdout_status": "temporal holdout is available when a later feature/outcome pair is built",
     }
     return X, y, kept_patient_ids, metadata
 
@@ -150,13 +235,20 @@ def build_future_outcome_dataset_from_raw(
     threshold: int = FUTURE_MULTI_INSTITUTION_THRESHOLD,
     max_patients: int | None = None,
     add_institution_count_feature: bool = False,
+    add_demographics_feature: bool = False,
+    add_medication_class_feature: bool = False,
+    medication_class_vocab_path: str | Path | None = None,
+    medication_class_min_count: int = 1,
 ) -> dict:
     start = perf_counter()
     raw_path = Path(raw_dir)
     vocab_file = Path(vocab_path)
     vocab = json.loads(vocab_file.read_text(encoding="utf-8"))
     patient_ids = _sample_patient_ids(raw_path, feature_reference_date, max_patients)
-    loader = FullCohortHistoryLoader(raw_path, extra_columns=["institution_id"])
+    extra_columns = ["institution_id"]
+    if add_medication_class_feature:
+        extra_columns.append("efmdc_clsf_no")
+    loader = FullCohortHistoryLoader(raw_path, extra_columns=extra_columns)
     oct_histories = loader.load_window(
         reference_date=feature_reference_date,
         lookback_days=lookback_days,
@@ -169,6 +261,27 @@ def build_future_outcome_dataset_from_raw(
         patient_ids=patient_ids,
     )
     nov_loaded_file_count = loader.last_loaded_file_count
+    demographics_features = (
+        load_demographics(raw_path, patient_ids, reference_date=feature_reference_date)
+        if add_demographics_feature
+        else None
+    )
+    medication_class_vocab = None
+    medication_class_vocab_metadata: dict = {}
+    if add_medication_class_feature:
+        if medication_class_vocab_path:
+            medication_class_vocab = read_medication_class_vocab(medication_class_vocab_path)
+            medication_class_vocab_metadata = {
+                "medication_class_vocab_path": str(medication_class_vocab_path),
+                "medication_class_vocab_source": "loaded_from_path",
+                "medication_class_min_count": None,
+                "medication_class_vocab_size": len(medication_class_vocab),
+            }
+        else:
+            medication_class_vocab, medication_class_vocab_metadata = build_medication_class_vocab(
+                oct_histories,
+                min_count=medication_class_min_count,
+            )
     X, y, kept_patient_ids, metadata = build_future_outcome_sparse_dataset(
         oct_histories,
         nov_histories,
@@ -176,7 +289,14 @@ def build_future_outcome_dataset_from_raw(
         vocab,
         threshold=threshold,
         add_institution_count_feature=add_institution_count_feature,
+        demographics_features=demographics_features,
+        medication_class_vocab=medication_class_vocab,
     )
+    medication_class_vocab_output_path = None
+    if add_medication_class_feature and medication_class_vocab is not None:
+        medication_class_vocab_output_path = Path(output_dir) / "medication_class_vocab.json"
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        write_medication_class_vocab(medication_class_vocab_output_path, medication_class_vocab)
     metadata.update({
         "feature_reference_date": feature_reference_date.isoformat(),
         "outcome_reference_date": outcome_reference_date.isoformat(),
@@ -191,6 +311,11 @@ def build_future_outcome_dataset_from_raw(
         "vocab_sha256": _sha256(vocab_file),
         "build_time_sec": round(perf_counter() - start, 3),
     })
+    if add_medication_class_feature:
+        metadata.update(medication_class_vocab_metadata)
+        metadata["medication_class_vocab_output_path"] = str(medication_class_vocab_output_path)
+        if medication_class_vocab_output_path is not None:
+            metadata["medication_class_vocab_sha256"] = _sha256(medication_class_vocab_output_path)
     result = write_future_outcome_dataset(X, y, kept_patient_ids, metadata, output_dir)
     return result
 
@@ -292,6 +417,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--threshold", type=int, default=FUTURE_MULTI_INSTITUTION_THRESHOLD)
     parser.add_argument("--max-patients", type=int, default=None)
     parser.add_argument("--add-institution-count-feature", action="store_true")
+    parser.add_argument("--add-demographics-feature", action="store_true")
+    parser.add_argument("--add-medication-class-feature", action="store_true")
+    parser.add_argument("--medication-class-vocab-path", default=None)
+    parser.add_argument("--medication-class-min-count", type=int, default=1)
     return parser
 
 
@@ -307,6 +436,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         threshold=args.threshold,
         max_patients=args.max_patients,
         add_institution_count_feature=args.add_institution_count_feature,
+        add_demographics_feature=args.add_demographics_feature,
+        add_medication_class_feature=args.add_medication_class_feature,
+        medication_class_vocab_path=args.medication_class_vocab_path,
+        medication_class_min_count=args.medication_class_min_count,
     )
     print(f"[OK] wrote {args.output_dir}")
     print(f"n_patients={metadata['n_patients']}")
