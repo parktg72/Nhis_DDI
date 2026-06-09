@@ -4,6 +4,7 @@ SAP HANA DB 연결 관리
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Callable, TypeVar
 
 import pandas as pd
@@ -54,11 +55,24 @@ class HANAConnection:
         self._user = user
         self._password = password
 
-    def reconnect(self) -> None:
-        """저장된 자격증명으로 HANA 세션 재연결 (장시간 추출 중 세션 만료 대응)."""
+    def reconnect(self, max_attempts: int = 3, base_delay: float = 2.0) -> None:
+        """저장된 자격증명으로 HANA 세션 재연결. 소켓 즉시-거부 대응 지수 백오프 재시도.
+
+        HANA 서버가 소켓을 닫은 직후 connect 시도 시 -10709/89013 으로 거부될 수 있다.
+        max_attempts 회 시도 후 모두 실패하면 마지막 예외를 그대로 전파한다.
+        """
         if not self._password:
             raise RuntimeError("재연결 불가: 저장된 자격증명 없음 (connect() 미호출)")
-        self.connect(self._host, self._port, self._user, self._password)
+        last_exc: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                self.connect(self._host, self._port, self._user, self._password)
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_attempts - 1:
+                    time.sleep(base_delay * (2 ** attempt))  # 2s, 4s
+        raise last_exc  # type: ignore[misc]
 
     def close(self) -> None:
         if self.conn:
@@ -84,8 +98,6 @@ class HANAConnection:
         이미 연결된 상태면 아무것도 하지 않는다.
         재연결 실패 시 hdbcli 예외를 그대로 전파한다.
         """
-        import time
-
         # creds 필수 키 검증
         required = {"host", "port", "user", "password"}
         missing_keys = required - creds.keys()

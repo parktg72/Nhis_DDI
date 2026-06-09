@@ -328,3 +328,70 @@ class TestMetaHelperRetryIntegration:
         result = c.get_columns("S", "T")
         assert result == [{"name": "X", "type": "INTEGER", "nullable": "TRUE"}]
         c.reconnect.assert_called_once()
+
+
+# ─── reconnect() 지수 백오프 재시도 (2026-06-09) ─────────────────────────────
+
+class TestReconnectBackoff:
+    """reconnect() 가 connect() 실패 시 지수 백오프로 재시도하는지 검증.
+
+    기존 테스트는 모두 c.reconnect = MagicMock() 으로 reconnect 자체를 대체하므로
+    내부 retry 로직을 전혀 검증하지 않는다.
+    본 클래스는 실제 reconnect() 를 호출하고 connect() 만 패치한다.
+    """
+
+    def _make_conn(self) -> HANAConnection:
+        return _make_conn_with_password()
+
+    def test_succeeds_on_second_attempt(self, monkeypatch):
+        """connect() 첫 호출 실패 → 두 번째 성공 → reconnect() 반환."""
+        c = self._make_conn()
+        calls = {"n": 0}
+
+        def fake_connect(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("(-10709, 'Socket closed by peer')")
+
+        monkeypatch.setattr(c, "connect", fake_connect)
+        sleep_calls: list[float] = []
+        monkeypatch.setattr("hana_app.core.db.time.sleep", lambda s: sleep_calls.append(s))
+
+        c.reconnect(max_attempts=3, base_delay=2.0)
+
+        assert calls["n"] == 2
+        assert sleep_calls == [2.0]  # 한 번 대기 후 성공
+
+    def test_raises_last_exc_after_all_attempts_exhausted(self, monkeypatch):
+        """모든 시도가 실패하면 마지막 예외를 원본 그대로 전파."""
+        c = self._make_conn()
+        calls = {"n": 0}
+
+        def fake_connect(*a, **kw):
+            calls["n"] += 1
+            raise RuntimeError(f"(-10709, 'Socket closed by peer attempt {calls['n']}')")
+
+        monkeypatch.setattr(c, "connect", fake_connect)
+        sleep_calls: list[float] = []
+        monkeypatch.setattr("hana_app.core.db.time.sleep", lambda s: sleep_calls.append(s))
+
+        with pytest.raises(RuntimeError, match="attempt 3"):
+            c.reconnect(max_attempts=3, base_delay=2.0)
+
+        assert calls["n"] == 3
+        assert sleep_calls == [2.0, 4.0]  # 2회 대기 후 마지막 예외
+
+    def test_no_password_raises_immediately_no_connect(self, monkeypatch):
+        """_password 없으면 connect 미호출, 즉시 RuntimeError."""
+        c = HANAConnection()
+        connect_called = {"n": 0}
+
+        def fake_connect(*a, **kw):
+            connect_called["n"] += 1
+
+        monkeypatch.setattr(c, "connect", fake_connect)
+
+        with pytest.raises(RuntimeError, match="저장된 자격증명 없음"):
+            c.reconnect()
+
+        assert connect_called["n"] == 0
