@@ -133,8 +133,9 @@ tab_fi, tab_cm, tab_cv, tab_roc, tab_dist, tab_report, tab_compare = st.tabs([
 # ── 탭1: 피처 중요도 ─────────────────────────────────────────────────────────
 with tab_fi:
     fi_data = result.get("feature_importance")
+    _fi_ok = fi_data is not None and (fi_data.empty is False if hasattr(fi_data, "empty") else bool(fi_data))
 
-    if fi_data:
+    if _fi_ok:
         if isinstance(fi_data, list):
             fi_df = pd.DataFrame(fi_data)
         else:

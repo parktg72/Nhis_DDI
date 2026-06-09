@@ -187,7 +187,8 @@ def build_docx_bytes(last_result: dict, features_df: Optional[pd.DataFrame] = No
 
     # ── 섹션 4: 피처 중요도 Top 15
     fi_data = last_result.get("feature_importance")
-    if fi_data:
+    _fi_ok = fi_data is not None and (fi_data.empty is False if hasattr(fi_data, "empty") else bool(fi_data))
+    if _fi_ok:
         doc.add_heading("피처 중요도 Top 15", level=1)
         try:
             fi_df = pd.DataFrame(fi_data) if isinstance(fi_data, list) else fi_data
