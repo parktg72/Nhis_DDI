@@ -326,5 +326,5 @@ class TestDAGDriftAndAlerts:
 
         assert alert_json.exists()
         import json as _json
-        data = _json.loads(alert_json.read_text())
+        data = _json.loads(alert_json.read_text(encoding="utf-8"))
         assert "partition" in data and "alerts" in data and "total" in data

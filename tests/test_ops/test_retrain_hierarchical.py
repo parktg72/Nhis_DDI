@@ -48,10 +48,10 @@ def _synthetic_cohort() -> list[PatientFeatures]:
             feats.append(_feat(n, **kw))
             n += 1
 
-    add(30, ddi_contraindicated=1)                                        # Red
-    add(30, ddi_major=1, dup_same_ingredient=1, institution_count=3)     # Y_TRIPLE (3 dims)
-    add(30, ddi_major=1, dup_same_ingredient=1)                          # Y_DOUBLE (2 dims)
-    add(30, ddi_major=1)                                                  # Y_DDI_MAJOR
+    add(30, ddi_contraindicated=1)                                                 # Red
+    add(30, ddi_moderate=2, dup_same_ingredient=1, institution_count=3)          # Y_TRIPLE (3 dims: DDI_MOD+DUP+FRAG)
+    add(30, ddi_moderate=2, dup_same_ingredient=1)                               # Y_DOUBLE (2 dims: DDI_MOD+DUP)
+    add(30, ddi_major=1)                                                          # Y_DDI_MAJOR
     add(30, ddi_moderate=2)                                               # Y_DDI_MOD
     add(30, dup_same_ingredient=1)                                        # Y_DUP
     add(30, institution_count=3)                                          # Y_FRAG

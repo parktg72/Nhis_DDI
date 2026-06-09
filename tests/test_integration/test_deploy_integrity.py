@@ -3,9 +3,26 @@ import hashlib
 import os
 import pickle
 import sys
+import tempfile
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+
+def _has_symlink_privilege() -> bool:
+    """Windows에서 심볼릭 링크 생성 권한 여부 확인."""
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            os.symlink("nonexistent", os.path.join(td, "_probe"))
+            return True
+        except OSError:
+            return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _has_symlink_privilege(),
+    reason="Windows 심볼릭 링크 권한 없음 (관리자 또는 개발자 모드 필요)",
+)
 
 
 def _ensure_airflow_mock():

@@ -3,8 +3,21 @@ test_admin_cors.py — /admin/reload Pydantic body + CORS 기본값 테스트
 """
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import types
+
+import pytest
+
+
+def _has_symlink_privilege() -> bool:
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            os.symlink("nonexistent", os.path.join(td, "_probe"))
+            return True
+        except OSError:
+            return False
 
 
 def _ensure_airflow_mock():
@@ -102,6 +115,10 @@ def test_reload_endpoint_uses_body_not_query(tmp_path):
     assert r.model_path == "/app/models/model.pkl"
 
 
+@pytest.mark.skipif(
+    not _has_symlink_privilege(),
+    reason="Windows 심볼릭 링크 권한 없음 (관리자 또는 개발자 모드 필요)",
+)
 def test_deploy_dag_sends_admin_key(monkeypatch, tmp_path):
     """_deploy_model must send X-Admin-Key header."""
     import sys, os

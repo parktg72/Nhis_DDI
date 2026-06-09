@@ -9,7 +9,7 @@ def test_settings_model_dir_default():
     """MODEL_DIR 기본값 /app/models."""
     import config.settings as s
     importlib.reload(s)
-    assert str(s.MODEL_DIR) == "/app/models"
+    assert Path(s.MODEL_DIR).as_posix() == "/app/models"
 
 
 def test_settings_model_dir_env_override(monkeypatch, tmp_path):
@@ -40,7 +40,10 @@ def test_no_hardcoded_app_models():
         rel = py_file.relative_to(REPO_ROOT)
         if rel == Path("config/settings.py") or rel == this_file:
             continue
-        content = py_file.read_text(errors="replace")
+        try:
+            content = py_file.read_text(encoding="utf-8", errors="replace")
+        except PermissionError:
+            continue
         if '"/app/models"' in content or "'/app/models'" in content:
             violations.append(str(rel))
     assert violations == [], (
@@ -106,7 +109,10 @@ def test_admin_api_key_no_drift():
         rel = py_file.relative_to(REPO_ROOT)
         if rel == this_file:
             continue
-        content = py_file.read_text(errors="replace")
+        try:
+            content = py_file.read_text(encoding="utf-8", errors="replace")
+        except PermissionError:
+            continue
         if "DDI_ADMIN_API_KEY" in content:
             violations.append(str(rel))
     assert violations == [], (
