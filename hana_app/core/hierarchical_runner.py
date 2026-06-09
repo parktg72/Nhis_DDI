@@ -617,6 +617,28 @@ def train_hierarchical(
         json.dumps(meta, ensure_ascii=False, indent=2)
     )
 
+    # ── Stage 2 평가 지표 (in-sample, 학습셋 기준) ────────────────────────────
+    # 실제 학습은 전체 X2/y2로 진행하므로 훈련 결과 불변.
+    # 지표는 낙관적(in-sample)이지만 피처 중요도·클래스 분포 파악에 충분함.
+    from sklearn.metrics import f1_score as _f1, classification_report as _cr
+    from sklearn.metrics import confusion_matrix as _cm_sk
+
+    _fi_arr = m2.feature_importances_
+    _feature_importance = sorted(
+        [{"feature": fc, "importance": float(fi)}
+         for fc, fi in zip(feature_cols, _fi_arr)],
+        key=lambda x: -x["importance"],
+    )
+
+    _y2_pred_local = m2.predict(X2)
+    _cls_names = list(local_class_names)
+    _y2_true_str = [_cls_names[i] for i in y2]
+    _y2_pred_str = [_cls_names[i] for i in _y2_pred_local]
+
+    _f1_macro = float(_f1(_y2_true_str, _y2_pred_str, average="macro", zero_division=0))
+    _cm_arr = _cm_sk(_y2_true_str, _y2_pred_str, labels=_cls_names).tolist()
+    _cr_str = _cr(_y2_true_str, _y2_pred_str, labels=_cls_names, zero_division=0)
+
     return {
         "stage1_model": m1,
         "stage2_model": m2,
@@ -627,6 +649,13 @@ def train_hierarchical(
         "stage1_trained": stage1_trained,
         "stage1_red_count": _n_red,
         "meta_path": out / "stage_meta.json",
+        # 평가 지표
+        "feature_importance": _feature_importance,
+        "f1_macro": _f1_macro,
+        "confusion_matrix": _cm_arr,
+        "stage2_class_names": _cls_names,
+        "classification_report": _cr_str,
+        "stage2_train_size": len(X2),
     }
 
 

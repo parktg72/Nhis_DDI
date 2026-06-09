@@ -1913,8 +1913,13 @@ if run_btn:
             "metrics": {
                 "tau_red": thresholds.get("tau_red"),
                 "tau_review": thresholds.get("tau_review"),
-                "f1_macro": 0.0,
+                "f1_macro": _hier_result.get("f1_macro", 0.0),
+                "confusion_matrix": _hier_result.get("confusion_matrix"),
+                "classes": _hier_result.get("stage2_class_names"),
+                "classification_report": _hier_result.get("classification_report"),
+                "train_size": _hier_result.get("stage2_train_size", 0),
             },
+            "feature_importance": _hier_result.get("feature_importance"),
             "meta": _meta,
         }
         st.session_state.last_result = _hier_last
