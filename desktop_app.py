@@ -118,6 +118,7 @@ def _run_webview(proc: subprocess.Popen | None) -> None:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
+    webview.settings["ALLOW_DOWNLOADS"] = True
     window = webview.create_window(
         TITLE,
         URL,
