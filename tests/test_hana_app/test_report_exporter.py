@@ -7,7 +7,7 @@ from hana_app.core.report_exporter import (
     build_csv_bytes,
     build_docx_bytes,
     DOCX_AVAILABLE,
-    _build_reason,
+    _derive_reason,
     _effective_label,
 )
 
@@ -44,7 +44,7 @@ def test_csv_bytes_red_only():
     text = b.decode("utf-8-sig")
     assert "P001" in text
     assert "P002" not in text
-    assert "금기 DDI 2건" in text
+    assert "금기 DDI 2건" in text  # _derive_reason: RED_CONTRAINDICATED 건수 포함
     assert "즉각 개입" in text
 
 
@@ -62,8 +62,8 @@ def test_csv_bytes_all_labels():
     assert "즉각 개입" in text
     assert "약사 전화" in text
     assert "문자 안내" in text
-    assert "금기 DDI 1건" in text
-    assert "중증 DDI 3건" in text
+    assert "금기 DDI 1건" in text   # RED_CONTRAINDICATED 건수
+    assert "중증 DDI 3건" in text   # DDI_MAJOR 건수
 
 
 def test_csv_bytes_no_target_rows():
@@ -81,21 +81,30 @@ def test_csv_utf8_bom():
     assert b[:3] == b"\xef\xbb\xbf"
 
 
-def test_build_reason_red():
+def test_derive_reason_red():
     r = _row(risk_level="Red", ddi_contraindicated=3)
-    assert _build_reason(r) == "금기 DDI 3건"
+    assert _derive_reason(r) == "금기 DDI 3건"
 
 
-def test_build_reason_major():
+def test_derive_reason_major():
+    # DDI_MAJOR trigger: ddi_major >= 1
     r = _row(risk_level="Yellow", yellow_subtype="Y_DDI_MAJOR", ddi_major=5)
-    assert _build_reason(r) == "중증 DDI 5건"
+    assert _derive_reason(r) == "중증 DDI 5건"
 
 
-def test_build_reason_triple_multidrug():
-    r = _row(risk_level="Yellow", yellow_subtype="Y_TRIPLE", drug_count=12)
-    reason = _build_reason(r)
-    assert "3중위험" in reason
-    assert "다약제(12종)" in reason
+def test_derive_reason_triple_with_trigger():
+    # SEV_10DRUG_HIGHRISK: drug_count >= 10 AND has_high_risk_drug
+    r = _row(risk_level="Yellow", yellow_subtype="Y_TRIPLE",
+             drug_count=12, has_high_risk_drug=1)
+    reason = _derive_reason(r)
+    assert "10종↑+고위험약" in reason
+
+
+def test_derive_reason_no_trigger_green_path():
+    # drug_count >= 5, no other triggers → Green 사유 문구
+    r = _row(risk_level="Green", drug_count=12)
+    reason = _derive_reason(r)
+    assert "5종↑" in reason
 
 
 # ── DOCX ────────────────────────────────────────────────────────────────────

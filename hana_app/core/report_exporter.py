@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+from types import SimpleNamespace
 from typing import Optional
 
 import pandas as pd
@@ -36,7 +37,15 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
 
-from scripts.ops.multi_institution_label import MULTI_INSTITUTION_THRESHOLD
+try:
+    from scripts.etl.clinical_rules import (
+        collect_red_triggers as _collect_red,
+        collect_severe_immediate_triggers as _collect_severe,
+        collect_yellow_triggers as _collect_yellow,
+    )
+    _CLINICAL_RULES_AVAILABLE = True
+except ImportError:
+    _CLINICAL_RULES_AVAILABLE = False
 
 # ── 색상 팔레트 ──────────────────────────────────────────────────────────────
 _C = {
@@ -70,6 +79,17 @@ _INTERVENTION_ROWS = [
 ]
 
 _MONITORING_SUBTYPES = frozenset({"Y_DOUBLE", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"})
+
+_REASON_TOKEN_KO = {
+    "RED_CONTRAINDICATED": "금기 DDI",
+    "SEV_TRIPLE_WHAMMY":   "Triple Whammy",
+    "SEV_10DRUG_HIGHRISK": "10종↑+고위험약",
+    "SEV_ELDERLY_ORGAN":   "고령(75+)+장기부전",
+    "DDI_MAJOR":           "중증 DDI",
+    "DDI_MOD":             "Moderate DDI",
+    "DUP":                 "동일성분 중복",
+    "FRAG":                "다기관(3곳↑)",
+}
 
 _FEAT_LABELS = {
     "drug_count": "총 약물 수",
@@ -218,6 +238,81 @@ def _add_table(doc, headers: list[str], rows: list[list[str]]) -> None:
             row[i].text = str(val)
 
 
+def _chart_yellow_subtype(features_df: pd.DataFrame) -> bytes:
+    """Yellow 서브타입 분포 바차트."""
+    if "yellow_subtype" not in features_df.columns:
+        return b""
+    ys = features_df["yellow_subtype"].dropna()
+    ys = ys[ys.astype(str) != ""]
+    if ys.empty:
+        return b""
+    dist = ys.value_counts()
+    _ys_colors = {
+        "Y_TRIPLE": _C["TRIPLE"], "Y_DOUBLE": _C["monitor"],
+        "Y_DDI_MAJOR": _C["MAJOR"], "Y_DDI_MOD": "#e67e22",
+        "Y_DUP": "#9b59b6", "Y_FRAG": "#3498db", "Y_OTHER": _C["noalert"],
+    }
+    colors = [_ys_colors.get(str(l), "#aaaaaa") for l in dist.index]
+    total = dist.sum()
+    fig, ax = plt.subplots(figsize=(7, 3.5))
+    bars = ax.bar([str(l) for l in dist.index], dist.values, color=colors, edgecolor="white")
+    for bar, val in zip(bars, dist.values):
+        ax.text(bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + total * 0.005,
+                f"{val:,}\n({val / total * 100:.1f}%)",
+                ha="center", va="bottom", fontsize=8)
+    ax.set_ylabel("환자 수")
+    ax.set_title("Yellow 서브타입 세부 분포")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
+def _chart_drug_hist(features_df: pd.DataFrame) -> bytes:
+    """다약제 수 분포 히스토그램."""
+    if "drug_count" not in features_df.columns:
+        return b""
+    vals = features_df["drug_count"].dropna()
+    if vals.empty:
+        return b""
+    n_bins = min(30, max(1, int(vals.max() - vals.min()) + 1))
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.hist(vals, bins=n_bins, color=_C["fi_bar"], edgecolor="white", alpha=0.85)
+    ax.axvline(vals.mean(), color=_C["Red"], linestyle="--", linewidth=1.2,
+               label=f"평균 {vals.mean():.1f}종")
+    ax.set_xlabel("약물 수 (종)")
+    ax.set_ylabel("환자 수")
+    ax.set_title("다약제 수 분포")
+    ax.legend(fontsize=9)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
+def _chart_age_hist(features_df: pd.DataFrame) -> bytes:
+    """연령 분포 히스토그램."""
+    if "age" not in features_df.columns:
+        return b""
+    vals = features_df["age"].dropna()
+    vals = vals[vals >= 0]
+    if vals.empty:
+        return b""
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.hist(vals, bins=20, color=_C["Green"], edgecolor="white", alpha=0.85)
+    ax.axvline(vals.mean(), color=_C["Red"], linestyle="--", linewidth=1.2,
+               label=f"평균 {vals.mean():.1f}세")
+    ax.set_xlabel("연령 (세)")
+    ax.set_ylabel("환자 수")
+    ax.set_title("연령 분포")
+    ax.legend(fontsize=9)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
 # ── CSV ──────────────────────────────────────────────────────────────────────
 
 def _effective_label(row) -> str:
@@ -226,23 +321,49 @@ def _effective_label(row) -> str:
     return row.get("yellow_subtype") or ""
 
 
-def _build_reason(row) -> str:
-    label = _effective_label(row)
-    if label == "Red":
-        return f"금기 DDI {int(row.get('ddi_contraindicated', 0))}건"
-    if label == "Y_DDI_MAJOR":
-        return f"중증 DDI {int(row.get('ddi_major', 0))}건"
-    dims = []
-    if row.get("drug_count", 0) >= 10:
-        dims.append(f"다약제({int(row.get('drug_count', 0))}종)")
-    if row.get("has_high_risk_drug") or row.get("has_renal_risk_drug") or row.get("has_hepatic_risk_drug"):
-        dims.append("고위험약물/장기부전")
-    if row.get("institution_count", 0) >= MULTI_INSTITUTION_THRESHOLD:
-        dims.append(f"다기관({int(row.get('institution_count', 0))}개)")
-    if row.get("triple_whammy"):
-        dims.append("Triple Whammy")
-    prefix = "3중위험" if label == "Y_TRIPLE" else "위험"
-    return (f"{prefix} — " + "+".join(dims)) if dims else prefix
+def _derive_reason(row) -> str:
+    """clinical_rules 함수로 트리거 재파생 → 한국어 판정사유 (단일 출처 보장)."""
+    if not _CLINICAL_RULES_AVAILABLE:
+        return ""
+    ns = SimpleNamespace(
+        ddi_contraindicated=int(row.get("ddi_contraindicated", 0) or 0),
+        ddi_major=int(row.get("ddi_major", 0) or 0),
+        ddi_moderate=int(row.get("ddi_moderate", 0) or 0),
+        dup_same_ingredient=int(row.get("dup_same_ingredient", 0) or 0),
+        institution_count=int(row.get("institution_count", 0) or 0),
+        triple_whammy=bool(row.get("triple_whammy", 0)),
+        drug_count=int(row.get("drug_count", 0) or 0),
+        has_high_risk_drug=bool(row.get("has_high_risk_drug", 0)),
+        has_renal_risk_drug=bool(row.get("has_renal_risk_drug", 0)),
+        has_hepatic_risk_drug=bool(row.get("has_hepatic_risk_drug", 0)),
+        age=row.get("age"),
+        ddi_minor=int(row.get("ddi_minor", 0) or 0),
+    )
+    red = _collect_red(ns)
+    if red:
+        triggers = red
+    else:
+        triggers = _collect_severe(ns) | _collect_yellow(ns)
+    if triggers:
+        parts = []
+        for t in sorted(triggers):
+            ko = _REASON_TOKEN_KO.get(t, t)
+            if t == "RED_CONTRAINDICATED":
+                parts.append(f"{ko} {ns.ddi_contraindicated}건")
+            elif t == "DDI_MAJOR":
+                parts.append(f"{ko} {ns.ddi_major}건")
+            elif t == "DDI_MOD":
+                parts.append(f"{ko} {ns.ddi_moderate}쌍")
+            elif t == "DUP":
+                parts.append(f"{ko} {ns.dup_same_ingredient}건")
+            else:
+                parts.append(ko)
+        return ", ".join(parts)
+    if ns.ddi_minor >= 1:
+        return f"Minor DDI {ns.ddi_minor}건"
+    if ns.drug_count >= 5:
+        return f"5종↑ ({ns.drug_count}종)"
+    return ""
 
 
 def build_csv_bytes(features_df: pd.DataFrame) -> bytes:
@@ -253,10 +374,15 @@ def build_csv_bytes(features_df: pd.DataFrame) -> bytes:
     mask = (features_df["risk_level"] == "Red") | ys.isin({"Y_DDI_MAJOR", "Y_TRIPLE"})
     filtered = features_df[mask].copy()
 
-    filtered["개입조치"] = filtered.apply(
-        lambda r: _INTERVENTION_KO.get(_effective_label(r), ""), axis=1)
-    filtered["위험라벨"] = filtered.apply(_effective_label, axis=1)
-    filtered["사유"]    = filtered.apply(_build_reason, axis=1)
+    if filtered.empty:
+        filtered["개입조치"] = pd.Series(dtype=str)
+        filtered["위험라벨"] = pd.Series(dtype=str)
+        filtered["사유"]    = pd.Series(dtype=str)
+    else:
+        filtered["개입조치"] = filtered.apply(
+            lambda r: _INTERVENTION_KO.get(_effective_label(r), ""), axis=1)
+        filtered["위험라벨"] = filtered.apply(_effective_label, axis=1)
+        filtered["사유"]    = filtered.apply(_derive_reason, axis=1)
 
     out_cols = {
         "patient_id": "환자ID", "개입조치": "개입조치", "위험라벨": "위험라벨",
@@ -319,6 +445,14 @@ def build_docx_bytes(last_result: dict,
          for action, lbl, _ in _INTERVENTION_ROWS]
     )
     doc.add_paragraph()
+
+    # ── 2-1. Yellow 서브타입 세부 분포 ───────────────────────────────────────
+    if has_df and MPL_AVAILABLE:
+        _ys_png = _chart_yellow_subtype(features_df)
+        if _ys_png:
+            doc.add_heading("2-1. Yellow 서브타입 세부 분포", level=2)
+            _add_png(doc, _ys_png, width_inches=6.0)
+            doc.add_paragraph()
 
     # ── 3. DDI 심각도 통계 ────────────────────────────────────────────────────
     ddi_means  = last_result.get("ddi_means") or {}
@@ -393,6 +527,62 @@ def build_docx_bytes(last_result: dict,
         notes.append("※ matplotlib 미설치로 차트가 포함되지 않았습니다.")
     for note in notes:
         doc.add_paragraph(note)
+
+    # ── 7. 분석 대상 정보 (마지막 페이지) ─────────────────────────────────────
+    doc.add_page_break()
+    doc.add_heading("7. 분석 대상 정보", level=1)
+
+    if has_df:
+        total_n = len(features_df)
+        rl_dist = features_df["risk_level"].value_counts().to_dict() if "risk_level" in features_df.columns else {}
+
+        target_rows: list[list[str]] = [["총 환자 수", f"{total_n:,}명"]]
+        for lbl in ["Red", "Yellow", "Green", "Normal"]:
+            cnt = rl_dist.get(lbl, 0)
+            target_rows.append([f"  위험도 — {lbl}", f"{cnt:,}명 ({cnt / total_n * 100:.1f}%)"])
+
+        if "sex_m" in features_df.columns:
+            sex_m = int(features_df["sex_m"].sum())
+            sex_f = total_n - sex_m
+            target_rows += [
+                ["성별 — 남", f"{sex_m:,}명 ({sex_m / total_n * 100:.1f}%)"],
+                ["성별 — 여", f"{sex_f:,}명 ({sex_f / total_n * 100:.1f}%)"],
+            ]
+
+        if "age" in features_df.columns:
+            age_v = features_df["age"].dropna()
+            age_v = age_v[age_v >= 0]
+            if not age_v.empty:
+                target_rows += [
+                    ["연령 평균",  f"{age_v.mean():.1f}세"],
+                    ["연령 중앙값", f"{age_v.median():.1f}세"],
+                    ["연령 범위",  f"{int(age_v.min())}~{int(age_v.max())}세"],
+                ]
+
+        if "drug_count" in features_df.columns:
+            dc = features_df["drug_count"].dropna()
+            if not dc.empty:
+                target_rows += [
+                    ["약물 수 평균", f"{dc.mean():.1f}종"],
+                    ["약물 수 최대", f"{int(dc.max())}종"],
+                ]
+
+        _add_table(doc, ["항목", "값"], target_rows)
+        doc.add_paragraph()
+
+        if MPL_AVAILABLE:
+            _drug_png = _chart_drug_hist(features_df)
+            _age_png  = _chart_age_hist(features_df)
+            if _drug_png:
+                _add_png(doc, _drug_png, width_inches=5.5)
+            if _age_png:
+                _add_png(doc, _age_png, width_inches=5.5)
+    else:
+        doc.add_paragraph("현재 세션 features_df 없음 — 학습 실행 후 재생성하면 분석 대상 정보가 채워집니다.")
+
+    doc.add_paragraph(
+        f"모델: {mname}  |  타겟: {last_result.get('target', '?')}  |  생성일시: {now}"
+    )
 
     buf = io.BytesIO()
     doc.save(buf)
