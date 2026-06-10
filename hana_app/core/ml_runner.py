@@ -2291,17 +2291,22 @@ def _save_result(result: dict) -> None:
     ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
     model_name = result["model_name"]
 
-    # 모델 저장
-    model_path = MODELS_DIR / f"{model_name}_{ts}.pkl"
-    with open(model_path, "wb") as f:
-        pickle.dump(result["model"], f)
+    # 모델 저장 (hierarchical은 별도 디렉터리에 이미 저장돼 "model" 키 없음)
+    _model_obj = result.get("model")
+    if _model_obj is not None:
+        model_path = MODELS_DIR / f"{model_name}_{ts}.pkl"
+        with open(model_path, "wb") as f:
+            pickle.dump(_model_obj, f)
+    else:
+        model_path = None
 
     # 결과 저장 (JSON)
     meta = {
         k: v for k, v in result.items()
         if k not in ("model", "feature_importance", "features_df")
     }
-    meta["model_path"] = str(model_path)
+    if model_path is not None:
+        meta["model_path"] = str(model_path)
     meta["timestamp"] = ts
     if isinstance(result.get("feature_importance"), pd.DataFrame):
         meta["feature_importance"] = result["feature_importance"].to_dict("records")

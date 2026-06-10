@@ -22,7 +22,7 @@ from hana_app.core.etl_logger import append_etl_log
 from hana_app.core.sas_reader import SASExtractor
 from hana_app.core.ml_runner import (
     build_patient_features, build_patient_features_from_parquet,
-    features_to_dataframe, train_model,
+    features_to_dataframe, train_model, _save_result,
 )
 from hana_app.core.sparse_research import (
     DATASETS_ROOT,
@@ -1924,6 +1924,7 @@ if run_btn:
         }
         st.session_state.last_result = _hier_last
         st.session_state.train_results = {"hierarchical": _hier_last}
+        _save_result(_hier_last)
 
         # predict_risk → features_df 에 red_suspect / action 컬럼 채우기
         # (page 4 의 yellow_subtype_view 가 이 컬럼을 사용)
