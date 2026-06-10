@@ -374,6 +374,8 @@ def build_csv_bytes(features_df: pd.DataFrame) -> bytes:
     mask = (features_df["risk_level"] == "Red") | ys.isin({"Y_DDI_MAJOR", "Y_TRIPLE"})
     filtered = features_df[mask].copy()
 
+    _PRIORITY = {"Red": 0, "Y_DDI_MAJOR": 1, "Y_TRIPLE": 2}
+
     if filtered.empty:
         filtered["개입조치"] = pd.Series(dtype=str)
         filtered["위험라벨"] = pd.Series(dtype=str)
@@ -383,6 +385,8 @@ def build_csv_bytes(features_df: pd.DataFrame) -> bytes:
             lambda r: _INTERVENTION_KO.get(_effective_label(r), ""), axis=1)
         filtered["위험라벨"] = filtered.apply(_effective_label, axis=1)
         filtered["사유"]    = filtered.apply(_derive_reason, axis=1)
+        filtered["_sort"] = filtered["위험라벨"].map(_PRIORITY).fillna(9)
+        filtered = filtered.sort_values("_sort").drop(columns=["_sort"])
 
     out_cols = {
         "patient_id": "환자ID", "개입조치": "개입조치", "위험라벨": "위험라벨",
