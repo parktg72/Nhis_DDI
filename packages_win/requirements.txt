@@ -11,6 +11,9 @@
 # -- XML 처리
 lxml>=4.9.0,<6.0.0
 
+# -- DOCX 보고서 (report_exporter / gen_result_docx) — 순수 파이썬, lxml 의존
+python-docx==1.2.0
+
 # -- 데이터 처리
 pandas>=2.1.0,<3.0.0
 numpy>=1.26.0,<2.5.0          # 2.5+ 미검증 — constraints-py312.txt 가 정확 핀

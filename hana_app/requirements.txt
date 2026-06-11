@@ -46,8 +46,11 @@ loguru>=0.7.0
 # SAP HANA 연결 (선택사항 — 없어도 SAS 파일 모드로 작동)
 hdbcli>=2.18.22
 
-# 보안 — DB 비밀번호 OS Keychain 저장
-keyring>=24.0.0
+# 보안 — DB 비밀번호 OS Keychain 저장 (선택사항)
+# 폐쇄망 오프라인 설치에서는 제외: config.py 가 keyring 미설치 시 base64 폴백으로
+# 동작(설계상 허용). 휠 미포함이라 활성화하려면 keyring + 의존성(jaraco.*/
+# importlib_metadata/pywin32-ctypes) 휠을 packages_win/py312 에 추가 후 주석 해제.
+# keyring>=24.0.0
 
 # 시스템 모니터링 (page 3 RAM 감지용 — 없으면 기본값 8192MB 사용)
 psutil>=5.9.0
