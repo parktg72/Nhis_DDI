@@ -431,6 +431,11 @@ def _fill_dup_features(
         features.dup_efmdc = sum(1 for c in cnt_efmdc.values() if c >= 2)
 
     # ── 3. ATC 코드 기반 레벨별 중복 (DrugBank 매핑 된 경우) ─────────────────
+    # ⚠️ dead-but-consistent: HANA/RAW 경로(hana_app.core.hana_etl.df_row_to_record)는
+    # atc_code 를 미세팅(HANA 에 ATC 부재, wk→ATC 크로스워크 불가) → atc_codes 항상 비어
+    # dup_atc5/4/3 = 0. 서빙 _count_dup_features 도 동일(predictor.py) → train/serve 정합
+    # (skew 아님). dup_same_ingredient(성분명)·dup_efmdc(효능군) 가 LIVE 대체. 정확성 영향
+    # 0 이라 현 유지(2026-06-12 진단). 제거하려면 feature_cols 5+파일+서빙+재학습(Critical).
     atc_codes = [p.atc_code for p in prescriptions if p.atc_code]
     if len(atc_codes) < 2:
         return
