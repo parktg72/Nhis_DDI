@@ -50,10 +50,18 @@ drug_groups:
     name_keywords: [losartan, valsartan, irbesartan, candesartan, olmesartan, telmisartan, azilsartan, fimasartan]
     atc_prefixes: [C09CA]
 
-  # 칼륨보존이뇨제
+  # 칼륨보존이뇨제 (aldosterone antagonist C03DA* + 기타 K보존 C03DB*)
+  # ATC: C03DA01 spironolactone / C03DA02 potassium canrenoate(canrenone 프로드럭)
+  #      C03DA03 canrenone / C03DA04 eplerenone / C03DA05 finerenone(Bayer Kerendia)
+  #      C03DB01 amiloride / C03DB02 triamterene
+  # finerenone ATC(C03DA05) 보강 = 실수정(hira_drug_master 2건 실존, Bayer Kerendia,
+  #   기존 yaml에 이름만 있고 ATC 없어 serving fallback ATC경로서 누락하던 갭).
+  # canrenone(C03DA03)/canrenoate 는 국내 미시판(hira_drug_master 0건) → 이름매칭은
+  #   영구 dead(위양성 0). 임상 완전성·향후/수입 데이터 대비로 유지(무해).
+  # (cross-family 리뷰 2026-06-12 + 사용자 ATC 확증: ETL _TW_KSPARING 정합, safety_net 보강).
   k_sparing_diuretics:
-    name_keywords: [spironolactone, eplerenone, amiloride, triamterene, finerenone]
-    atc_prefixes: [C03DA01, C03DA04, C03DB01, C03DB02, C03DA02]
+    name_keywords: [spironolactone, eplerenone, amiloride, triamterene, finerenone, canrenone, canrenoate]
+    atc_prefixes: [C03DA01, C03DA02, C03DA03, C03DA04, C03DA05, C03DB01, C03DB02]
 
   # 디곡신
   digoxin:
