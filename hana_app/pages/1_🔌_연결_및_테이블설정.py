@@ -29,6 +29,22 @@ cfg  = load_config()
 conn = get_connection(st.session_state)
 
 
+def _persisted_field(label: str, options: list, default: str, key: str) -> str:
+    """value+key 동시지정으로 rerun·재연결마다 저장값으로 되돌아가던 리셋버그 방지.
+
+    session_state 를 1회만 초기화한 뒤 key 로만 위젯 상태를 유지한다(value=/index= 미지정).
+    options 가 있으면 selectbox(저장값이 옵션 밖이면 첫 옵션으로 보정 — selectbox 제약),
+    없으면 text_input. Page3 raw_dir_input 수정과 동일 패턴.
+    """
+    if key not in st.session_state:
+        st.session_state[key] = default
+    if options:
+        if st.session_state[key] not in options:
+            st.session_state[key] = options[0]
+        return st.selectbox(label, options, key=key)
+    return st.text_input(label, key=key)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 최상단: 데이터 소스 선택
 # ═════════════════════════════════════════════════════════════════════════════
@@ -354,11 +370,7 @@ with tab_tbl:
         cur_table  = cfg["tables"].get(key, {}).get("table",  def_table)
 
         with col_s:
-            if schema_options:
-                idx = schema_options.index(cur_schema) if cur_schema in schema_options else 0
-                schema = st.selectbox(f"스키마 ({label})", schema_options, index=idx, key=f"schema_{key}")
-            else:
-                schema = st.text_input(f"스키마 ({label})", value=cur_schema, key=f"schema_{key}")
+            schema = _persisted_field(f"스키마 ({label})", schema_options, cur_schema, f"schema_{key}")
 
         with col_t:
             table_options: list[str] = []
@@ -367,11 +379,7 @@ with tab_tbl:
                     table_options = conn.get_tables(schema)
                 except Exception:
                     pass
-            if table_options:
-                t_idx = table_options.index(cur_table) if cur_table in table_options else 0
-                table = st.selectbox(f"테이블 ({label})", table_options, index=t_idx, key=f"table_{key}")
-            else:
-                table = st.text_input(f"테이블 ({label})", value=cur_table, key=f"table_{key}")
+            table = _persisted_field(f"테이블 ({label})", table_options, cur_table, f"table_{key}")
 
         with col_btn:
             st.write(""); st.write("")
@@ -492,11 +500,7 @@ with tab_col:
 
             for field, label in labels.items():
                 cur_val = cfg["columns"][key].get(field, defaults.get(field, ""))
-                if actual_cols:
-                    idx = actual_cols.index(cur_val) if cur_val in actual_cols else 0
-                    val = st.selectbox(label, actual_cols, index=idx, key=f"col_{key}_{field}")
-                else:
-                    val = st.text_input(label, value=cur_val, key=f"col_{key}_{field}")
+                val = _persisted_field(label, actual_cols, cur_val, f"col_{key}_{field}")
                 cfg["columns"][key][field] = val
 
     if st.button("💾 컬럼 매핑 저장", type="primary"):
