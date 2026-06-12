@@ -204,21 +204,38 @@ def _load_dataset(path: Path) -> tuple[pd.DataFrame, dict]:
 # 다운로드 받은 Raw 데이터 (records_YYYYMMDD.parquet) 헬퍼
 #   HANA에서 내려받은 일별 처방 원본 파일을 직접 선택해 피처 계산 → 학습.
 # ─────────────────────────────────────────────────────────────────────────────
-# 기본 후보 폴더: H: 전송 드라이브 → 프로젝트 data/raw 순.
+# 자동 탐지 후보 폴더: 전송 드라이브 → 운영/개발 PC 표준 경로 → 프로젝트 data/raw.
+# 여기에 없는 폴더도 입력란에 직접 입력하면 사용 가능.
 _RAW_DIR_CANDIDATES = [
     r"H:\mode_11_hana\data\raw",
+    r"D:\claude\mode_11_hana\data\raw",
+    r"C:\model\mode_11_hana\data\raw",
     str(ROOT / "data" / "raw"),
+    str(ROOT / "data" / "Raw"),
 ]
 
 
-def _resolve_default_raw_dir(configured: str = "") -> str:
-    """설정값 → 후보 폴더 순으로 존재하는 첫 raw 폴더를 반환."""
-    if configured and Path(configured).is_dir():
-        return configured
-    for cand in _RAW_DIR_CANDIDATES:
-        if Path(cand).is_dir():
-            return cand
-    return configured or _RAW_DIR_CANDIDATES[0]
+def _detect_raw_dirs(configured: str = "") -> list[str]:
+    """records_*.parquet 가 실제로 있는 raw 폴더만 자동 탐지(중복 제거, 순서 보존).
+
+    configured(저장된 폴더) 를 맨 앞에 두고 후보 목록을 잇는다. 드롭다운 옵션용.
+    """
+    seen: set[str] = set()
+    found: list[str] = []
+    for c in ([configured] if configured else []) + _RAW_DIR_CANDIDATES:
+        if not c:
+            continue
+        p = Path(c)
+        try:
+            key = str(p.resolve()).lower()
+        except Exception:  # noqa: BLE001 — 잘못된 경로는 건너뜀
+            key = str(p).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if p.is_dir() and any(p.glob("records_*.parquet")):
+            found.append(str(p))
+    return found
 
 
 def _parse_record_date(path: Path):
@@ -340,14 +357,39 @@ elif data_mode == DATA_MODE_RAW:
     )
 
     _trn_raw = cfg.get("training", {})
-    _default_raw = _resolve_default_raw_dir(_trn_raw.get("raw_data_dir", ""))
+    _configured_raw = _trn_raw.get("raw_data_dir", "")
+    _detected = _detect_raw_dirs(_configured_raw)
+
+    # 입력란 기본값은 1회만 초기화 — 이후 사용자 입력/선택을 유지(rerun·재시작 되돌림 버그 방지).
+    if "raw_dir_input" not in st.session_state:
+        st.session_state["raw_dir_input"] = (
+            _configured_raw if (_configured_raw and Path(_configured_raw).is_dir())
+            else (_detected[0] if _detected else str(ROOT / "data" / "raw"))
+        )
+
+    # 자동 탐지된 폴더 빠른 선택 — 선택 시 아래 입력란을 채운다(직접 입력도 가능).
+    if _detected:
+        _PICK_MANUAL = "— 직접 입력 (아래 경로 사용) —"
+
+        def _on_pick_raw():
+            _v = st.session_state.get("raw_dir_pick")
+            if _v and _v != _PICK_MANUAL:
+                st.session_state["raw_dir_input"] = _v
+
+        st.selectbox(
+            "자동 탐지된 Raw 폴더",
+            options=[_PICK_MANUAL] + _detected,
+            key="raw_dir_pick",
+            on_change=_on_pick_raw,
+            help="records_*.parquet 가 있는 폴더를 자동 탐지합니다. 선택하면 아래 입력란에 채워집니다.",
+        )
+
     raw_dir_str = st.text_input(
         "Raw 데이터 폴더",
-        value=_default_raw,
         key="raw_dir_input",
-        help=r"records_YYYYMMDD.parquet 파일이 있는 폴더 (예: H:\mode_11_hana\data\raw)",
+        help=r"records_YYYYMMDD.parquet 파일이 있는 폴더. 목록에 없으면 직접 입력 (예: D:\claude\mode_11_hana\data\raw).",
     )
-    raw_dir = Path(raw_dir_str.strip()) if raw_dir_str.strip() else Path(_default_raw)
+    raw_dir = Path(raw_dir_str.strip()) if raw_dir_str.strip() else Path(str(ROOT / "data" / "raw"))
     st.session_state["raw_data_dir"] = str(raw_dir)
 
     if not raw_dir.is_dir():
