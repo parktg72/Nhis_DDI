@@ -258,6 +258,36 @@ class DrugMaster:
                     if synonym in self._name_to_ddi_id:
                         self._name_to_ddi_id[comp] = self._name_to_ddi_id[synonym]
 
+    def _repair_cached_components_from_raw_names(self) -> int:
+        """
+        오래된 parquet 캐시에 남은 성분 파싱 결과를 원본명 기준으로 보수적으로 보정.
+
+        저장된 `components`보다 현재 parser로 `ingr_name_raw`를 다시 파싱한 결과가
+        더 많은 DDI ID에 매핑될 때만 교체한다. 보호된 parquet artifact는 수정하지
+        않고, 로드된 메모리 상태만 보정한다.
+        """
+        repaired = 0
+        for code, raw_name in self._code_to_raw.items():
+            reparsed = _parse_ingredients(raw_name)
+            if not reparsed:
+                continue
+            current = self._code_to_components.get(code, [])
+            current_ids = {ddi_id for comp in current if (ddi_id := self.get_ddi_id(comp))}
+            reparsed_ids = {ddi_id for comp in reparsed if (ddi_id := self.get_ddi_id(comp))}
+            reparsed_names = set(reparsed)
+            current_components_are_represented = all(
+                comp in reparsed_names
+                or _normalize_name(comp) in reparsed_names
+                or (self.get_ddi_id(comp) is not None and self.get_ddi_id(comp) in reparsed_ids)
+                for comp in current
+            )
+            if not current_components_are_represented:
+                continue
+            if current_ids < reparsed_ids:
+                self._code_to_components[code] = reparsed
+                repaired += 1
+        return repaired
+
     # ── 공개 API ──────────────────────────────────────────────────────────────
 
     def is_combination(self, wk_compn_cd: str) -> bool:
@@ -375,15 +405,22 @@ class DrugMaster:
         df = pd.read_parquet(path)
         for _, row in df.iterrows():
             code = str(row["ingr_code"])
-            comps = [c for c in str(row["components"]).split("|") if c]
+            raw_components = row["components"]
+            if pd.isna(raw_components):
+                comps = []
+            else:
+                comps = [c for c in str(raw_components).split("|") if c]
             master._code_to_components[code] = comps
             master._code_to_raw[code] = str(row.get("ingr_name_raw", ""))
             master._code_is_combo[code] = bool(row.get("is_combo", False))
 
-        master._apply_synonyms()
-
         if Path(ddi_matrix_path).exists():
             master._build_ddi_name_index(Path(ddi_matrix_path))
+
+        master._apply_synonyms()
+        repaired = master._repair_cached_components_from_raw_names()
+        if repaired:
+            logger.info("DrugMaster cached components 보정: %d개 코드", repaired)
 
         logger.info("DrugMaster 로드 (parquet): %d개 코드", len(master._code_to_components))
         return master

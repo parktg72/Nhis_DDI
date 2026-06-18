@@ -47,6 +47,17 @@ try:
 except ImportError:
     _CLINICAL_RULES_AVAILABLE = False
 
+_summarize_yellow_subtypes = None
+_summarize_actions = None
+try:
+    from hana_app.core.yellow_subtype_view import (
+        summarize_actions as _summarize_actions,
+        summarize_yellow_subtypes as _summarize_yellow_subtypes,
+    )
+    _YELLOW_VIEW_AVAILABLE = True
+except ImportError:
+    _YELLOW_VIEW_AVAILABLE = False
+
 # ── 색상 팔레트 ──────────────────────────────────────────────────────────────
 _C = {
     "Red":       "#e74c3c",
@@ -177,6 +188,95 @@ def _chart_risk_pie(features_df: pd.DataFrame) -> bytes:
     return _fig_to_png(fig)
 
 
+
+
+
+def _chart_risk_bar_from_counts(counts: dict[str, int]) -> bytes:
+    """위험도/개입 카운트 막대차트."""
+    items = [(str(k), int(v)) for k, v in counts.items() if int(v) >= 0]
+    if not items:
+        return b""
+    labels, values = zip(*items)
+    colors = [_C.get(l, _C.get("monitor", "#3498db")) for l in labels]
+    fig, ax = plt.subplots(figsize=(6, 3.2))
+    bars = ax.bar(labels, values, color=colors, edgecolor="white")
+    for bar, val in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(values) * 0.02,
+                f"{val:,}", ha="center", va="bottom", fontsize=9)
+    ax.set_ylabel("환자 수")
+    ax.set_title("위험도별 환자 수")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
+
+
+
+def _chart_pie_from_counts(counts: dict[str, int], title: str) -> bytes:
+    items = [(str(k), int(v)) for k, v in counts.items() if int(v) > 0]
+    if not items:
+        return b""
+    labels, values = zip(*items)
+    colors = [_C.get(l, _C.get("monitor", "#3498db")) for l in labels]
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ax.pie(values, labels=labels, colors=colors, autopct="%1.1f%%",
+           startangle=140, wedgeprops={"edgecolor": "white", "linewidth": 1.5})
+    ax.set_title(title)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
+def _yellow_summary(features_df: pd.DataFrame) -> pd.DataFrame:
+    if _YELLOW_VIEW_AVAILABLE and _summarize_yellow_subtypes is not None:
+        return _summarize_yellow_subtypes(features_df)
+    if "yellow_subtype" not in features_df.columns:
+        return pd.DataFrame(columns=["yellow_subtype", "count", "action"])
+    s = features_df["yellow_subtype"].dropna()
+    s = s[s.astype(str) != ""]
+    if s.empty:
+        return pd.DataFrame(columns=["yellow_subtype", "count", "action"])
+    counts = s.value_counts().reset_index()
+    counts.columns = ["yellow_subtype", "count"]
+    action_map = {
+        "Y_DDI_MAJOR": "약사 전화",
+        "Y_TRIPLE": "문자 안내",
+        "Y_DOUBLE": "문자 알림",
+        "Y_DDI_MOD": "문자 알림",
+        "Y_DUP": "문서 + 문자 알림",
+        "Y_FRAG": "문자 알림",
+    }
+    counts["action"] = counts["yellow_subtype"].map(lambda x: action_map.get(str(x), "알림 없음"))
+    return counts
+
+
+def _chart_yellow_pie(features_df: pd.DataFrame) -> bytes:
+    summary = _yellow_summary(features_df)
+    if summary.empty:
+        return b""
+    return _chart_pie_from_counts(dict(zip(summary["yellow_subtype"], summary["count"])), "Yellow 세부 라벨 분포")
+
+
+def _chart_action_distribution(features_df: pd.DataFrame) -> bytes:
+    if _YELLOW_VIEW_AVAILABLE and _summarize_actions is not None:
+        action_df = _summarize_actions(features_df)
+        counts = dict(zip(action_df.get("action", []), action_df.get("count", [])))
+        return _chart_risk_bar_from_counts(counts)
+    frames = []
+    summary = _yellow_summary(features_df)
+    if not summary.empty:
+        frames.append(summary[["action", "count"]])
+    if "risk_level" in features_df.columns:
+        red_n = int((features_df["risk_level"] == "Red").sum())
+        if red_n:
+            frames.append(pd.DataFrame({"action": ["즉각 개입"], "count": [red_n]}))
+    if not frames:
+        return b""
+    counts = pd.concat(frames, ignore_index=True).groupby("action")["count"].sum().to_dict()
+    return _chart_risk_bar_from_counts(counts)
+
+
 def _chart_ddi(ddi_means: dict) -> bytes:
     """DDI 심각도별 평균 바차트."""
     label_map = [
@@ -216,6 +316,91 @@ def _chart_feature_importance(fi_df: pd.DataFrame, top_n: int = 15) -> bytes:
     ax.set_title(f"피처 중요도 Top {top_n}")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
+
+
+
+def _chart_confusion_matrix(cm, classes=None) -> bytes:
+    arr = pd.DataFrame(cm).to_numpy()
+    if arr.size == 0:
+        return b""
+    labels = [str(c) for c in (classes or range(arr.shape[0]))]
+    fig, ax = plt.subplots(figsize=(4.8, 4.0))
+    im = ax.imshow(arr, cmap="Blues")
+    ax.set_xticks(range(len(labels)), labels=labels)
+    ax.set_yticks(range(len(labels)), labels=labels)
+    ax.set_xlabel("예측")
+    ax.set_ylabel("실제")
+    ax.set_title("혼동 행렬")
+    for i in range(arr.shape[0]):
+        for j in range(arr.shape[1]):
+            ax.text(j, i, str(arr[i, j]), ha="center", va="center", fontsize=9)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
+def _chart_cv_scores(cv_scores: list[float]) -> bytes:
+    if not cv_scores:
+        return b""
+    labels = [f"Fold {i + 1}" for i in range(len(cv_scores))]
+    mean_v = sum(cv_scores) / len(cv_scores)
+    fig, ax = plt.subplots(figsize=(6, 3.2))
+    bars = ax.bar(labels, cv_scores, color=_C["fi_bar"], edgecolor="white")
+    ax.axhline(mean_v, color=_C["Red"], linestyle="--", linewidth=1.2, label=f"평균 {mean_v:.4f}")
+    for bar, val in zip(bars, cv_scores):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
+                f"{val:.3f}", ha="center", va="bottom", fontsize=8)
+    ax.set_ylabel("Score")
+    ax.set_title("교차검증 결과")
+    ax.legend(fontsize=8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
+def _chart_roc_curve(roc_data: dict, auc_value=None) -> bytes:
+    if not roc_data or "fpr" not in roc_data or "tpr" not in roc_data:
+        return b""
+    fig, ax = plt.subplots(figsize=(5, 4))
+    label = "ROC" + (f" (AUC={auc_value:.4f})" if isinstance(auc_value, (int, float)) else "")
+    ax.plot(roc_data["fpr"], roc_data["tpr"], color=_C["fi_bar"], linewidth=2, label=label)
+    ax.plot([0, 1], [0, 1], color="#7f8c8d", linestyle="--", linewidth=1, label="Random")
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC Curve")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    return _fig_to_png(fig)
+
+
+def _chart_model_comparison(saved_results: list[dict]) -> bytes:
+    rows = []
+    for r in saved_results or []:
+        m = r.get("metrics", {}) or {}
+        rows.append({
+            "model": str(r.get("model_name", "?")),
+            "Accuracy": m.get("accuracy", 0),
+            "F1": m.get("f1_macro", 0),
+            "AUC": m.get("roc_auc", m.get("roc_auc_ovr", 0)),
+        })
+    if len(rows) < 2:
+        return b""
+    df = pd.DataFrame(rows)
+    fig, ax = plt.subplots(figsize=(7, 3.5))
+    x = range(len(df))
+    width = 0.25
+    for idx, col in enumerate(["Accuracy", "F1", "AUC"]):
+        ax.bar([v + (idx - 1) * width for v in x], df[col], width=width, label=col)
+    ax.set_xticks(list(x), df["model"], rotation=20, ha="right")
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Score")
+    ax.set_title("모델별 성능 비교")
+    ax.legend(fontsize=8)
     fig.tight_layout()
     return _fig_to_png(fig)
 
@@ -403,9 +588,52 @@ def build_csv_bytes(features_df: pd.DataFrame) -> bytes:
 
 # ── DOCX 종합 보고서 ──────────────────────────────────────────────────────────
 
+def _collect_page4_docx_sections(
+    last_result: dict,
+    features_df: Optional[pd.DataFrame] = None,
+    saved_results: Optional[list[dict]] = None,
+) -> list[dict[str, str]]:
+    """4_결과_분석 화면의 탭별 DOCX 포함 계획을 반환한다."""
+    metrics = last_result.get("metrics", {}) or {}
+    sections: list[dict[str, str]] = []
+    if last_result.get("feature_importance") is not None:
+        sections.append({"id": "feature_importance", "title": "피처 중요도"})
+    if metrics.get("confusion_matrix"):
+        sections.append({"id": "confusion_matrix", "title": "혼동 행렬"})
+    if metrics.get("cv_scores"):
+        sections.append({"id": "cross_validation", "title": "교차검증"})
+    if metrics.get("roc_curve"):
+        sections.append({"id": "roc_curve", "title": "ROC Curve"})
+    if features_df is not None and not features_df.empty:
+        sections.extend([
+            {"id": "risk_distribution", "title": "위험도 분포"},
+            {"id": "risk_count_bar", "title": "위험도별 환자 수"},
+        ])
+        if "drug_count" in features_df.columns:
+            sections.append({"id": "drug_count_distribution", "title": "약물 수 분포"})
+        if "yellow_subtype" in features_df.columns:
+            sections.append({"id": "yellow_subtype", "title": "Yellow 서브타입"})
+        sections.append({"id": "analysis_subject", "title": "분석 대상 정보"})
+    elif last_result.get("risk_summary"):
+        sections.extend([
+            {"id": "risk_distribution", "title": "위험도 분포"},
+            {"id": "risk_count_bar", "title": "위험도별 환자 수"},
+        ])
+    if last_result.get("ddi_means"):
+        sections.append({"id": "ddi_severity", "title": "DDI 심각도"})
+    elif features_df is not None and not features_df.empty and any(c in features_df.columns for c in ["ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor"]):
+        sections.append({"id": "ddi_severity", "title": "DDI 심각도"})
+    if metrics.get("classification_report"):
+        sections.append({"id": "classification_report", "title": "분류 보고서"})
+    if saved_results and len(saved_results) >= 2:
+        sections.append({"id": "model_comparison", "title": "모델 비교"})
+    return sections
+
+
 def build_docx_bytes(last_result: dict,
-                     features_df: Optional[pd.DataFrame] = None) -> bytes:
-    """종합 서비스 보고서 DOCX bytes (차트 포함). python-docx 미설치 시 ImportError."""
+                     features_df: Optional[pd.DataFrame] = None,
+                     saved_results: Optional[list[dict]] = None) -> bytes:
+    """종합 서비스 보고서 DOCX bytes (4. 결과분석 차트/내용 포함). python-docx 미설치 시 ImportError."""
     if not DOCX_AVAILABLE:
         raise ImportError("python-docx가 설치되지 않았습니다.")
 
@@ -433,7 +661,12 @@ def build_docx_bytes(last_result: dict,
     total_d = total or 1
 
     if has_df and MPL_AVAILABLE:
+        assert features_df is not None
         _add_png(doc, _chart_risk_pie(features_df), width_inches=4.5)
+        _add_png(doc, _chart_risk_bar_from_counts(features_df["risk_level"].value_counts().to_dict()), width_inches=5.5)
+    elif counts and MPL_AVAILABLE:
+        _add_png(doc, _chart_pie_from_counts(counts, "위험도 분포 (저장 요약)"), width_inches=4.5)
+        _add_png(doc, _chart_risk_bar_from_counts(counts), width_inches=5.5)
     doc.add_paragraph()
 
     # ── 2. 개입 위계 분포 ─────────────────────────────────────────────────────
@@ -452,15 +685,36 @@ def build_docx_bytes(last_result: dict,
 
     # ── 2-1. Yellow 서브타입 세부 분포 ───────────────────────────────────────
     if has_df and MPL_AVAILABLE:
+        assert features_df is not None
+        _ys_pie = _chart_yellow_pie(features_df)
         _ys_png = _chart_yellow_subtype(features_df)
-        if _ys_png:
-            doc.add_heading("2-1. Yellow 서브타입 세부 분포", level=2)
-            _add_png(doc, _ys_png, width_inches=6.0)
+        _action_png = _chart_action_distribution(features_df)
+        if _ys_pie or _ys_png or _action_png:
+            doc.add_heading("2-1. Yellow 세분화", level=2)
+            if _ys_pie:
+                _add_png(doc, _ys_pie, width_inches=5.0)
+            if _ys_png:
+                _add_png(doc, _ys_png, width_inches=6.0)
+            if _action_png:
+                doc.add_heading("권장 개입(action) 분포 — Red 포함", level=3)
+                _add_png(doc, _action_png, width_inches=6.0)
+            if "red_suspect" in features_df.columns:
+                rs_count = int(features_df["red_suspect"].eq(True).sum())
+                rs_pct = rs_count / len(features_df) * 100 if len(features_df) else 0.0
+                doc.add_paragraph(f"Red 의심 (red_suspect=True): {rs_count:,}건 ({rs_pct:.1f}%)")
             doc.add_paragraph()
 
     # ── 3. DDI 심각도 통계 ────────────────────────────────────────────────────
     ddi_means  = last_result.get("ddi_means") or {}
+    if not ddi_means and has_df:
+        assert features_df is not None
+        ddi_cols = ["ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor"]
+        ddi_means = {c: float(features_df[c].mean()) for c in ddi_cols if c in features_df.columns}
     drug_stats = last_result.get("drug_count_stats") or {}
+    if not drug_stats and has_df and "drug_count" in features_df.columns:
+        dc = features_df["drug_count"].dropna()
+        if not dc.empty:
+            drug_stats = {"mean": float(dc.mean()), "max": int(dc.max())}
 
     if ddi_means or drug_stats:
         doc.add_heading("3. DDI 심각도 / 다약제 통계", level=1)
@@ -519,7 +773,87 @@ def build_docx_bytes(last_result: dict,
     ]
     if perf_rows:
         _add_table(doc, ["지표", "값"], perf_rows)
+    train_size = metrics.get("train_size")
+    test_size = metrics.get("test_size")
+    if train_size is not None or test_size is not None:
+        doc.add_paragraph(
+            f"학습 {train_size if train_size is not None else '?'}건 | "
+            f"테스트 {test_size if test_size is not None else '?'}건"
+        )
     doc.add_paragraph()
+
+    if metrics.get("confusion_matrix"):
+        doc.add_heading("5-1. 혼동 행렬", level=2)
+        cm_val = metrics.get("confusion_matrix")
+        if MPL_AVAILABLE:
+            _add_png(doc, _chart_confusion_matrix(cm_val, metrics.get("classes")), width_inches=4.8)
+        _add_table(doc, ["행", "값"], [[f"Row {i + 1}", str(row)] for i, row in enumerate(cm_val or [])])
+        try:
+            cm_arr = pd.DataFrame(cm_val).to_numpy()
+            if cm_arr.shape == (2, 2):
+                tn, fp, fn, tp = cm_arr.ravel()
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+                f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+                _add_table(doc, ["지표", "값"], [
+                    ["정밀도 (Precision)", f"{precision:.4f}"],
+                    ["재현율 (Recall)", f"{recall:.4f}"],
+                    ["F1 Score", f"{f1:.4f}"],
+                ])
+        except Exception:
+            pass
+        doc.add_paragraph()
+
+    if metrics.get("cv_scores"):
+        cv_scores = list(metrics.get("cv_scores", []))
+        doc.add_heading("5-2. 교차검증", level=2)
+        if MPL_AVAILABLE:
+            _add_png(doc, _chart_cv_scores(cv_scores), width_inches=5.8)
+        if cv_scores:
+            mean_cv = sum(cv_scores) / len(cv_scores)
+            std_cv = (sum((v - mean_cv) ** 2 for v in cv_scores) / len(cv_scores)) ** 0.5
+            _add_table(doc, ["지표", "값"], [
+                ["평균", f"{mean_cv:.4f}"],
+                ["표준편차", f"{std_cv:.4f}"],
+                ["최솟값", f"{min(cv_scores):.4f}"],
+                ["최댓값", f"{max(cv_scores):.4f}"],
+            ])
+        doc.add_paragraph()
+
+    roc_data = metrics.get("roc_curve")
+    if roc_data and "fpr" in roc_data and "tpr" in roc_data:
+        doc.add_heading("5-3. ROC Curve", level=2)
+        if MPL_AVAILABLE:
+            _add_png(doc, _chart_roc_curve(roc_data, metrics.get("roc_auc")), width_inches=5.0)
+        doc.add_paragraph(f"AUC: {metrics.get('roc_auc', metrics.get('roc_auc_ovr', '?'))}")
+        doc.add_paragraph()
+
+    report = metrics.get("classification_report")
+    if report:
+        doc.add_heading("5-4. 분류 보고서", level=2)
+        for line in str(report).splitlines():
+            doc.add_paragraph(line)
+        doc.add_paragraph()
+
+    if saved_results and len(saved_results) >= 2:
+        doc.add_heading("5-5. 모델 비교", level=2)
+        if MPL_AVAILABLE:
+            _add_png(doc, _chart_model_comparison(saved_results), width_inches=6.0)
+        rows = []
+        for r in saved_results:
+            m = r.get("metrics", {}) or {}
+            rows.append([
+                str(r.get("timestamp", "?")),
+                str(r.get("model_name", "?")),
+                str(r.get("target", "?")),
+                f"{m.get('accuracy', 0):.4f}",
+                f"{m.get('f1_macro', 0):.4f}",
+                f"{m.get('roc_auc', m.get('roc_auc_ovr', 0)):.4f}",
+                f"{m.get('cv_mean', 0):.4f}",
+                str(m.get("train_size", 0)),
+            ])
+        _add_table(doc, ["시간", "모델", "타겟", "Accuracy", "F1", "AUC", "CV 평균", "학습 수"], rows)
+        doc.add_paragraph()
 
     # ── 6. 분석 메모 ─────────────────────────────────────────────────────────
     doc.add_heading("6. 분석 메모", level=1)

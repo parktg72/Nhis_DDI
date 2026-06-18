@@ -160,19 +160,19 @@ if errorlevel 1 echo [경고] HANA 패키지 실패 (HANA 미사용 시 무시 �
 
 REM ── 4단계: 웹앱 핵심 패키지 (명시적 설치) ───────────────────
 echo.
-echo [4/5] Streamlit 웹앱 핵심 패키지 설치...
-REM requirements.txt 배치 실패와 무관하게 streamlit 을 보장하기 위해 별도 명시 설치
+echo [4/5] Streamlit 웹앱 / DOCX 보고서 핵심 패키지 설치...
+REM requirements.txt 배치 실패와 무관하게 앱 실행 및 DOCX 그래프 보고서 생성을 보장하기 위해 별도 명시 설치
 %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% %CONSTRAINT% ^
-    streamlit altair watchdog matplotlib statsmodels duckdb
+    streamlit altair watchdog matplotlib Pillow python-docx lxml statsmodels duckdb
 if errorlevel 1 (
-    echo [오류] Streamlit 설치 실패
-    echo        packages_win\py312 에 streamlit wheel 이 있는지 확인하세요.
+    echo [오류] Streamlit/DOCX 보고서 핵심 패키지 설치 실패
+    echo        packages_win\py312 에 streamlit/matplotlib/Pillow/python-docx/lxml wheel 이 있는지 확인하세요.
     pause
     exit /b 1
 )
 
 REM ── 4.2단계: 데스크탑 앱 (pywebview) ─────────────────────────
-echo.
+
 echo [4.2/5] 데스크탑 앱 (pywebview) 설치...
 %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% pywebview proxy_tools
 if errorlevel 1 echo [경고] pywebview 설치 실패 — run_desktop.bat 미지원 (hana_app\run.bat 은 정상)
@@ -242,9 +242,14 @@ echo [웹앱]
 %PYTHON_BIN% -c "import streamlit; print('  Streamlit', streamlit.__version__, 'OK')" 2>nul || (echo   [실패] Streamlit & set FAIL=1)
 %PYTHON_BIN% -c "import fastapi, uvicorn; print('  FastAPI/uvicorn OK')" 2>nul || (echo   [실패] FastAPI & set FAIL=1)
 
+echo [보고서/DOCX]
+%PYTHON_BIN% -c "import docx, lxml, matplotlib; from PIL import Image; print('  python-docx/lxml/matplotlib/Pillow OK')" 2>nul || (echo   [실패] DOCX 보고서 패키지 & set FAIL=1)
+%PYTHON_BIN% -c "from hana_app.core.report_exporter import DOCX_AVAILABLE, MPL_AVAILABLE; raise SystemExit(0 if DOCX_AVAILABLE and MPL_AVAILABLE else 1)" 2>nul || (echo   [실패] report_exporter DOCX/그래프 backend & set FAIL=1)
+
 echo [데스크탑]
 %PYTHON_BIN% -c "import webview" 2>nul && echo   pywebview OK || (echo   [실패] pywebview & set FAIL=1)
 if not exist "%ProgramFiles(x86)%\Microsoft\EdgeWebView\Application" echo   [경고] Edge WebView2 Runtime 미감지 (run_desktop.bat 실패 가능)
+
 
 echo.
 echo ================================================

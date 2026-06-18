@@ -29,19 +29,58 @@ echo  다운로드 폴더:
 echo    - packages_win\pyXXX  (ETL / API / 공통)
 echo    - hana\pyXXX          (HANA / ML / Streamlit)
 echo.
-
-REM ── packages_win 다운로드 ─────────────────────────────────────
-echo ------------------------------------------------
-echo  [1/2] packages_win 패키지 다운로드 시작
-echo ------------------------------------------------
-call "%PROJECT_ROOT%packages_win\download.bat" %PY_VERSIONS%
-
-REM ── hana 다운로드 ─────────────────────────────────────────────
+echo  참고: 하위 download.bat 는 첫 번째 인자만 버전으로 받으므로
+echo        여러 버전은 여기서 버전별로 순차 호출합니다.
 echo.
-echo ------------------------------------------------
-echo  [2/2] hana 패키지 다운로드 시작
-echo ------------------------------------------------
-call "%PROJECT_ROOT%hana\download.bat" %PY_VERSIONS%
+
+for %%V in (%PY_VERSIONS%) do (
+     echo.
+     echo ================================================
+     echo  Python %%V 패키지 다운로드
+     echo ================================================
+
+     REM ── packages_win 다운로드 ─────────────────────────────────
+     echo ------------------------------------------------
+     echo  [1/3] packages_win 패키지 다운로드 시작
+     echo ------------------------------------------------
+     call "%PROJECT_ROOT%packages_win\download.bat" %%V
+     if errorlevel 1 (
+         echo [오류] packages_win 패키지 다운로드 실패: Python %%V
+         exit /b 1
+     )
+
+     REM ── hana 다운로드 ─────────────────────────────────────────
+     echo.
+     echo ------------------------------------------------
+     echo  [2/3] hana 패키지 다운로드 시작
+     echo ------------------------------------------------
+     call "%PROJECT_ROOT%hana\download.bat" %%V
+     if errorlevel 1 (
+         echo [오류] hana 패키지 다운로드 실패: Python %%V
+         exit /b 1
+     )
+
+     REM ── 결과분석 DOCX/그래프 필수 패키지 명시 보강 ───────────────
+     echo.
+     echo ------------------------------------------------
+     echo  [3/3] DOCX/그래프 보고서 필수 패키지 보강 다운로드
+     echo ------------------------------------------------
+     set REPORT_PKG_DIR=%PROJECT_ROOT%packages_win\py%%V
+     if not exist "!REPORT_PKG_DIR!" mkdir "!REPORT_PKG_DIR!"
+     pip download ^
+         --platform win_amd64 ^
+         --python-version %%V ^
+         --only-binary=:all: ^
+         -d "!REPORT_PKG_DIR!" ^
+         "python-docx==1.2.0" ^
+         "lxml>=4.9.0,<6.0.0" ^
+         "matplotlib>=3.7.0" ^
+         "Pillow>=10.0.0"
+     if errorlevel 1 (
+         echo [오류] DOCX/그래프 보고서 필수 패키지 다운로드 실패: Python %%V
+         exit /b 1
+     )
+)
 
 echo.
 echo ================================================

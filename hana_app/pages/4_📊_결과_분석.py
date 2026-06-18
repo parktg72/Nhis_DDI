@@ -442,7 +442,7 @@ with col_dl1:
         st.error("python-docx 미설치 — DOCX 내보내기 불가 (운영 PC: packages_win에 wheel 추가 필요)")
     else:
         try:
-            docx_bytes = build_docx_bytes(result, _dl_df)
+            docx_bytes = build_docx_bytes(result, _dl_df, saved_results=saved)
             _ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
             st.download_button(
                 label="📄 DOCX 보고서 다운로드",
