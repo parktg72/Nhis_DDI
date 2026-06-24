@@ -434,6 +434,11 @@ st.subheader("📥 결과 다운로드")
 
 _dl_df = st.session_state.get("features_df")
 _has_df = _dl_df is not None and not _dl_df.empty
+_training_results_for_report = None
+if source == "현재 세션":
+    _tr = st.session_state.get("train_results")
+    if isinstance(_tr, dict) and len(_tr) >= 2:
+        _training_results_for_report = _tr
 
 col_dl1, col_dl2 = st.columns(2)
 
@@ -442,7 +447,12 @@ with col_dl1:
         st.error("python-docx 미설치 — DOCX 내보내기 불가 (운영 PC: packages_win에 wheel 추가 필요)")
     else:
         try:
-            docx_bytes = build_docx_bytes(result, _dl_df, saved_results=saved)
+            docx_bytes = build_docx_bytes(
+                result,
+                _dl_df,
+                saved_results=saved,
+                training_results=_training_results_for_report,
+            )
             _ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
             st.download_button(
                 label="📄 DOCX 보고서 다운로드",

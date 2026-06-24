@@ -710,10 +710,46 @@ def build_csv_bytes(features_df: pd.DataFrame) -> bytes:
 
 # ── DOCX 종합 보고서 ──────────────────────────────────────────────────────────
 
+def _fmt_report_metric(value) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.4f}"
+    return "—" if value is None else str(value)
+
+
+def _training_results_rows(training_results) -> list[list[str]]:
+    """현재 세션에서 순차 학습한 모델 결과를 DOCX 표 행으로 정규화."""
+    if not training_results:
+        return []
+    if isinstance(training_results, dict):
+        items = list(training_results.items())
+    else:
+        items = [(str(i + 1), r) for i, r in enumerate(training_results)]
+    if len(items) < 2:
+        return []
+
+    rows: list[list[str]] = []
+    for order, (key, result) in enumerate(items, start=1):
+        if not isinstance(result, dict):
+            continue
+        metrics = result.get("metrics", {}) or {}
+        rows.append([
+            str(order),
+            str(result.get("model_name") or key),
+            str(result.get("target", "?")),
+            _fmt_report_metric(metrics.get("accuracy")),
+            _fmt_report_metric(metrics.get("f1_macro")),
+            _fmt_report_metric(metrics.get("roc_auc", metrics.get("roc_auc_ovr"))),
+            _fmt_report_metric(metrics.get("cv_mean")),
+            str(metrics.get("train_size", "?")),
+        ])
+    return rows
+
+
 def _collect_page4_docx_sections(
     last_result: dict,
     features_df: Optional[pd.DataFrame] = None,
     saved_results: Optional[list[dict]] = None,
+    training_results: Optional[dict | list[dict]] = None,
 ) -> list[dict[str, str]]:
     """4_결과_분석 화면의 탭별 DOCX 포함 계획을 반환한다."""
     metrics = last_result.get("metrics", {}) or {}
@@ -749,6 +785,8 @@ def _collect_page4_docx_sections(
         sections.append({"id": "ddi_severity", "title": "DDI 심각도"})
     if metrics.get("classification_report"):
         sections.append({"id": "classification_report", "title": "분류 보고서"})
+    if _training_results_rows(training_results):
+        sections.append({"id": "sequential_training_results", "title": "이번 순차 학습 결과"})
     if saved_results and len(saved_results) >= 2:
         sections.append({"id": "model_comparison", "title": "모델 비교"})
     return sections
@@ -756,7 +794,8 @@ def _collect_page4_docx_sections(
 
 def build_docx_bytes(last_result: dict,
                      features_df: Optional[pd.DataFrame] = None,
-                     saved_results: Optional[list[dict]] = None) -> bytes:
+                     saved_results: Optional[list[dict]] = None,
+                     training_results: Optional[dict | list[dict]] = None) -> bytes:
     """종합 서비스 보고서 DOCX bytes (4. 결과분석 차트/내용 포함). python-docx 미설치 시 ImportError."""
     if not DOCX_AVAILABLE:
         raise ImportError("python-docx가 설치되지 않았습니다.")
@@ -905,6 +944,20 @@ def build_docx_bytes(last_result: dict,
             f"테스트 {test_size if test_size is not None else '?'}건"
         )
     doc.add_paragraph()
+
+    training_rows = _training_results_rows(training_results)
+    if training_rows:
+        doc.add_heading("5-0. 이번 순차 학습 결과", level=2)
+        doc.add_paragraph(
+            "3단계 모델학습에서 선택된 ML 모델을 순서대로 학습한 결과입니다. "
+            "식별자나 원자료 행은 포함하지 않고 모델별 성능 지표만 기록합니다."
+        )
+        _add_table(
+            doc,
+            ["순서", "모델", "타겟", "Accuracy", "F1", "AUC", "CV 평균", "학습 수"],
+            training_rows,
+        )
+        doc.add_paragraph()
 
     if metrics.get("confusion_matrix"):
         doc.add_heading("5-1. 혼동 행렬", level=2)

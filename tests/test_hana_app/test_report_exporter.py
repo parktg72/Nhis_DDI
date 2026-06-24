@@ -262,6 +262,45 @@ def test_build_docx_bytes_accepts_saved_results_for_model_comparison():
     assert "saved_results" in sig.parameters
 
 
+def test_build_docx_bytes_accepts_training_results_for_sequential_report():
+    import inspect
+
+    sig = inspect.signature(build_docx_bytes)
+
+    assert "training_results" in sig.parameters
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_docx_records_current_sequential_training_results():
+    from docx import Document
+
+    last_result = {"model_name": "lightgbm", "metrics": {"f1_macro": 0.82}}
+    training_results = {
+        "xgboost": {
+            "model_name": "xgboost",
+            "target": "risk_label",
+            "metrics": {"accuracy": 0.81, "f1_macro": 0.80, "roc_auc_ovr": 0.83, "cv_mean": 0.79, "train_size": 120},
+        },
+        "lightgbm": {
+            "model_name": "lightgbm",
+            "target": "risk_label",
+            "metrics": {"accuracy": 0.84, "f1_macro": 0.82, "roc_auc_ovr": 0.85, "cv_mean": 0.81, "train_size": 120},
+        },
+    }
+
+    b = build_docx_bytes(last_result, training_results=training_results)
+    doc = Document(io.BytesIO(b))
+    text = "\n".join(
+        [p.text for p in doc.paragraphs]
+        + [cell.text for table in doc.tables for row in table.rows for cell in row.cells]
+    )
+
+    assert "이번 순차 학습 결과" in text
+    assert "xgboost" in text
+    assert "lightgbm" in text
+    assert "0.8200" in text
+
+
 def test_docx_yellow_action_summary_matches_page4_for_y_other():
     df = pd.DataFrame([
         _row(risk_level="Yellow", yellow_subtype="Y_OTHER"),
