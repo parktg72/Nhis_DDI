@@ -405,6 +405,128 @@ def _chart_model_comparison(saved_results: list[dict]) -> bytes:
     return _fig_to_png(fig)
 
 
+
+
+_RISK_RANK = {"Normal": 0, "정상": 0, "Green": 1, "Yellow": 2, "Red": 3, "위험": 3, "위험군": 3, 0: 0, 1: 3, 2: 2, 3: 3}
+_SAFE_MISCLS_FEATURES = [
+    "drug_count", "ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor",
+    "dup_same_ingredient", "institution_count", "has_high_risk_drug",
+    "has_renal_risk_drug", "has_hepatic_risk_drug", "triple_whammy",
+    "yellow_subtype", "red_suspect",
+]
+
+
+def _risk_rank(label) -> int:
+    return _RISK_RANK.get(label, _RISK_RANK.get(str(label), 0))
+
+
+def _misclassification_type(actual, predicted) -> str:
+    a = _risk_rank(actual)
+    p = _risk_rank(predicted)
+    if str(actual) == "Red" and p < a:
+        return "FN 고위험 과소예측"
+    if str(predicted) == "Red" and p > a:
+        return "FP 위험 과대예측"
+    if a > p and a >= 2 and abs(a - p) > 1:
+        return "FN 고위험 과소예측"
+    if p > a and p >= 2 and abs(p - a) > 1:
+        return "FP 위험 과대예측"
+    return "인접 위험단계 오분류"
+
+
+def _safe_feature_snapshot(row: dict | pd.Series | None) -> dict:
+    if row is None:
+        return {}
+    data = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+    return {k: data.get(k) for k in _SAFE_MISCLS_FEATURES if k in data and pd.notna(data.get(k))}
+
+
+def _reason_from_safe_features(features: dict) -> str:
+    parts: list[str] = []
+    try:
+        dc = int(features.get("drug_count", 0) or 0)
+        if dc >= 10:
+            parts.append(f"약물 수 {dc}종(10종 이상)")
+        elif dc >= 5:
+            parts.append(f"약물 수 {dc}종(5종 이상)")
+    except Exception:
+        pass
+    for key, label in [
+        ("ddi_contraindicated", "금기 DDI"),
+        ("ddi_major", "중증 DDI"),
+        ("ddi_moderate", "Moderate DDI"),
+        ("dup_same_ingredient", "동일성분 중복"),
+        ("institution_count", "다기관 처방"),
+        ("triple_whammy", "Triple Whammy"),
+    ]:
+        try:
+            val = features.get(key, 0) or 0
+            if key == "institution_count" and float(val) < 3:
+                continue
+            if key != "institution_count" and float(val) <= 0:
+                continue
+            parts.append(f"{label} {int(float(val))}건")
+        except Exception:
+            continue
+    if features.get("has_high_risk_drug"):
+        parts.append("고위험약 신호")
+    if features.get("has_renal_risk_drug"):
+        parts.append("신장주의 약물 신호")
+    if features.get("has_hepatic_risk_drug"):
+        parts.append("간장주의 약물 신호")
+    if features.get("red_suspect"):
+        parts.append("Red 의심 경계구간")
+    ys = features.get("yellow_subtype")
+    if ys:
+        parts.append(f"Yellow subtype={ys}")
+    return "; ".join(parts[:5]) if parts else "저장된 안전 feature 기준 명확한 단일 원인 없음"
+
+
+def _summarize_misclassification_reasons(metrics: dict, features_df: Optional[pd.DataFrame] = None,
+                                          max_examples: int = 20) -> dict:
+    """식별자를 제외한 오판 요약/사유를 만든다.
+
+    입력은 metrics['misclassified_cases']를 우선 사용한다. 각 case에는 actual/predicted,
+    probability/confidence, features 또는 row_index(위치 기반)만 허용한다. patient_id 등
+    식별자는 출력하지 않는다.
+    """
+    cases = list((metrics or {}).get("misclassified_cases") or [])
+    examples: list[dict[str, str]] = []
+    type_counts: dict[str, int] = {}
+    for i, case in enumerate(cases[:max_examples], 1):
+        actual = case.get("actual", case.get("y_true", "?"))
+        predicted = case.get("predicted", case.get("y_pred", "?"))
+        mtype = _misclassification_type(actual, predicted)
+        type_counts[mtype] = type_counts.get(mtype, 0) + 1
+        features = dict(case.get("features") or {})
+        if not features and features_df is not None and "row_index" in case:
+            try:
+                pos = int(case["row_index"])
+                if 0 <= pos < len(features_df):
+                    features = _safe_feature_snapshot(features_df.iloc[pos])
+            except Exception:
+                features = {}
+        confidence = case.get("confidence", case.get("probability", case.get("proba", "")))
+        if isinstance(confidence, float):
+            confidence_s = f"{confidence:.3f}"
+        else:
+            confidence_s = str(confidence) if confidence not in (None, "") else ""
+        examples.append({
+            "no": f"오판-{i:03d}",
+            "actual": str(actual),
+            "predicted": str(predicted),
+            "type": mtype,
+            "confidence": confidence_s,
+            "reason": _reason_from_safe_features(features),
+        })
+    # max_examples 밖의 케이스도 type_counts에 반영
+    for case in cases[max_examples:]:
+        mtype = _misclassification_type(case.get("actual", case.get("y_true", "?")),
+                                        case.get("predicted", case.get("y_pred", "?")))
+        type_counts[mtype] = type_counts.get(mtype, 0) + 1
+    return {"total": len(cases), "type_counts": type_counts, "examples": examples}
+
+
 def _add_png(doc, png_bytes: bytes, width_inches: float = 5.5) -> None:
     if png_bytes:
         doc.add_picture(io.BytesIO(png_bytes), width=Inches(width_inches))
@@ -600,6 +722,8 @@ def _collect_page4_docx_sections(
         sections.append({"id": "feature_importance", "title": "피처 중요도"})
     if metrics.get("confusion_matrix"):
         sections.append({"id": "confusion_matrix", "title": "혼동 행렬"})
+    if metrics.get("misclassified_cases"):
+        sections.append({"id": "misclassification_analysis", "title": "오판 사유 분석"})
     if metrics.get("cv_scores"):
         sections.append({"id": "cross_validation", "title": "교차검증"})
     if metrics.get("roc_curve"):
@@ -803,6 +927,21 @@ def build_docx_bytes(last_result: dict,
         except Exception:
             pass
         doc.add_paragraph()
+
+        mis_summary = _summarize_misclassification_reasons(metrics, features_df if has_df else None)
+        if mis_summary["total"]:
+            doc.add_heading("5-1-1. 오판 사유 분석", level=3)
+            doc.add_paragraph(
+                "개인 식별자와 원자료 식별값은 제외하고, 평가 세트의 안전 feature와 예측 결과만으로 요약했습니다."
+            )
+            _add_table(doc, ["오판 유형", "건수"],
+                       [[k, f"{v:,}건"] for k, v in mis_summary["type_counts"].items()])
+            if mis_summary["examples"]:
+                _add_table(doc, ["익명번호", "실제", "예측", "확신도", "오판 유형", "추정 사유"], [
+                    [e["no"], e["actual"], e["predicted"], e["confidence"], e["type"], e["reason"]]
+                    for e in mis_summary["examples"]
+                ])
+            doc.add_paragraph()
 
     if metrics.get("cv_scores"):
         cv_scores = list(metrics.get("cv_scores", []))

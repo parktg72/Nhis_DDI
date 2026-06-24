@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul
 setlocal
+set "PYTHONUTF8=1"
 
 REM 최소 배치: 직접 Python 실행과 동등한 경로.
 REM 사전 subprocess 체크(import streamlit/webview)를 제거 — 사내 엔드포인트

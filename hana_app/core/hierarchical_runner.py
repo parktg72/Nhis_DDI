@@ -109,6 +109,21 @@ def decode_stage2_labels(y: np.ndarray, encoder) -> np.ndarray:
     return encoder.inverse_transform(np.asarray(y))
 
 
+def _normalize_stage2_local_predictions(raw_pred) -> np.ndarray:
+    """Stage 2 predict 결과를 local class-index 1-D 배열로 정규화.
+
+    일부 XGBoost/Windows 조합은 `multi:softprob` 모델의 `predict()` 결과로
+    class index 벡터 대신 `(n_samples, n_classes)` 확률 행렬을 반환한다. Stage 2
+    평가·CV 경로는 local class index를 기대하므로 확률 행렬은 argmax로 변환한다.
+    """
+    pred = np.asarray(raw_pred)
+    if pred.ndim == 2:
+        pred = np.argmax(pred, axis=1)
+    else:
+        pred = pred.reshape(-1)
+    return pred.astype(int, copy=False)
+
+
 def _stage2_sample_weight(
     y_train: np.ndarray,
     cost_sensitive: bool = False,
@@ -630,10 +645,10 @@ def train_hierarchical(
         key=lambda x: -x["importance"],
     )
 
-    _y2_pred_local = m2.predict(X2)
+    _y2_pred_local = _normalize_stage2_local_predictions(m2.predict(X2))
     _cls_names = list(local_class_names)
     _y2_true_str = [_cls_names[i] for i in y2]
-    _y2_pred_str = [_cls_names[i] for i in _y2_pred_local]
+    _y2_pred_str = [_cls_names[int(i)] for i in _y2_pred_local]
 
     _f1_macro = float(_f1(_y2_true_str, _y2_pred_str, average="macro", zero_division=0))
     _cm_arr = _cm_sk(_y2_true_str, _y2_pred_str, labels=_cls_names).tolist()

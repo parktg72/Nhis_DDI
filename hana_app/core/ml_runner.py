@@ -86,6 +86,96 @@ RISK_COLOR_MAP = {
     "Normal": "⚪",
 }
 
+
+
+_SAFE_MISCLS_FEATURES = [
+    "drug_count", "drug_count_7d", "institution_count",
+    "ddi_contraindicated", "ddi_major", "ddi_moderate", "ddi_minor",
+    "triple_whammy", "qt_risk_count", "dup_same_ingredient",
+    "dup_atc5", "dup_atc4", "dup_atc3", "dup_efmdc",
+    "has_high_risk_drug", "has_renal_risk_drug", "has_hepatic_risk_drug",
+    "cyp_risk_score", "cyp_max_enzyme_risk", "cyp_high_risk_pairs",
+]
+
+
+def _coerce_json_scalar(value):
+    if pd.isna(value):
+        return None
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    return value
+
+
+def _safe_miscls_features(row) -> dict[str, Any]:
+    data = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+    out: dict[str, Any] = {}
+    for col in _SAFE_MISCLS_FEATURES:
+        if col in data:
+            val = _coerce_json_scalar(data[col])
+            if val is not None:
+                out[col] = val
+    return out
+
+
+def _label_name(value, class_names: dict | None = None) -> str:
+    if class_names and value in class_names:
+        return str(class_names[value])
+    return str(value)
+
+
+def _case_confidence(y_proba, pos: int, pred_value) -> float | None:
+    if y_proba is None:
+        return None
+    try:
+        arr = np.asarray(y_proba)
+        if arr.ndim == 1:
+            p_pos = float(arr[pos])
+            return p_pos if int(pred_value) == 1 else 1.0 - p_pos
+        if arr.ndim == 2:
+            return float(np.max(arr[pos]))
+    except Exception:
+        return None
+    return None
+
+
+def _build_misclassified_cases(x_test, y_true, y_pred, y_proba=None,
+                                class_names: dict | None = None,
+                                max_cases: int = 200) -> list[dict[str, Any]]:
+    """평가 오판 사례를 식별자 없이 저장한다.
+
+    patient_id, 성별, 연령 등 직접/준식별자는 저장하지 않는다. DOCX에는 익명번호와
+    안전 feature 요약만 사용한다.
+    """
+    true_arr = np.asarray(y_true)
+    pred_arr = np.asarray(y_pred)
+    cases: list[dict[str, Any]] = []
+    x_pos = x_test.reset_index(drop=True) if hasattr(x_test, "reset_index") else x_test
+    for pos, (yt, yp) in enumerate(zip(true_arr, pred_arr)):
+        if yt == yp:
+            continue
+        try:
+            row = x_pos.iloc[pos] if hasattr(x_pos, "iloc") else x_pos[pos]
+        except Exception:
+            row = {}
+        case = {
+            "case_no": len(cases) + 1,
+            "actual": _label_name(yt.item() if hasattr(yt, "item") else yt, class_names),
+            "predicted": _label_name(yp.item() if hasattr(yp, "item") else yp, class_names),
+            "features": _safe_miscls_features(row),
+        }
+        conf = _case_confidence(y_proba, pos, yp)
+        if conf is not None:
+            case["confidence"] = round(float(conf), 4)
+        cases.append(case)
+        if len(cases) >= max_cases:
+            break
+    return cases
+
+
 GPU_MEMORY_FRACTION: float = 0.70  # GPU 메모리 최대 사용 비율 (기본 70%)
 PSEUDO_DL_MODELS = {"gnn", "temporal_transformer"}
 
@@ -1851,6 +1941,7 @@ def train_model(
         if progress_pct_cb:
             progress_pct_cb(0.8)
         y_pred = model.predict(X_test)
+        _miscls_proba = None
 
         # 평가 — 불균형 데이터(공단 pilot 3,540:1 수준)에선 accuracy 는 오도하므로
         # F1-macro (동일 가중치), F1-weighted (지지도 가중치), PR-AUC 를 병기.
@@ -1870,6 +1961,7 @@ def train_model(
         try:
             if target == "risk_binary":
                 y_proba = model.predict_proba(X_test)[:, 1]
+                _miscls_proba = y_proba
                 metrics["roc_auc"] = float(roc_auc_score(y_test, y_proba))
                 metrics["pr_auc"] = float(average_precision_score(y_test, y_proba))
                 # ROC Curve 포인트 (최대 200점으로 다운샘플)
@@ -1885,6 +1977,7 @@ def train_model(
                     pass
             else:
                 y_proba = model.predict_proba(X_test)
+                _miscls_proba = y_proba
                 _y_bin = label_binarize(y_test, classes=_y_classes)
                 # macro — 모든 클래스 동일 가중치 (실존하지 않는 클래스도 균등 영향)
                 metrics["roc_auc_ovr"] = float(
@@ -1918,6 +2011,9 @@ def train_model(
         # 혼동 행렬
         metrics["confusion_matrix"] = confusion_matrix(y_test, y_pred).tolist()
         metrics["classes"] = _y_classes
+        metrics["misclassified_cases"] = _build_misclassified_cases(
+            X_test, y_test, y_pred, y_proba=_miscls_proba, class_names=class_names,
+        )
 
         # Threshold Optimization (이진 분류 전용)
         optimal_threshold = 0.5

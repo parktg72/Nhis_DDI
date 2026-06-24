@@ -176,6 +176,25 @@ def test_cv_pooled_macro_f1_derived_from_pooled_cm(cv_dataset):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def test_cv_accepts_stage2_softprob_predict_matrix(cv_dataset, monkeypatch):
+    """CV Stage2 평가도 XGBoost softprob 행렬 반환 변형을 허용한다."""
+    from xgboost import XGBClassifier
+
+    def _predict_softprob(self, X, *args, **kwargs):
+        return self.predict_proba(X)
+
+    monkeypatch.setattr(XGBClassifier, "predict", _predict_softprob)
+
+    out = cross_validate_hierarchical(
+        cv_dataset, feature_cols=["feat_a", "feat_b", "feat_c"],
+        n_splits=3, seed=0,
+    )
+
+    assert len(out["per_fold"]) == 3
+    assert 0.0 <= out["pooled"]["stage2"]["macro_f1"] <= 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 부수: encoder 보조 함수
 # ─────────────────────────────────────────────────────────────────────────────
 

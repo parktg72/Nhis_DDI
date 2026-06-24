@@ -93,3 +93,11 @@ def test_extract_mode_still_blocked_when_unvalidated():
     assert any(GATE_WARNING_SUBSTR in w for w in warnings), (
         f"EXTRACT 모드인데 HANA 검증 게이트가 트립되지 않음: {warnings}"
     )
+
+
+def test_raw_mode_fails_closed_when_disease_filter_enabled():
+    """Raw 다운로드 모드는 T40 조회가 없으므로 ICD-10 질환 필터를 silent-ignore 하면 안 된다."""
+    source = Path(PAGE_PATH).read_text(encoding="utf-8")
+
+    assert "data_mode == DATA_MODE_RAW and use_disease_filter" in source
+    assert "질환 필터는 HANA/SAS 추출 모드에서만 적용됩니다" in source

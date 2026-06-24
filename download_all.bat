@@ -60,10 +60,23 @@ for %%V in (%PY_VERSIONS%) do (
          exit /b 1
      )
 
+     REM ── Python 3.12 CUDA DL wheel set (Phase3/운영 DL) ─────────────
+     if "%%V"=="312" (
+         echo.
+         echo ------------------------------------------------
+         echo  [3/4] Python 3.12 CUDA DL wheel set 다운로드
+         echo ------------------------------------------------
+         call "%PROJECT_ROOT%packages_win\download_cuda_cu126.bat"
+         if errorlevel 1 (
+             echo [오류] CUDA DL wheel set 다운로드 실패: Python %%V
+             exit /b 1
+         )
+     )
+
      REM ── 결과분석 DOCX/그래프 필수 패키지 명시 보강 ───────────────
      echo.
      echo ------------------------------------------------
-     echo  [3/3] DOCX/그래프 보고서 필수 패키지 보강 다운로드
+     echo  [4/4] DOCX/그래프 보고서 필수 패키지 보강 다운로드
      echo ------------------------------------------------
      set REPORT_PKG_DIR=%PROJECT_ROOT%packages_win\py%%V
      if not exist "!REPORT_PKG_DIR!" mkdir "!REPORT_PKG_DIR!"

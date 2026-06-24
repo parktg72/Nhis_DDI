@@ -11,6 +11,7 @@ from hana_app.core.report_exporter import (
     _collect_page4_docx_sections,
     _derive_reason,
     _effective_label,
+    _summarize_misclassification_reasons,
     _yellow_summary,
 )
 
@@ -272,3 +273,42 @@ def test_docx_yellow_action_summary_matches_page4_for_y_other():
 
     assert action_by_label["Y_OTHER"] == "알림 없음"
     assert action_by_label["Y_DDI_MAJOR"] == "약사 전화"
+
+
+def test_misclassification_reason_summary_redacts_identifiers():
+    df = pd.DataFrame([
+        _row(patient_id="SECRET001", risk_level="Red", drug_count=12, ddi_major=2, red_suspect=True),
+        _row(patient_id="SECRET002", risk_level="Green", drug_count=4, ddi_major=0),
+        _row(patient_id="SECRET003", risk_level="Yellow", drug_count=9, ddi_moderate=3),
+    ])
+    metrics = {
+        "misclassified_cases": [
+            {"row_index": 0, "actual": "Red", "predicted": "Yellow", "probability": 0.48},
+            {"patient_id": "SECRET002", "actual": "Green", "predicted": "Red", "probability": 0.91},
+            {"row_index": 2, "actual": "Yellow", "predicted": "Green", "probability": 0.52},
+        ]
+    }
+
+    summary = _summarize_misclassification_reasons(metrics, df)
+
+    assert summary["total"] == 3
+    assert summary["type_counts"]["FN 고위험 과소예측"] == 1
+    assert summary["type_counts"]["FP 위험 과대예측"] == 1
+    assert summary["type_counts"]["인접 위험단계 오분류"] == 1
+    assert len(summary["examples"]) == 3
+    joined = "\n".join(str(x) for x in summary["examples"])
+    assert "SECRET" not in joined
+    assert "patient_id" not in joined
+    assert "약물 수" in joined
+    assert "중증 DDI" in joined
+
+
+def test_docx_section_plan_includes_misclassification_analysis():
+    result = {
+        "metrics": {
+            "confusion_matrix": [[8, 2], [3, 7]],
+            "misclassified_cases": [{"row_index": 0, "actual": "Red", "predicted": "Yellow"}],
+        }
+    }
+    sections = _collect_page4_docx_sections(result, pd.DataFrame([_row(risk_level="Red")]), None)
+    assert "misclassification_analysis" in {s["id"] for s in sections}

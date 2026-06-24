@@ -27,7 +27,10 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from hana_app.core.hierarchical_runner import STAGE2_LABELS
+from hana_app.core.hierarchical_runner import (
+    STAGE2_LABELS,
+    _normalize_stage2_local_predictions,
+)
 
 
 def compute_stage1_metrics(
@@ -243,7 +246,7 @@ def evaluate_hierarchical_bundle(
     y2_true = y2_val[y2_mask]
 
     if len(X2) > 0:
-        y2_local = np.asarray(stage2.predict(X2), dtype=int)
+        y2_local = _normalize_stage2_local_predictions(stage2.predict(X2))
         # local index → global STAGE2_LABELS 인덱스 (단순 테이블 룩업)
         cp = np.asarray(classes_present, dtype=int)
         if y2_local.max(initial=-1) >= len(cp):

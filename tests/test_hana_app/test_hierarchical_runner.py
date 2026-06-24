@@ -632,6 +632,27 @@ def test_train_hierarchical_degrades_stage1_when_no_red(tmp_path):
     assert result["thresholds"]["tau_review"] < result["thresholds"]["tau_red"]
 
 
+def test_train_hierarchical_accepts_stage2_softprob_predict_matrix(tmp_path, monkeypatch):
+    """Windows XGBoost 조합에서 Stage2 predict 가 softprob 행렬이어도 평가 지표를 계산한다."""
+    from hana_app.core.hierarchical_runner import train_hierarchical
+    from xgboost import XGBClassifier
+
+    def _predict_softprob(self, X, *args, **kwargs):
+        return self.predict_proba(X)
+
+    monkeypatch.setattr(XGBClassifier, "predict", _predict_softprob)
+
+    df = _no_red_df(n=120)
+    result = train_hierarchical(
+        df=df, feature_cols=["feat_a", "feat_b"], output_dir=tmp_path, seed=0,
+    )
+
+    assert result["stage1_trained"] is False
+    assert result["stage2_train_size"] == len(df)
+    assert result["f1_macro"] >= 0.0
+    assert len(result["confusion_matrix"]) == len(result["stage2_class_names"])
+
+
 def test_degraded_predict_risk_routes_all_to_stage2(tmp_path):
     """degrade 모델로 predict_risk: 아무도 Red/red_suspect 아니고 모두 Stage2 라벨."""
     from hana_app.core.hierarchical_runner import train_hierarchical, predict_risk

@@ -30,6 +30,7 @@ from hana_app.core.hierarchical_metrics import (
 from hana_app.core.hierarchical_runner import (
     STAGE2_LABELS,
     YELLOW_SUBTYPE_LABELS,
+    _normalize_stage2_local_predictions,
     train_hierarchical,
 )
 
@@ -171,7 +172,7 @@ def cross_validate_hierarchical(
             X2 = X_val[mask]
             y2_true_fold = y2_val_raw[mask].astype(int)
             if len(X2) > 0:
-                y2_local = np.asarray(stage2.predict(X2), dtype=int)
+                y2_local = _normalize_stage2_local_predictions(stage2.predict(X2))
                 if y2_local.max(initial=-1) >= len(classes_present):
                     raise ValueError(
                         f"fold {fold_idx}: stage2.predict local max "

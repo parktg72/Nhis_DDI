@@ -918,9 +918,10 @@ with tab_p2:
 
 if target == "hierarchical":
     st.info(
-        "**계층 분류 모드**: Stage 1 / Stage 2 모두 XGBoost 내부 고정.\n"
-        "아래 모델 선택 및 하이퍼파라미터는 적용되지 않으며, "
-        "Stage 1·2 파라미터는 '학습 전략 옵션' 섹션에서 별도 설정합니다."
+        "**계층 분류 모드**: Stage 1 / Stage 2는 기본적으로 XGBoost를 사용합니다.\n"
+        "단, Stage 1은 Red 표본이 부족하면 상수 비-Red 더미로 대체됩니다.\n"
+        "아래 모델 선택 및 일반 하이퍼파라미터는 적용되지 않으며, "
+        "계층분류 전용 임계값 옵션만 적용됩니다."
     )
 
 with tab_p3:
@@ -1174,6 +1175,15 @@ if run_btn:
     st.caption(f"🎯 이번 학습 예측 타겟: **{_target_label}**")
     if not selected_features:
         st.error("최소 1개 이상의 피처를 선택하세요.")
+        st.stop()
+    if data_mode == DATA_MODE_RAW and use_disease_filter:
+        st.error(
+            "⚠️ 질환 필터는 HANA/SAS 추출 모드에서만 적용됩니다.\n\n"
+            "다운로드 Raw 모드는 선택한 `records_*.parquet` 파일에 이미 들어있는 "
+            "환자 전체로 피처를 계산하므로, T40 ICD-10 조회를 추가로 수행하지 않습니다.\n\n"
+            "ICD-10 질환코드를 적용하려면 HANA/SAS 추출 모드로 실행하거나, "
+            "질환 필터가 적용된 Raw 파일을 먼저 준비한 뒤 사용하세요."
+        )
         st.stop()
     if target != "hierarchical" and not all_selected_models:
         st.error("최소 1개 이상의 모델을 선택하세요.")

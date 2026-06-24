@@ -280,3 +280,37 @@ def test_evaluate_hierarchical_bundle_roundtrip(tmp_path):
     assert 0.0 <= rep["stage1"]["roc_auc"] <= 1.0
     assert 0.0 <= rep["stage2"]["macro_f1"] <= 1.0
     assert len(rep["stage2"]["confusion_matrix"]) == len(STAGE2_LABELS)
+
+
+def test_evaluate_hierarchical_bundle_accepts_stage2_softprob_matrix():
+    """Stage2 predict 가 확률 행렬을 반환해도 local→global 매핑 후 평가한다."""
+    from hana_app.core.hierarchical_metrics import evaluate_hierarchical_bundle
+
+    class _Stage1:
+        def predict_proba(self, X):
+            return np.array([[0.9, 0.1], [0.8, 0.2], [0.1, 0.9], [0.7, 0.3]])
+
+    class _Stage2Softprob:
+        def predict(self, X):
+            return np.array([
+                [0.9, 0.1, 0.0],
+                [0.1, 0.8, 0.1],
+                [0.0, 0.2, 0.8],
+            ])
+
+    bundle = {"stage1_model": _Stage1(), "stage2_model": _Stage2Softprob()}
+    x_val = np.zeros((4, 2))
+    y1_val = np.array([0, 0, 1, 0])
+    classes_present = [5, 0, 1]  # local 0/1/2 → global No_Alert/Y_TRIPLE/Y_DOUBLE
+    y2_val = np.array([5, 0, 0, 1])
+
+    rep = evaluate_hierarchical_bundle(
+        bundle, x_val, y1_val, y2_val=y2_val,
+        classes_present=classes_present, y2_mask=(y1_val == 0),
+    )
+
+    cm = np.array(rep["stage2"]["confusion_matrix"])
+    assert cm.sum() == 3
+    assert cm[5, 5] == 1
+    assert cm[0, 0] == 1
+    assert cm[1, 1] == 1
