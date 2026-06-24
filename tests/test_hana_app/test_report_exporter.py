@@ -301,6 +301,80 @@ def test_docx_records_current_sequential_training_results():
     assert "0.8200" in text
 
 
+def _docx_block_texts(doc):
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    from docx.oxml.ns import qn
+
+    for child in doc.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            yield "paragraph", Paragraph(child, doc).text
+        elif child.tag == qn("w:tbl"):
+            table = Table(child, doc)
+            yield "table", "\n".join(cell.text for row in table.rows for cell in row.cells)
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_docx_model_comparison_uses_current_ml_and_dl_training_results():
+    from docx import Document
+
+    last_result = {"model_name": "gnn", "target": "risk_binary", "metrics": {"f1_macro": 0.79}}
+    training_results = {
+        "xgboost": {
+            "model_name": "xgboost",
+            "target": "risk_binary",
+            "metrics": {"accuracy": 0.91, "f1_macro": 0.90, "roc_auc": 0.93, "cv_mean": 0.89, "train_size": 120},
+        },
+        "lightgbm": {
+            "model_name": "lightgbm",
+            "target": "risk_binary",
+            "metrics": {"accuracy": 0.92, "f1_macro": 0.91, "roc_auc": 0.94, "cv_mean": 0.90, "train_size": 120},
+        },
+        "tabnet": {
+            "model_name": "tabnet",
+            "target": "risk_binary",
+            "metrics": {"accuracy": 0.88, "f1_macro": 0.86, "roc_auc": 0.89, "cv_mean": 0.85, "train_size": 120},
+        },
+        "gnn": {
+            "model_name": "gnn",
+            "target": "risk_binary",
+            "metrics": {"accuracy": 0.87, "f1_macro": 0.79, "roc_auc": 0.88, "cv_mean": 0.84, "train_size": 120},
+        },
+    }
+
+    b = build_docx_bytes(last_result, saved_results=[], training_results=training_results)
+    doc = Document(io.BytesIO(b))
+    blocks = list(_docx_block_texts(doc))
+    heading_idx = next(i for i, (_, text) in enumerate(blocks) if text == "5-5. 모델 비교")
+    comparison_table = next(text for kind, text in blocks[heading_idx + 1:] if kind == "table")
+
+    assert "Accuracy" in comparison_table
+    assert "F1" in comparison_table
+    assert "AUC" in comparison_table
+    for model_name in ["xgboost", "lightgbm", "tabnet", "gnn"]:
+        assert model_name in comparison_table
+    if MPL_AVAILABLE:
+        image_rels = [r for r in doc.part.rels.values() if "image" in r.reltype]
+        assert image_rels, "Accuracy/F1/AUC model-comparison chart should be embedded"
+
+
+def test_page4_docx_section_plan_treats_current_training_results_as_model_comparison():
+    result = {"metrics": {"f1_macro": 0.8}}
+    training_results = {
+        "xgboost": {"model_name": "xgboost", "metrics": {"accuracy": 0.9}},
+        "tabnet": {"model_name": "tabnet", "metrics": {"accuracy": 0.8}},
+    }
+
+    sections = _collect_page4_docx_sections(
+        result,
+        pd.DataFrame([_row(risk_level="Red")]),
+        saved_results=[],
+        training_results=training_results,
+    )
+
+    assert "model_comparison" in {s["id"] for s in sections}
+
+
 def test_docx_yellow_action_summary_matches_page4_for_y_other():
     df = pd.DataFrame([
         _row(risk_level="Yellow", yellow_subtype="Y_OTHER"),

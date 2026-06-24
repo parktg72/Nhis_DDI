@@ -382,11 +382,15 @@ def _chart_model_comparison(saved_results: list[dict]) -> bytes:
     rows = []
     for r in saved_results or []:
         m = r.get("metrics", {}) or {}
+        model_label = str(r.get("model_name", "?"))
+        family = r.get("model_family")
+        if family:
+            model_label = f"{model_label} ({family})"
         rows.append({
-            "model": str(r.get("model_name", "?")),
-            "Accuracy": m.get("accuracy", 0),
-            "F1": m.get("f1_macro", 0),
-            "AUC": m.get("roc_auc", m.get("roc_auc_ovr", 0)),
+            "model": model_label,
+            "Accuracy": _metric_float(m.get("accuracy")),
+            "F1": _metric_float(m.get("f1_macro")),
+            "AUC": _metric_float(m.get("roc_auc", m.get("roc_auc_ovr"))),
         })
     if len(rows) < 2:
         return b""
@@ -716,14 +720,79 @@ def _fmt_report_metric(value) -> str:
     return "—" if value is None else str(value)
 
 
+def _metric_float(value) -> float:
+    try:
+        if value is None:
+            return 0.0
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _model_family(model_name: str) -> str:
+    name = str(model_name).lower()
+    if name == "hierarchical":
+        return "Hierarchical"
+    if name in {"tabnet", "gnn", "temporal_transformer"}:
+        return "DL"
+    return "ML"
+
+
+def _iter_training_results(training_results):
+    if not training_results:
+        return []
+    if isinstance(training_results, dict):
+        return list(training_results.items())
+    return [(str(i + 1), r) for i, r in enumerate(training_results)]
+
+
+def _comparison_results(saved_results=None, training_results=None) -> list[dict]:
+    """DOCX 모델 비교용 결과 병합.
+
+    현재 세션 순차 학습 결과(ML + Phase 3 DL)를 우선 포함하고, 저장 이력은
+    뒤에 붙인다. 같은 result_path/json 파일이 양쪽에 있으면 중복 제거한다.
+    """
+    merged: list[dict] = []
+    seen: set[tuple] = set()
+
+    def _add(result: dict, fallback_key: str = "", fallback_order: int = 0) -> None:
+        if not isinstance(result, dict):
+            return
+        metrics = result.get("metrics", {}) or {}
+        model_name = str(result.get("model_name") or fallback_key or "?")
+        target = str(result.get("target", "?"))
+        result_path = result.get("result_path") or result.get("_file")
+        timestamp = str(result.get("timestamp") or f"current-{fallback_order:02d}")
+        dedupe_key = (
+            result_path or timestamp,
+            model_name,
+            target,
+            _metric_float(metrics.get("accuracy")),
+            _metric_float(metrics.get("f1_macro")),
+            _metric_float(metrics.get("roc_auc", metrics.get("roc_auc_ovr"))),
+        )
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        row = dict(result)
+        row["model_name"] = model_name
+        row["target"] = target
+        row["timestamp"] = timestamp
+        row["model_family"] = _model_family(model_name)
+        merged.append(row)
+
+    for order, (key, result) in enumerate(_iter_training_results(training_results), start=1):
+        _add(result, str(key), order)
+    for order, result in enumerate(saved_results or [], start=len(merged) + 1):
+        _add(result, str(result.get("model_name", "?")) if isinstance(result, dict) else "", order)
+    return merged
+
+
 def _training_results_rows(training_results) -> list[list[str]]:
     """현재 세션에서 순차 학습한 모델 결과를 DOCX 표 행으로 정규화."""
     if not training_results:
         return []
-    if isinstance(training_results, dict):
-        items = list(training_results.items())
-    else:
-        items = [(str(i + 1), r) for i, r in enumerate(training_results)]
+    items = _iter_training_results(training_results)
     if len(items) < 2:
         return []
 
@@ -787,7 +856,7 @@ def _collect_page4_docx_sections(
         sections.append({"id": "classification_report", "title": "분류 보고서"})
     if _training_results_rows(training_results):
         sections.append({"id": "sequential_training_results", "title": "이번 순차 학습 결과"})
-    if saved_results and len(saved_results) >= 2:
+    if len(_comparison_results(saved_results, training_results)) >= 2:
         sections.append({"id": "model_comparison", "title": "모델 비교"})
     return sections
 
@@ -949,7 +1018,7 @@ def build_docx_bytes(last_result: dict,
     if training_rows:
         doc.add_heading("5-0. 이번 순차 학습 결과", level=2)
         doc.add_paragraph(
-            "3단계 모델학습에서 선택된 ML 모델을 순서대로 학습한 결과입니다. "
+            "3단계 모델학습에서 선택된 ML/DL 모델을 순서대로 학습한 결과입니다. "
             "식별자나 원자료 행은 포함하지 않고 모델별 성능 지표만 기록합니다."
         )
         _add_table(
@@ -1027,24 +1096,30 @@ def build_docx_bytes(last_result: dict,
             doc.add_paragraph(line)
         doc.add_paragraph()
 
-    if saved_results and len(saved_results) >= 2:
+    comparison_results = _comparison_results(saved_results, training_results)
+    if len(comparison_results) >= 2:
         doc.add_heading("5-5. 모델 비교", level=2)
+        doc.add_paragraph(
+            "현재 세션 순차 학습 결과(Phase 2 ML + Phase 3 DL)를 우선 포함하고, "
+            "저장된 이전 결과는 뒤에 이어 표시합니다."
+        )
         if MPL_AVAILABLE:
-            _add_png(doc, _chart_model_comparison(saved_results), width_inches=6.0)
+            _add_png(doc, _chart_model_comparison(comparison_results), width_inches=6.0)
         rows = []
-        for r in saved_results:
+        for r in comparison_results:
             m = r.get("metrics", {}) or {}
             rows.append([
                 str(r.get("timestamp", "?")),
                 str(r.get("model_name", "?")),
+                str(r.get("model_family", _model_family(r.get("model_name", "?")))),
                 str(r.get("target", "?")),
-                f"{m.get('accuracy', 0):.4f}",
-                f"{m.get('f1_macro', 0):.4f}",
-                f"{m.get('roc_auc', m.get('roc_auc_ovr', 0)):.4f}",
-                f"{m.get('cv_mean', 0):.4f}",
+                _fmt_report_metric(_metric_float(m.get("accuracy"))),
+                _fmt_report_metric(_metric_float(m.get("f1_macro"))),
+                _fmt_report_metric(_metric_float(m.get("roc_auc", m.get("roc_auc_ovr")))),
+                _fmt_report_metric(_metric_float(m.get("cv_mean"))),
                 str(m.get("train_size", 0)),
             ])
-        _add_table(doc, ["시간", "모델", "타겟", "Accuracy", "F1", "AUC", "CV 평균", "학습 수"], rows)
+        _add_table(doc, ["시간", "모델", "구분", "타겟", "Accuracy", "F1", "AUC", "CV 평균", "학습 수"], rows)
         doc.add_paragraph()
 
     # ── 6. 분석 메모 ─────────────────────────────────────────────────────────

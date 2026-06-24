@@ -437,7 +437,7 @@ _has_df = _dl_df is not None and not _dl_df.empty
 _training_results_for_report = None
 if source == "현재 세션":
     _tr = st.session_state.get("train_results")
-    if isinstance(_tr, dict) and len(_tr) >= 2:
+    if isinstance(_tr, dict) and len(_tr) >= 1:
         _training_results_for_report = _tr
 
 col_dl1, col_dl2 = st.columns(2)
