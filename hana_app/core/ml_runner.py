@@ -2428,19 +2428,85 @@ def _save_result(result: dict) -> None:
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2, default=str)
 
-    result["model_path"] = str(model_path)
+    if model_path is not None:
+        result["model_path"] = str(model_path)
+    elif result.get("model_path") is not None:
+        result["model_path"] = str(result["model_path"])
+    result["timestamp"] = ts
     result["result_path"] = str(result_path)
+
+
+def build_training_sequence(
+    target: str,
+    selected_models_p2,
+    selected_models_p3,
+) -> dict[str, Any]:
+    """Page 3 학습 실행 순서를 결정한다.
+
+    일반 사용자가 수동으로 "ML/DL 먼저 → hierarchical 나중" 순서를 맞추지 않아도
+    되도록, hierarchical 타겟에서는 선택된 Phase 2/3 모델을 risk_binary 비교용으로
+    먼저 학습한 뒤 계층 모델을 이어서 학습한다.
+    """
+    selected: list[str] = []
+    for model_name in list(selected_models_p2 or []) + list(selected_models_p3 or []):
+        if model_name and model_name not in selected:
+            selected.append(str(model_name))
+
+    if target == "hierarchical":
+        return {
+            "comparison_models": selected or ["xgboost"],
+            "comparison_target": "risk_binary",
+            "run_hierarchical": True,
+        }
+
+    return {
+        "comparison_models": selected,
+        "comparison_target": target,
+        "run_hierarchical": False,
+    }
+
+
+def merge_train_results(existing, new_results) -> dict:
+    """현재 세션 모델 비교 결과를 모델명 기준으로 병합한다.
+
+    Page 3에서 ML/DL을 학습한 뒤 hierarchical을 이어서 학습하면, 기존
+    ``train_results``를 통째로 덮어쓰면 방금 학습한 ML/DL 결과가 DOCX 5-5
+    비교표에서 사라진다. 기존 결과를 유지하고 새로 학습한 모델만 갱신한다.
+    """
+    merged: dict[str, dict] = {}
+
+    def _items(value):
+        if isinstance(value, dict):
+            return list(value.items())
+        if isinstance(value, list):
+            return [(str(i + 1), r) for i, r in enumerate(value)]
+        return []
+
+    def _add(key, result) -> None:
+        if not isinstance(result, dict):
+            return
+        model_key = str(result.get("model_name") or key)
+        if model_key in merged:
+            del merged[model_key]
+        merged[model_key] = result
+
+    for key, result in _items(existing):
+        _add(key, result)
+    for key, result in _items(new_results):
+        _add(key, result)
+    return merged
 
 
 def list_saved_results() -> list[dict]:
     """저장된 결과 목록 반환."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     results = []
-    for p in sorted(RESULTS_DIR.glob("result_*.json"), reverse=True):
+    for p in RESULTS_DIR.glob("result_*.json"):
         with open(p, encoding="utf-8") as f:
             data = json.load(f)
         data["_file"] = str(p)
         results.append(data)
+    results.sort(key=lambda r: str(r.get("timestamp") or ""), reverse=True)
     return results
 
 

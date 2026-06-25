@@ -746,34 +746,31 @@ def _iter_training_results(training_results):
     return [(str(i + 1), r) for i, r in enumerate(training_results)]
 
 
+def _result_timestamp(result: dict) -> str:
+    return str(result.get("timestamp") or "")
+
+
 def _comparison_results(saved_results=None, training_results=None) -> list[dict]:
     """DOCX 모델 비교용 결과 병합.
 
     현재 세션 순차 학습 결과(ML + Phase 3 DL)를 우선 포함하고, 저장 이력은
-    뒤에 붙인다. 같은 result_path/json 파일이 양쪽에 있으면 중복 제거한다.
+    모델별 최신 1건만 뒤에 붙인다. 같은 모델의 오래된 이력을 그대로 나열하면
+    최근 hierarchical 재학습이 반복되어 ML/DL 비교가 빠진 것처럼 보이므로,
+    비교 표는 "시간순 로그"가 아니라 "모델별 최신 성능 비교"로 유지한다.
     """
     merged: list[dict] = []
-    seen: set[tuple] = set()
+    seen_models: set[str] = set()
 
     def _add(result: dict, fallback_key: str = "", fallback_order: int = 0) -> None:
         if not isinstance(result, dict):
             return
-        metrics = result.get("metrics", {}) or {}
         model_name = str(result.get("model_name") or fallback_key or "?")
-        target = str(result.get("target", "?"))
-        result_path = result.get("result_path") or result.get("_file")
-        timestamp = str(result.get("timestamp") or f"current-{fallback_order:02d}")
-        dedupe_key = (
-            result_path or timestamp,
-            model_name,
-            target,
-            _metric_float(metrics.get("accuracy")),
-            _metric_float(metrics.get("f1_macro")),
-            _metric_float(metrics.get("roc_auc", metrics.get("roc_auc_ovr"))),
-        )
-        if dedupe_key in seen:
+        model_key = model_name.lower()
+        if model_key in seen_models:
             return
-        seen.add(dedupe_key)
+        target = str(result.get("target", "?"))
+        timestamp = str(result.get("timestamp") or f"current-{fallback_order:02d}")
+        seen_models.add(model_key)
         row = dict(result)
         row["model_name"] = model_name
         row["target"] = target
@@ -783,8 +780,26 @@ def _comparison_results(saved_results=None, training_results=None) -> list[dict]
 
     for order, (key, result) in enumerate(_iter_training_results(training_results), start=1):
         _add(result, str(key), order)
-    for order, result in enumerate(saved_results or [], start=len(merged) + 1):
-        _add(result, str(result.get("model_name", "?")) if isinstance(result, dict) else "", order)
+
+    latest_saved_by_model: dict[str, dict] = {}
+    for result in saved_results or []:
+        if not isinstance(result, dict):
+            continue
+        model_name = str(result.get("model_name") or "?")
+        model_key = model_name.lower()
+        if model_key in seen_models:
+            continue
+        prev = latest_saved_by_model.get(model_key)
+        if prev is None or _result_timestamp(result) > _result_timestamp(prev):
+            latest_saved_by_model[model_key] = result
+
+    latest_saved = sorted(
+        latest_saved_by_model.values(),
+        key=_result_timestamp,
+        reverse=True,
+    )
+    for order, result in enumerate(latest_saved, start=len(merged) + 1):
+        _add(result, str(result.get("model_name", "?")), order)
     return merged
 
 
@@ -1100,8 +1115,9 @@ def build_docx_bytes(last_result: dict,
     if len(comparison_results) >= 2:
         doc.add_heading("5-5. 모델 비교", level=2)
         doc.add_paragraph(
-            "현재 세션 순차 학습 결과(Phase 2 ML + Phase 3 DL)를 우선 포함하고, "
-            "저장된 이전 결과는 뒤에 이어 표시합니다."
+            "현재 세션 결과를 우선 포함하고, 저장 이력은 모델별 최신 결과 1건씩만 "
+            "뒤에 이어 표시합니다. 같은 모델의 과거 이력은 중복 표시하지 않습니다. "
+            "시간은 각 모델의 최신 저장 시각입니다."
         )
         if MPL_AVAILABLE:
             _add_png(doc, _chart_model_comparison(comparison_results), width_inches=6.0)

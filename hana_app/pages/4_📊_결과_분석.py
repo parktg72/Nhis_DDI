@@ -21,7 +21,12 @@ from hana_app.core.ml_runner import list_saved_results, load_model, RISK_LABEL_M
 from hana_app.core.config import load_config, is_hana
 from hana_app.core.page_guards import check_hana_validated, get_validation_error
 from hana_app.core.yellow_subtype_view import render_yellow_subtype_section
-from hana_app.core.report_exporter import build_csv_bytes, build_docx_bytes, DOCX_AVAILABLE
+from hana_app.core.report_exporter import (
+    build_csv_bytes,
+    build_docx_bytes,
+    DOCX_AVAILABLE,
+    _comparison_results,
+)
 
 st.set_page_config(page_title="결과 분석", page_icon="📊", layout="wide")
 st.title("📊 학습 결과 분석")
@@ -74,6 +79,12 @@ if not result:
 metrics = result.get("metrics", {})
 model_name = result.get("model_name", "?")
 target = result.get("target", "risk_binary")
+
+_training_results_for_report = None
+if source == "현재 세션":
+    _tr = st.session_state.get("train_results")
+    if isinstance(_tr, dict) and len(_tr) >= 1:
+        _training_results_for_report = _tr
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 핵심 지표 요약
@@ -385,15 +396,24 @@ with tab_report:
 
 # ── 탭6: 모델 비교 ───────────────────────────────────────────────────────────
 with tab_compare:
-    if not saved:
-        st.info("저장된 결과가 없습니다. 여러 모델을 학습한 후 비교하세요.")
+    comparison_results = _comparison_results(
+        saved_results=saved,
+        training_results=_training_results_for_report,
+    )
+    if len(comparison_results) < 2:
+        st.info("모델 비교는 서로 다른 모델 결과가 2개 이상 필요합니다. 여러 모델을 학습한 후 비교하세요.")
     else:
+        st.caption(
+            "현재 세션 결과를 우선 표시하고, 저장 이력은 모델별 최신 결과 1건씩만 표시합니다. "
+            "시간은 각 모델의 최신 저장 시각입니다."
+        )
         compare_rows = []
-        for r in saved:
+        for r in comparison_results:
             m_r = r.get("metrics", {})
             compare_rows.append({
                 "시간": r.get("timestamp", "?"),
                 "모델": r.get("model_name", "?"),
+                "구분": r.get("model_family", "?"),
                 "타겟": r.get("target", "?"),
                 "Accuracy": round(m_r.get("accuracy", 0), 4),
                 "F1 (macro)": round(m_r.get("f1_macro", 0), 4),
@@ -409,6 +429,7 @@ with tab_compare:
                 color="lightgreen",
             ),
             use_container_width=True,
+            hide_index=True,
         )
 
         # 비교 차트
@@ -416,12 +437,12 @@ with tab_compare:
         for metric_name in ["Accuracy", "F1 (macro)", "AUC"]:
             fig.add_trace(go.Bar(
                 name=metric_name,
-                x=cmp_df["모델"] + "\n" + cmp_df["시간"].str[:8],
+                x=cmp_df["모델"] + "\n" + cmp_df["시간"].astype(str).str[:8],
                 y=cmp_df[metric_name],
             ))
         fig.update_layout(
             barmode="group",
-            title="모델별 성능 비교",
+            title="모델별 최신 성능 비교",
             yaxis_title="Score",
             height=450,
         )
@@ -434,11 +455,6 @@ st.subheader("📥 결과 다운로드")
 
 _dl_df = st.session_state.get("features_df")
 _has_df = _dl_df is not None and not _dl_df.empty
-_training_results_for_report = None
-if source == "현재 세션":
-    _tr = st.session_state.get("train_results")
-    if isinstance(_tr, dict) and len(_tr) >= 1:
-        _training_results_for_report = _tr
 
 col_dl1, col_dl2 = st.columns(2)
 

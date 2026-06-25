@@ -22,7 +22,8 @@ from hana_app.core.etl_logger import append_etl_log
 from hana_app.core.sas_reader import SASExtractor
 from hana_app.core.ml_runner import (
     build_patient_features, build_patient_features_from_parquet,
-    features_to_dataframe, train_model, _save_result,
+    build_training_sequence,
+    features_to_dataframe, train_model, _save_result, merge_train_results,
 )
 from hana_app.core.sparse_research import (
     DATASETS_ROOT,
@@ -918,10 +919,10 @@ with tab_p2:
 
 if target == "hierarchical":
     st.info(
-        "**계층 분류 모드**: Stage 1 / Stage 2는 기본적으로 XGBoost를 사용합니다.\n"
-        "단, Stage 1은 Red 표본이 부족하면 상수 비-Red 더미로 대체됩니다.\n"
-        "아래 모델 선택 및 일반 하이퍼파라미터는 적용되지 않으며, "
-        "계층분류 전용 임계값 옵션만 적용됩니다."
+        "**계층 분류 모드**: 학습 버튼을 누르면 위에서 선택한 Phase 2 ML/Phase 3 DL 모델을 "
+        "`risk_binary` 비교용으로 먼저 자동 학습한 뒤, Stage 1/Stage 2 계층 모델을 이어서 학습합니다.\n"
+        "Stage 1/2 계층 모델 자체는 기본적으로 XGBoost를 사용하며, Stage 1은 Red 표본이 부족하면 "
+        "상수 비-Red 더미로 대체됩니다."
     )
 
 with tab_p3:
@@ -1083,6 +1084,19 @@ selected_models_p3 = [k for k, v in {
     "tabnet": sel_tabnet, "gnn": sel_gnn, "temporal_transformer": sel_tt,
 }.items() if v]
 all_selected_models = selected_models_p2 + selected_models_p3
+training_sequence = build_training_sequence(target, selected_models_p2, selected_models_p3)
+comparison_models_for_run = training_sequence["comparison_models"]
+if target == "hierarchical":
+    st.caption(
+        "자동 학습 순서: "
+        f"① 비교용 ML/DL ({', '.join(comparison_models_for_run)}) → "
+        "② 계층 분류 Stage 1/2 → ③ 4단계 보고서 5-5 비교표"
+    )
+    if not selected_models_p3:
+        st.warning(
+            "현재 Phase 3 DL 모델이 선택되지 않았습니다. 5-5 표에 DL 행이 필요하면 "
+            "TabNet/GNN/Temporal Transformer 중 하나 이상을 선택하세요."
+        )
 
 # ── 평가 설정 ──────────────────────────────────────────────────────────
 col_ev1, col_ev2 = st.columns(2)
@@ -1190,6 +1204,8 @@ if run_btn:
         st.stop()
 
     import time as _time
+    from hana_app.core.memory_guard import MemoryLimitExceeded
+    _mem_guard = None
 
     progress_bar = st.progress(0, text="준비 중...")
     status_text = st.empty()
@@ -1225,6 +1241,8 @@ if run_btn:
         )
 
     # ── 저장된 데이터 모드: 추출·피처계산 건너뜀 ─────────────────────────
+    _features_parquet_paths = None
+    features_df = None
     if data_mode == DATA_MODE_SAVED:
         features_df = st.session_state.get("features_df")
         if features_df is None:
@@ -1866,8 +1884,92 @@ if run_btn:
         from hana_app.core.hierarchical_runner import train_hierarchical, predict_risk
         from hana_app.core.ml_runner import load_features_from_parquet, _duckdb_available
 
+        _auto_compare_results: dict = {}
+        _comparison_models = list(comparison_models_for_run)
+        st.session_state.train_results = {}
+        if _comparison_models:
+            _comparison_target = training_sequence["comparison_target"]
+            _model_label = ", ".join(_comparison_models)
+            st.subheader(f"🤖 비교용 ML/DL 자동 선행 학습 중... ({_model_label})")
+            log(
+                "계층 분류 전 비교용 ML/DL 자동 학습 시작: "
+                f"{_model_label} | 타겟: {_comparison_target}"
+            )
+            _n_compare = len(_comparison_models)
+            for mi, mname in enumerate(_comparison_models):
+                _lo = 0.60 + mi / _n_compare * 0.22
+                _hi = 0.60 + (mi + 1) / _n_compare * 0.22
+                _set_phase(_lo, _hi)
+                log(
+                    f"[비교 {mi+1}/{_n_compare}] {mname} 학습 시작 | "
+                    f"타겟: {_comparison_target} | 피처: {len(selected_features)}개"
+                )
+                try:
+                    result = train_model(
+                        df=_train_df,
+                        features_parquet=_train_parquet,
+                        model_name=mname,
+                        target=_comparison_target,
+                        params=params_map.get(mname),
+                        test_size=test_size,
+                        cv_folds=cv_folds,
+                        sampling_size=sampling_size_actual,
+                        sampling_rounds=sampling_rounds,
+                        threshold_optimization=use_threshold_opt,
+                        cost_sensitive=use_cost_sensitive,
+                        cost_fp=cost_fp,
+                        cost_fn=cost_fn,
+                        progress_cb=log,
+                        progress_pct_cb=update_pct,
+                        gpu_memory_fraction=gpu_memory_fraction,
+                        memory_limit_mb=memory_limit_mb,
+                        feature_cols=selected_features,
+                        guard=_mem_guard,
+                        features_df=st.session_state.get("features_df"),
+                    )
+                    result.pop("model", None)
+                    _auto_compare_results[mname] = result
+                    log(
+                        f"[비교 {mi+1}/{_n_compare}] {mname} 완료 — "
+                        f"F1={result['metrics']['f1_macro']:.4f}"
+                    )
+                except (MemoryError, MemoryLimitExceeded) as _me:
+                    _rss = getattr(_me, 'rss_mb', '?')
+                    st.error(
+                        f"⚠️ **메모리 한도 도달** — {mname} 비교 학습 중\n\n"
+                        "처리가 안전하게 중단되었습니다.\n\n"
+                        "**해결 방법:**\n"
+                        "- 📊 층화 샘플링 크기를 줄이세요\n"
+                        "- 🧠 RAM 사용 한도를 높이세요\n"
+                        "- 🌲 트리 수(n_estimators)를 줄이세요\n"
+                        f"- 현재 RAM: {_rss} MB / 한도: {memory_limit_mb:,} MB / "
+                        f"샘플: {sampling_size_actual:,}명"
+                    )
+                    st.stop()
+                except Exception as e:
+                    log(f"[비교 {mi+1}/{_n_compare}] {mname} 실패: {e}")
+                    st.warning(f"⚠️ {mname} 비교 학습 실패: {e}")
+                    st.exception(e)
+
+            import gc as _gc
+            _gc.collect()
+            st.session_state.train_results = _auto_compare_results
+            if _auto_compare_results:
+                st.session_state.last_result = list(_auto_compare_results.values())[-1]
+                st.success(
+                    f"✅ 비교용 ML/DL 자동 선행 학습 완료: {len(_auto_compare_results)}개 모델. "
+                    "이어서 계층 분류를 자동 학습합니다."
+                )
+            else:
+                st.error(
+                    "❌ 비교용 ML/DL 자동 선행 학습이 모두 실패했습니다. "
+                    "5-5 모델 비교표에 방금 학습한 ML/DL 행을 만들 수 없어 계층 분류를 중단합니다.\n\n"
+                    "모델 선택/패키지 설치/메모리 설정을 확인한 뒤 다시 실행하세요."
+                )
+                st.stop()
+
         st.subheader("🤖 계층 분류 학습 중 (Stage 1 + Stage 2)...")
-        _set_phase(0.60, 0.98)
+        _set_phase(0.82, 0.98)
         log("계층 분류 학습 시작: Stage 1 Red 이진 + Stage 2 Yellow 6-class")
 
         # Parquet 기반이면 메모리에 로드 (hierarchical_runner 는 DataFrame 입력)
@@ -1975,8 +2077,11 @@ if run_btn:
             "meta": _meta,
         }
         st.session_state.last_result = _hier_last
-        st.session_state.train_results = {"hierarchical": _hier_last}
         _save_result(_hier_last)
+        st.session_state.train_results = merge_train_results(
+            st.session_state.get("train_results"),
+            {"hierarchical": _hier_last},
+        )
 
         # predict_risk → features_df 에 red_suspect / action 컬럼 채우기
         # (page 4 의 yellow_subtype_view 가 이 컬럼을 사용)

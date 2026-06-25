@@ -9,6 +9,7 @@ from hana_app.core.report_exporter import (
     DOCX_AVAILABLE,
     MPL_AVAILABLE,
     _collect_page4_docx_sections,
+    _comparison_results,
     _derive_reason,
     _effective_label,
     _summarize_misclassification_reasons,
@@ -314,6 +315,22 @@ def _docx_block_texts(doc):
             yield "table", "\n".join(cell.text for row in table.rows for cell in row.cells)
 
 
+def _docx_table_rows_after_heading(doc, heading: str):
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    from docx.oxml.ns import qn
+
+    found = False
+    for child in doc.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            if Paragraph(child, doc).text == heading:
+                found = True
+        elif found and child.tag == qn("w:tbl"):
+            table = Table(child, doc)
+            return [[cell.text for cell in row.cells] for row in table.rows]
+    raise AssertionError(f"table after heading not found: {heading}")
+
+
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
 def test_docx_model_comparison_uses_current_ml_and_dl_training_results():
     from docx import Document
@@ -356,6 +373,48 @@ def test_docx_model_comparison_uses_current_ml_and_dl_training_results():
     if MPL_AVAILABLE:
         image_rels = [r for r in doc.part.rels.values() if "image" in r.reltype]
         assert image_rels, "Accuracy/F1/AUC model-comparison chart should be embedded"
+
+
+def test_comparison_results_keep_only_latest_saved_row_per_model():
+    saved_results = [
+        {"timestamp": "20260625_023031", "model_name": "hierarchical", "target": "hierarchical",
+         "metrics": {"f1_macro": 0.99}, "_file": "/results/hier_new.json"},
+        {"timestamp": "20260624_224454", "model_name": "hierarchical", "target": "hierarchical",
+         "metrics": {"f1_macro": 0.98}, "_file": "/results/hier_old.json"},
+        {"timestamp": "20260609_212431", "model_name": "xgboost", "target": "risk_binary",
+         "metrics": {"accuracy": 1.0, "f1_macro": 1.0}, "_file": "/results/xgb.json"},
+    ]
+
+    rows = _comparison_results(saved_results=saved_results, training_results=None)
+
+    assert [r["model_name"] for r in rows] == ["hierarchical", "xgboost"]
+    assert rows[0]["timestamp"] == "20260625_023031"
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_docx_model_comparison_does_not_repeat_recent_hierarchical_history():
+    from docx import Document
+
+    last_result = {"model_name": "hierarchical", "target": "hierarchical", "metrics": {"f1_macro": 0.99}}
+    saved_results = [
+        {"timestamp": "20260625_023031", "model_name": "hierarchical", "target": "hierarchical",
+         "metrics": {"f1_macro": 0.9944, "train_size": 297612}, "_file": "/results/hier_new.json"},
+        {"timestamp": "20260624_224454", "model_name": "hierarchical", "target": "hierarchical",
+         "metrics": {"f1_macro": 0.9973, "train_size": 283194}, "_file": "/results/hier_old.json"},
+        {"timestamp": "20260609_212431", "model_name": "xgboost", "target": "risk_binary",
+         "metrics": {"accuracy": 1.0, "f1_macro": 1.0, "roc_auc": 1.0, "cv_mean": 1.0, "train_size": 284232},
+         "_file": "/results/xgb.json"},
+    ]
+
+    b = build_docx_bytes(last_result, saved_results=saved_results)
+    doc = Document(io.BytesIO(b))
+    body = "\n".join(p.text for p in doc.paragraphs)
+    rows = _docx_table_rows_after_heading(doc, "5-5. 모델 비교")
+    model_names = [row[1] for row in rows[1:]]
+
+    assert "모델별 최신 결과" in body
+    assert model_names.count("hierarchical") == 1
+    assert "xgboost" in model_names
 
 
 def test_page4_docx_section_plan_treats_current_training_results_as_model_comparison():
