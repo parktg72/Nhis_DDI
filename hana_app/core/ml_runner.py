@@ -1882,8 +1882,13 @@ def train_model(
 
         scoring = "roc_auc" if target == "risk_binary" else "f1_macro"
         _xgb_sw_cv = None
+        _cat_sw_cv = None
         if model_name == "xgboost":
             _xgb_sw_cv = _xgb_multiclass_sample_weight(
+                target, y_train, cost_sensitive, cost_fp, cost_fn,
+            )
+        elif model_name == "catboost":
+            _cat_sw_cv = _catboost_sample_weight(
                 target, y_train, cost_sensitive, cost_fp, cost_fn,
             )
         if _xgb_sw_cv is not None:
@@ -1904,6 +1909,32 @@ def train_model(
                 _cv_fold_scores.append(
                     f1_score(_y_val, _m.predict(_X_val), average="macro")
                 )
+                del _m, _X_tr, _y_tr, _X_val, _y_val
+                _gc.collect()
+            cv_scores = np.array(_cv_fold_scores)
+        elif _cat_sw_cv is not None:
+            # CatBoost 의 class_weights 생성자 파라미터는 sklearn clone 과
+            # 충돌할 수 있어 cost-sensitive 경로에서는 fold 별 sample_weight
+            # 로 전달한다.
+            from sklearn.model_selection import StratifiedKFold
+            _skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+            _cv_fold_scores: list[float] = []
+            for _tr_idx, _val_idx in _skf.split(X_train, y_train):
+                _m = _build_model(
+                    model_name, target, params, use_gpu=_use_gpu, n_jobs=_n_jobs,
+                    cost_sensitive=cost_sensitive, cost_fp=cost_fp, cost_fn=cost_fn,
+                )
+                _X_tr = X_train.iloc[_tr_idx] if hasattr(X_train, "iloc") else X_train[_tr_idx]
+                _y_tr = y_train.iloc[_tr_idx] if hasattr(y_train, "iloc") else y_train[_tr_idx]
+                _X_val = X_train.iloc[_val_idx] if hasattr(X_train, "iloc") else X_train[_val_idx]
+                _y_val = y_train.iloc[_val_idx] if hasattr(y_train, "iloc") else y_train[_val_idx]
+                _m.fit(_X_tr, _y_tr, sample_weight=_cat_sw_cv[_tr_idx])
+                if scoring == "roc_auc":
+                    _proba = np.asarray(_m.predict_proba(_X_val))
+                    _score = roc_auc_score(_y_val, _proba[:, 1] if _proba.ndim == 2 else _proba)
+                else:
+                    _score = f1_score(_y_val, _m.predict(_X_val), average="macro")
+                _cv_fold_scores.append(float(_score))
                 del _m, _X_tr, _y_tr, _X_val, _y_val
                 _gc.collect()
             cv_scores = np.array(_cv_fold_scores)
@@ -1930,6 +1961,14 @@ def train_model(
             )
             if _xgb_sw is not None:
                 model.fit(X_train, y_train, sample_weight=_xgb_sw)
+            else:
+                model.fit(X_train, y_train)
+        elif model_name == "catboost":
+            _cat_sw = _catboost_sample_weight(
+                target, y_train, cost_sensitive, cost_fp, cost_fn,
+            )
+            if _cat_sw is not None:
+                model.fit(X_train, y_train, sample_weight=_cat_sw)
             else:
                 model.fit(X_train, y_train)
         else:
@@ -2170,6 +2209,34 @@ def _xgb_multiclass_sample_weight(target: str, y_train, cost_sensitive: bool,
     return balanced * cost_mult
 
 
+def _catboost_sample_weight(target: str, y_train, cost_sensitive: bool,
+                            cost_fp: float, cost_fn: float):
+    """CatBoost cost-sensitive 학습용 sample_weight 배열.
+
+    CatBoostClassifier 의 ``class_weights`` 생성자 파라미터는 일부 버전에서
+    sklearn clone 검증과 충돌한다. CV/final fit 에서는 constructor 대신
+    ``fit(sample_weight=...)`` 로 동일한 비용 비율을 전달한다.
+    """
+    if not cost_sensitive:
+        return None
+
+    if target == "risk_binary":
+        cost_ratio_by_class = {0: cost_fp, 1: cost_fn}
+    else:
+        cost_ratio_by_class = {
+            0: cost_fp,
+            1: cost_fp * 1.5,
+            2: cost_fn * 0.7,
+            3: cost_fn,
+        }
+
+    y_arr = np.asarray(y_train)
+    return np.array(
+        [cost_ratio_by_class.get(int(c), 1.0) for c in y_arr],
+        dtype=float,
+    )
+
+
 def _build_model(model_name: str, target: str, params: dict | None,
                  use_gpu: bool = False, n_jobs: int = -1,
                  cost_sensitive: bool = False, cost_fp: float = 1.0, cost_fn: float = 5.0):
@@ -2220,9 +2287,9 @@ def _build_model(model_name: str, target: str, params: dict | None,
             "n_jobs": n_jobs,
             "verbose": -1,
         }
-        if use_gpu:
-            default["device_type"] = "cuda"
-            default.pop("n_jobs", None)
+        # 공식 Windows wheel 은 CUDA tree learner 없이 배포되는 경우가 많다.
+        # nvidia-smi 감지만으로 `device_type=cuda` 를 켜면 CV 전체가 실패하므로,
+        # LightGBM 은 명시적 params override 가 있을 때만 GPU 옵션을 사용한다.
         if n_classes > 2:
             default["objective"] = "multiclass"
             default["num_class"] = n_classes
@@ -2242,11 +2309,11 @@ def _build_model(model_name: str, target: str, params: dict | None,
             "loss_function": "Logloss" if n_classes == 2 else "MultiClass",
             "verbose": 0,
             "random_seed": 42,
-            "task_type": "GPU" if use_gpu else "CPU",
+            # GPU 감지만으로 CatBoost GPU 를 켜지 않는다. GPU 활성화는 사용자가
+            # params 로 명시하고 별도 환경 검증을 통과한 경우에만 허용한다.
+            "task_type": "CPU",
             "thread_count": n_jobs if n_jobs > 0 else -1,
         }
-        if _cw is not None:
-            default["class_weights"] = list(_cw.values())
         return CatBoostClassifier(**(default | (params or {})))
 
     elif model_name == "random_forest":

@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 import numpy as np
+from sklearn.base import BaseEstimator, ClassifierMixin
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 # TabNet 래퍼
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TabNetWrapper:
+class TabNetWrapper(ClassifierMixin, BaseEstimator):
     """pytorch-tabnet TabNetClassifier를 sklearn 인터페이스로 래핑."""
 
     def __init__(
@@ -110,7 +111,7 @@ class TabNetWrapper:
 # GNN 래퍼 (실험적)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class GNNWrapper:
+class GNNWrapper(ClassifierMixin, BaseEstimator):
     """
     DEPRECATED pseudo-DL wrapper over aggregate tabular features.
 
@@ -214,7 +215,7 @@ class GNNWrapper:
 # Temporal Transformer 래퍼 (실험적)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TemporalTransformerWrapper:
+class TemporalTransformerWrapper(ClassifierMixin, BaseEstimator):
     """
     DEPRECATED pseudo-DL wrapper over aggregate tabular features.
 
