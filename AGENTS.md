@@ -43,11 +43,12 @@ Research freeze trigger phrases include `Nov→Dec`, `future_mi_t6`, `octnov`, `
 - AGY HQ / `antigravity-worker`: environment, DevOps, Windows offline deployment, Python 3.12 parity, BAT/CRLF checks, disk-space and risk gates, external research. Not the orchestrator and not the implementation owner.
 - Claude HQ: requirements, architecture, operational definitions, label semantics, leakage/schema/freeze logical review, final QA.
 - Codex HQ / `codex-worker`: implementation, TDD, focused technical validation, train-serving parity regressions, read-only code review when requested.
+- OpenCode HQ / `opencode-worker`: dev-only auxiliary lane for read-only code review, refactor alternatives, UI/UX code ideas, and plan second opinions via direct `/home/ptg/.opencode/bin/opencode run`. Additive only; it does not satisfy critical cross-family review and is never a Windows-production dependency.
 - `hermes-worker`: read-only runtime/log/context summarization. It is not Hermes LO.
 
 ## Communication and handoff
 
 - Do not send a new outbound message to another agent while one is in flight. Queue it and wait for completion/idle signal.
 - All agent results must include exact files changed, commands/tests run, validation status, risks, and the single recommended next step.
-- Critical changes (label definitions, train-serving schema, HANA query logic, freeze/gate policy) require cross-family review before merge.
+- Critical changes (label definitions, train-serving schema, HANA query logic, freeze/gate policy) require cross-family review before merge. OpenCode is additive only and does not count toward this critical cross-family requirement.
 - Do not commit, push, publish, or perform irreversible actions unless the user explicitly asks.

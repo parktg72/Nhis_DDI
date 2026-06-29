@@ -76,6 +76,7 @@ UI 변경 시 PyWebView 데스크톱 모드에서 **실제 클릭 검증**.
 
 - **Critical** (라벨 정의·학습/서빙 스키마·HANA 쿼리) → cross-family 필수 (Anthropic ↔ OpenAI).
 - 일상 구현 (UI·작은 리팩터) → Sonnet 단독 가능.
+- **OpenCode** (dev-only 보조): read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·계획 second opinion. Direct CLI `opencode run`으로만 사용하며, additive only라 critical cross-family gate를 충족하지 않고 Windows 폐쇄망 production dependency가 될 수 없다.
 - `/advisor` 는 plan + 마무리 두 번이 기본.
 
 ### ⚠️ 메시지 전송 보류 원칙 (Message Transmission Deferral Rule)

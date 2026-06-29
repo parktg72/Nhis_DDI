@@ -1,0 +1,2921 @@
+{
+  "projectName": "MODE_11_hana",
+  "projectDescription": "처방 데이터(HANA) 기반 부적절 처방 위험 예측 ML 파이프라인 및 운영형 서빙 시스템",
+  "languages": [
+    "json",
+    "markdown",
+    "unknown",
+    "python",
+    "yaml",
+    "txt",
+    "dockerfile",
+    "batch",
+    "toml",
+    "shell"
+  ],
+  "frameworks": [
+    "FastAPI",
+    "Streamlit",
+    "PyWebView",
+    "DuckDB",
+    "pytest",
+    "scikit-learn",
+    "XGBoost"
+  ],
+  "scriptCompleted": true,
+  "files": [
+    {
+      "path": ".agents/agents_config.json",
+      "language": "json",
+      "sizeLines": 170,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".agents/agy_hq.md",
+      "language": "markdown",
+      "sizeLines": 48,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".agents/claude_hq.md",
+      "language": "markdown",
+      "sizeLines": 53,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".agents/codex_hq.md",
+      "language": "markdown",
+      "sizeLines": 49,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".agents/message_deferral_guide.md",
+      "language": "markdown",
+      "sizeLines": 47,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".agents/opencode_hq.md",
+      "language": "markdown",
+      "sizeLines": 43,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".claude/agents/agy-bridge.md",
+      "language": "markdown",
+      "sizeLines": 33,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".claude/agents/antigravity-worker.md",
+      "language": "markdown",
+      "sizeLines": 36,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".claude/agents/claude-bridge.md",
+      "language": "markdown",
+      "sizeLines": 33,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".claude/agents/codex-bridge.md",
+      "language": "markdown",
+      "sizeLines": 33,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".claude/agents/codex-worker.md",
+      "language": "markdown",
+      "sizeLines": 33,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".claude/agents/hermes-worker.md",
+      "language": "markdown",
+      "sizeLines": 28,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".claude/agents/opencode-worker.md",
+      "language": "markdown",
+      "sizeLines": 39,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".gitattributes",
+      "language": "unknown",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": ".understand-anything/.understandignore",
+      "language": "unknown",
+      "sizeLines": 91,
+      "fileCategory": "code"
+    },
+    {
+      "path": ".understand-anything/config.json",
+      "language": "json",
+      "sizeLines": 4,
+      "fileCategory": "config"
+    },
+    {
+      "path": "AGENTS.md",
+      "language": "markdown",
+      "sizeLines": 54,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 113,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "CLINICAL_STANDARDS_v1.0.md",
+      "language": "markdown",
+      "sizeLines": 549,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "config/api_config.yaml",
+      "language": "yaml",
+      "sizeLines": 56,
+      "fileCategory": "config"
+    },
+    {
+      "path": "config/drug_rules.yaml",
+      "language": "yaml",
+      "sizeLines": 405,
+      "fileCategory": "config"
+    },
+    {
+      "path": "config/settings.py",
+      "language": "python",
+      "sizeLines": 82,
+      "fileCategory": "code"
+    },
+    {
+      "path": "constraints-py312.txt",
+      "language": "txt",
+      "sizeLines": 62,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "dags/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "dags/ddi_batch_predict_dag.py",
+      "language": "python",
+      "sizeLines": 442,
+      "fileCategory": "code"
+    },
+    {
+      "path": "dags/ddi_etl_dag.py",
+      "language": "python",
+      "sizeLines": 341,
+      "fileCategory": "code"
+    },
+    {
+      "path": "dags/ddi_feature_dag.py",
+      "language": "python",
+      "sizeLines": 251,
+      "fileCategory": "code"
+    },
+    {
+      "path": "dags/ddi_train_dag.py",
+      "language": "python",
+      "sizeLines": 460,
+      "fileCategory": "code"
+    },
+    {
+      "path": "data_pipeline_architecture.md",
+      "language": "markdown",
+      "sizeLines": 244,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "desktop_app.py",
+      "language": "python",
+      "sizeLines": 210,
+      "fileCategory": "code"
+    },
+    {
+      "path": "Dockerfile",
+      "language": "dockerfile",
+      "sizeLines": 92,
+      "fileCategory": "infra"
+    },
+    {
+      "path": "docs/model_cards/sparse_linear_multi_inst_t6.md",
+      "language": "markdown",
+      "sizeLines": 61,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/ops/dl-smoke-runbook.md",
+      "language": "markdown",
+      "sizeLines": 286,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/ops/feature-build-temp-disk-runbook.md",
+      "language": "markdown",
+      "sizeLines": 63,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/ops/hierarchical-deploy-runbook.md",
+      "language": "markdown",
+      "sizeLines": 42,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/ops/lenient-sunset-degraded-checklist.md",
+      "language": "markdown",
+      "sizeLines": 167,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/ops/serving-ddi-edi-wk-coverage.md",
+      "language": "markdown",
+      "sizeLines": 75,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/ops/sparse-linear-serving-runbook.md",
+      "language": "markdown",
+      "sizeLines": 72,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/ops/tau_decision_log_template.md",
+      "language": "markdown",
+      "sizeLines": 143,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/plans/2026-06-09-terminal-raw-subset-extractor.md",
+      "language": "markdown",
+      "sizeLines": 87,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/2026-05-06-codex-review-for-claude.md",
+      "language": "markdown",
+      "sizeLines": 80,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/2026-05-06-qwen-review-after-codex-for-claude.md",
+      "language": "markdown",
+      "sizeLines": 254,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/2026-05-07-cross-family-round.md",
+      "language": "markdown",
+      "sizeLines": 155,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/2026-05-07-park-decisions.md",
+      "language": "markdown",
+      "sizeLines": 104,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/2026-05-18-cuda126-dl-next-steps.md",
+      "language": "markdown",
+      "sizeLines": 120,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/2026-06-02_ml_dl_and_diskfull_review.md",
+      "language": "markdown",
+      "sizeLines": 110,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/2026-06-19-work-summary.md",
+      "language": "markdown",
+      "sizeLines": 139,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/phase3_baseline_summary.md",
+      "language": "markdown",
+      "sizeLines": 58,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/reports/phase3_next_session_checklist.md",
+      "language": "markdown",
+      "sizeLines": 255,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-03-codex-review-fixes.md",
+      "language": "markdown",
+      "sizeLines": 1293,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-03-structural-improvements.md",
+      "language": "markdown",
+      "sizeLines": 1044,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-04-deploy-atomic-rollback-config.md",
+      "language": "markdown",
+      "sizeLines": 720,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-04-middleware-schemas-coverage.md",
+      "language": "markdown",
+      "sizeLines": 269,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-04-predictor-coverage.md",
+      "language": "markdown",
+      "sizeLines": 518,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-04-trainer-pipeline-coverage.md",
+      "language": "markdown",
+      "sizeLines": 459,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-05-phase3-gat-model.md",
+      "language": "markdown",
+      "sizeLines": 2027,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-06-monitoring-dashboard.md",
+      "language": "markdown",
+      "sizeLines": 1982,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-07-hana-etl-connection.md",
+      "language": "markdown",
+      "sizeLines": 1082,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-10-page4-page6-improvement.md",
+      "language": "markdown",
+      "sizeLines": 925,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-17-desktop-app-restoration.md",
+      "language": "markdown",
+      "sizeLines": 964,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-04-17-yellow-subtype-hierarchical.md",
+      "language": "markdown",
+      "sizeLines": 1861,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-26-extracted-sparse-training-ui.md",
+      "language": "markdown",
+      "sizeLines": 95,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-05-28-codex-agy-direct-tool-bridge.md",
+      "language": "markdown",
+      "sizeLines": 245,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-03-structural-improvements-design.md",
+      "language": "markdown",
+      "sizeLines": 225,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-05-phase3-gat-model-design.md",
+      "language": "markdown",
+      "sizeLines": 242,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-06-hana-etl-connection-design.md",
+      "language": "markdown",
+      "sizeLines": 439,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-06-monitoring-dashboard-design.md",
+      "language": "markdown",
+      "sizeLines": 411,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-10-page4-page6-improvement-design.md",
+      "language": "markdown",
+      "sizeLines": 199,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-17-desktop-app-design.md",
+      "language": "markdown",
+      "sizeLines": 275,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-04-17-yellow-subtype-hierarchical-design.md",
+      "language": "markdown",
+      "sizeLines": 363,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-05-23-future-outcome-label-design.md",
+      "language": "markdown",
+      "sizeLines": 419,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-05-28-codex-agy-direct-tool-bridge-design.md",
+      "language": "markdown",
+      "sizeLines": 83,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-09-page4-report-export-design.md",
+      "language": "markdown",
+      "sizeLines": 218,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "download_all.bat",
+      "language": "batch",
+      "sizeLines": 111,
+      "fileCategory": "script"
+    },
+    {
+      "path": "download_pywebview.bat",
+      "language": "batch",
+      "sizeLines": 34,
+      "fileCategory": "script"
+    },
+    {
+      "path": "generate_smoke_dl_bundle.bat",
+      "language": "batch",
+      "sizeLines": 26,
+      "fileCategory": "script"
+    },
+    {
+      "path": "hana_app/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/.streamlit/config.toml",
+      "language": "toml",
+      "sizeLines": 18,
+      "fileCategory": "config"
+    },
+    {
+      "path": "hana_app/app.py",
+      "language": "python",
+      "sizeLines": 115,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/__init__.py",
+      "language": "python",
+      "sizeLines": 1,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/config.py",
+      "language": "python",
+      "sizeLines": 295,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/db.py",
+      "language": "python",
+      "sizeLines": 349,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/etl_logger.py",
+      "language": "python",
+      "sizeLines": 53,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/hana_etl.py",
+      "language": "python",
+      "sizeLines": 1425,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/hierarchical_cv.py",
+      "language": "python",
+      "sizeLines": 235,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/hierarchical_metrics.py",
+      "language": "python",
+      "sizeLines": 264,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/hierarchical_runner.py",
+      "language": "python",
+      "sizeLines": 796,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/memory_guard.py",
+      "language": "python",
+      "sizeLines": 299,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/ml_runner.py",
+      "language": "python",
+      "sizeLines": 2449,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/page_guards.py",
+      "language": "python",
+      "sizeLines": 52,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/phase3_models.py",
+      "language": "python",
+      "sizeLines": 382,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/report_exporter.py",
+      "language": "python",
+      "sizeLines": 1119,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/sas_reader.py",
+      "language": "python",
+      "sizeLines": 1217,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/sparse_research.py",
+      "language": "python",
+      "sizeLines": 201,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/strata_utils.py",
+      "language": "python",
+      "sizeLines": 36,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/table_validator.py",
+      "language": "python",
+      "sizeLines": 50,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/y_other_monitoring.py",
+      "language": "python",
+      "sizeLines": 173,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/core/yellow_subtype_view.py",
+      "language": "python",
+      "sizeLines": 141,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/pages/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/pages/_monitoring_helpers.py",
+      "language": "python",
+      "sizeLines": 92,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/pages/1_🔌_연결_및_테이블설정.py",
+      "language": "python",
+      "sizeLines": 748,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/pages/2_🔍_데이터_미리보기.py",
+      "language": "python",
+      "sizeLines": 301,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/pages/3_🤖_모델_학습.py",
+      "language": "python",
+      "sizeLines": 2147,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/pages/4_📊_결과_분석.py",
+      "language": "python",
+      "sizeLines": 489,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/pages/5_🗄️_분석DB_관리.py",
+      "language": "python",
+      "sizeLines": 344,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/pages/6_📊_모니터링.py",
+      "language": "python",
+      "sizeLines": 280,
+      "fileCategory": "code"
+    },
+    {
+      "path": "hana_app/requirements.txt",
+      "language": "txt",
+      "sizeLines": 62,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "hana_app/run.bat",
+      "language": "batch",
+      "sizeLines": 84,
+      "fileCategory": "script"
+    },
+    {
+      "path": "hana_app/run.sh",
+      "language": "shell",
+      "sizeLines": 56,
+      "fileCategory": "script"
+    },
+    {
+      "path": "hana/download.bat",
+      "language": "batch",
+      "sizeLines": 90,
+      "fileCategory": "script"
+    },
+    {
+      "path": "hana/install.bat",
+      "language": "batch",
+      "sizeLines": 156,
+      "fileCategory": "script"
+    },
+    {
+      "path": "inspect_parquet_history.bat",
+      "language": "batch",
+      "sizeLines": 33,
+      "fileCategory": "script"
+    },
+    {
+      "path": "install_312.bat",
+      "language": "batch",
+      "sizeLines": 292,
+      "fileCategory": "script"
+    },
+    {
+      "path": "install_all.bat",
+      "language": "batch",
+      "sizeLines": 321,
+      "fileCategory": "script"
+    },
+    {
+      "path": "install_all.sh",
+      "language": "shell",
+      "sizeLines": 166,
+      "fileCategory": "script"
+    },
+    {
+      "path": "install_pywebview.bat",
+      "language": "batch",
+      "sizeLines": 56,
+      "fileCategory": "script"
+    },
+    {
+      "path": "labeling/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "labeling/adr_labeler.py",
+      "language": "python",
+      "sizeLines": 251,
+      "fileCategory": "code"
+    },
+    {
+      "path": "labeling/golden_validator.py",
+      "language": "python",
+      "sizeLines": 295,
+      "fileCategory": "code"
+    },
+    {
+      "path": "labeling/pipeline.py",
+      "language": "python",
+      "sizeLines": 264,
+      "fileCategory": "code"
+    },
+    {
+      "path": "labeling/sample_extractor.py",
+      "language": "python",
+      "sizeLines": 267,
+      "fileCategory": "code"
+    },
+    {
+      "path": "monitoring/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "monitoring/alert_rules.py",
+      "language": "python",
+      "sizeLines": 267,
+      "fileCategory": "code"
+    },
+    {
+      "path": "monitoring/drift_detector.py",
+      "language": "python",
+      "sizeLines": 301,
+      "fileCategory": "code"
+    },
+    {
+      "path": "monitoring/grafana/dashboard.json",
+      "language": "json",
+      "sizeLines": 384,
+      "fileCategory": "config"
+    },
+    {
+      "path": "monitoring/metrics_writer.py",
+      "language": "python",
+      "sizeLines": 140,
+      "fileCategory": "code"
+    },
+    {
+      "path": "monitoring/metrics.py",
+      "language": "python",
+      "sizeLines": 218,
+      "fileCategory": "code"
+    },
+    {
+      "path": "monitoring/model_monitor.py",
+      "language": "python",
+      "sizeLines": 244,
+      "fileCategory": "code"
+    },
+    {
+      "path": "monitoring/prometheus/rules.yml",
+      "language": "yaml",
+      "sizeLines": 105,
+      "fileCategory": "config"
+    },
+    {
+      "path": "packages_win/download.bat",
+      "language": "batch",
+      "sizeLines": 89,
+      "fileCategory": "script"
+    },
+    {
+      "path": "packages_win/install.bat",
+      "language": "batch",
+      "sizeLines": 121,
+      "fileCategory": "script"
+    },
+    {
+      "path": "packages_win/requirements.txt",
+      "language": "txt",
+      "sizeLines": 85,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "PROJECT_PLAN.md",
+      "language": "markdown",
+      "sizeLines": 456,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "QA_PLAN_v1.0.md",
+      "language": "markdown",
+      "sizeLines": 679,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/__init__.py",
+      "language": "python",
+      "sizeLines": 11,
+      "fileCategory": "code"
+    },
+    {
+      "path": "rules/duplicate_detector.py",
+      "language": "python",
+      "sizeLines": 305,
+      "fileCategory": "code"
+    },
+    {
+      "path": "rules/risk_drug_constants.py",
+      "language": "python",
+      "sizeLines": 46,
+      "fileCategory": "code"
+    },
+    {
+      "path": "rules/safety_net.py",
+      "language": "python",
+      "sizeLines": 607,
+      "fileCategory": "code"
+    },
+    {
+      "path": "run_api_smoke_dl.bat",
+      "language": "batch",
+      "sizeLines": 35,
+      "fileCategory": "script"
+    },
+    {
+      "path": "run_desktop.bat",
+      "language": "batch",
+      "sizeLines": 26,
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/build_ddi_matrix.py",
+      "language": "python",
+      "sizeLines": 290,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/datasets/__init__.py",
+      "language": "python",
+      "sizeLines": 39,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/datasets/contracts.py",
+      "language": "python",
+      "sizeLines": 258,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/datasets/export_sparse_linear_bundle.py",
+      "language": "python",
+      "sizeLines": 221,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/datasets/smoke_dl_bundle.py",
+      "language": "python",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/__init__.py",
+      "language": "python",
+      "sizeLines": 37,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/clinical_rules.py",
+      "language": "python",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/code_standardizer.py",
+      "language": "python",
+      "sizeLines": 267,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/drug_master.py",
+      "language": "python",
+      "sizeLines": 470,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/feature_writer.py",
+      "language": "python",
+      "sizeLines": 174,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/models.py",
+      "language": "python",
+      "sizeLines": 357,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/overlap_calculator.py",
+      "language": "python",
+      "sizeLines": 289,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/pipeline.py",
+      "language": "python",
+      "sizeLines": 333,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/prescription_aggregator.py",
+      "language": "python",
+      "sizeLines": 642,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/pseudonymizer.py",
+      "language": "python",
+      "sizeLines": 79,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/quality_checker.py",
+      "language": "python",
+      "sizeLines": 128,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/sample_factory.py",
+      "language": "python",
+      "sizeLines": 304,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/etl/schema_validator.py",
+      "language": "python",
+      "sizeLines": 320,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/features/__init__.py",
+      "language": "python",
+      "sizeLines": 27,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/features/cyp_features.py",
+      "language": "python",
+      "sizeLines": 198,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/features/feature_engineer.py",
+      "language": "python",
+      "sizeLines": 217,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/features/graph_builder.py",
+      "language": "python",
+      "sizeLines": 241,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/features/normalizer.py",
+      "language": "python",
+      "sizeLines": 152,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/features/selector.py",
+      "language": "python",
+      "sizeLines": 191,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/features/temporal_features.py",
+      "language": "python",
+      "sizeLines": 136,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/fetch_dur_api.py",
+      "language": "python",
+      "sizeLines": 327,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/__init__.py",
+      "language": "python",
+      "sizeLines": 1,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/build_drug_vocab_audit.py",
+      "language": "python",
+      "sizeLines": 317,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/build_drug_vocab.py",
+      "language": "python",
+      "sizeLines": 132,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/build_edi_wk_map.py",
+      "language": "python",
+      "sizeLines": 146,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/build_future_outcome_dataset.py",
+      "language": "python",
+      "sizeLines": 451,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/build_multihot_smoke.py",
+      "language": "python",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/build_sparse_training_dataset.py",
+      "language": "python",
+      "sizeLines": 403,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/ddi_mapping_audit.py",
+      "language": "python",
+      "sizeLines": 545,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/eligibility_loader.py",
+      "language": "python",
+      "sizeLines": 85,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/extract_raw_subset.py",
+      "language": "python",
+      "sizeLines": 440,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/full_cohort_history_loader.py",
+      "language": "python",
+      "sizeLines": 149,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/future_outcome_label.py",
+      "language": "python",
+      "sizeLines": 369,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/gen_result_docx.py",
+      "language": "python",
+      "sizeLines": 154,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/inspect_parquet_history.py",
+      "language": "python",
+      "sizeLines": 239,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/label_audit.py",
+      "language": "python",
+      "sizeLines": 252,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/make_patient_disjoint_dataset.py",
+      "language": "python",
+      "sizeLines": 185,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/measure_edi_wk_coverage.py",
+      "language": "python",
+      "sizeLines": 153,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/medication_class_features.py",
+      "language": "python",
+      "sizeLines": 106,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/mlp_smoke_train.py",
+      "language": "python",
+      "sizeLines": 493,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/multi_day_parquet_provider.py",
+      "language": "python",
+      "sizeLines": 194,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/multi_institution_label.py",
+      "language": "python",
+      "sizeLines": 454,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/multihot_encoder.py",
+      "language": "python",
+      "sizeLines": 125,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/parquet_history_provider.py",
+      "language": "python",
+      "sizeLines": 75,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/phase3_baseline_summary.py",
+      "language": "python",
+      "sizeLines": 420,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/retrain_hierarchical.py",
+      "language": "python",
+      "sizeLines": 179,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/smoke_history_provider.py",
+      "language": "python",
+      "sizeLines": 43,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/sparse_training_smoke.py",
+      "language": "python",
+      "sizeLines": 740,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/therapeutic_duplication_label.py",
+      "language": "python",
+      "sizeLines": 510,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/validate_dl_bundle.py",
+      "language": "python",
+      "sizeLines": 172,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/ops/verify_smoke_dl.py",
+      "language": "python",
+      "sizeLines": 229,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/parse_drugbank.py",
+      "language": "python",
+      "sizeLines": 355,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/__init__.py",
+      "language": "python",
+      "sizeLines": 46,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/base_graph_trainer.py",
+      "language": "python",
+      "sizeLines": 55,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/dataset.py",
+      "language": "python",
+      "sizeLines": 237,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/evaluator.py",
+      "language": "python",
+      "sizeLines": 243,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/experiment.py",
+      "language": "python",
+      "sizeLines": 155,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/gat_dataset.py",
+      "language": "python",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/gat_model.py",
+      "language": "python",
+      "sizeLines": 86,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/gat_trainer.py",
+      "language": "python",
+      "sizeLines": 334,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/hyperparams.py",
+      "language": "python",
+      "sizeLines": 146,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/pipeline.py",
+      "language": "python",
+      "sizeLines": 350,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/tau_sensitivity.py",
+      "language": "python",
+      "sizeLines": 162,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/train/trainer.py",
+      "language": "python",
+      "sizeLines": 504,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/dl_predictor.py",
+      "language": "python",
+      "sizeLines": 360,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/hana_history.py",
+      "language": "python",
+      "sizeLines": 186,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/main.py",
+      "language": "python",
+      "sizeLines": 146,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/middleware.py",
+      "language": "python",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/predictor.py",
+      "language": "python",
+      "sizeLines": 1549,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/routers/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/routers/health.py",
+      "language": "python",
+      "sizeLines": 326,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/routers/metrics.py",
+      "language": "python",
+      "sizeLines": 43,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/routers/predict.py",
+      "language": "python",
+      "sizeLines": 126,
+      "fileCategory": "code"
+    },
+    {
+      "path": "serving/schemas.py",
+      "language": "python",
+      "sizeLines": 290,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/__init__.py",
+      "language": "python",
+      "sizeLines": 1,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_dags/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_dags/test_dag_imports.py",
+      "language": "python",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_dags/test_dags.py",
+      "language": "python",
+      "sizeLines": 580,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_dags/test_ddi_train_dag.py",
+      "language": "python",
+      "sizeLines": 133,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_datasets/test_contracts.py",
+      "language": "python",
+      "sizeLines": 131,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_datasets/test_smoke_dl_bundle.py",
+      "language": "python",
+      "sizeLines": 82,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_desktop_app.py",
+      "language": "python",
+      "sizeLines": 157,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_clinical_rules.py",
+      "language": "python",
+      "sizeLines": 114,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_drug_master.py",
+      "language": "python",
+      "sizeLines": 208,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_overlap_calculator.py",
+      "language": "python",
+      "sizeLines": 184,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_pipeline.py",
+      "language": "python",
+      "sizeLines": 265,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_prescription_aggregator.py",
+      "language": "python",
+      "sizeLines": 448,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_risk_drug_constants.py",
+      "language": "python",
+      "sizeLines": 109,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_risk_drug_flags.py",
+      "language": "python",
+      "sizeLines": 99,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_sampling_reproducibility.py",
+      "language": "python",
+      "sizeLines": 96,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_triple_whammy.py",
+      "language": "python",
+      "sizeLines": 114,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_etl/test_yellow_subtype.py",
+      "language": "python",
+      "sizeLines": 185,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_features/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_features/test_features.py",
+      "language": "python",
+      "sizeLines": 417,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/conftest.py",
+      "language": "python",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_config.py",
+      "language": "python",
+      "sizeLines": 87,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_date_normalize.py",
+      "language": "python",
+      "sizeLines": 151,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_db_reconnect.py",
+      "language": "python",
+      "sizeLines": 397,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_db.py",
+      "language": "python",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_df_schema_validation.py",
+      "language": "python",
+      "sizeLines": 184,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_drugmaster_ddi_wiring.py",
+      "language": "python",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_etl_logger.py",
+      "language": "python",
+      "sizeLines": 84,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_hierarchical_cv.py",
+      "language": "python",
+      "sizeLines": 228,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_hierarchical_metrics.py",
+      "language": "python",
+      "sizeLines": 316,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_hierarchical_runner.py",
+      "language": "python",
+      "sizeLines": 677,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_load_features_from_parquet_list.py",
+      "language": "python",
+      "sizeLines": 55,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_ml_runner_pseudo_dl.py",
+      "language": "python",
+      "sizeLines": 56,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_ml_runner_sample_weight.py",
+      "language": "python",
+      "sizeLines": 99,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_ml_runner_sampling.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_ml_runner_validation.py",
+      "language": "python",
+      "sizeLines": 103,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_page_guards.py",
+      "language": "python",
+      "sizeLines": 58,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_page3_data_mode_gate.py",
+      "language": "python",
+      "sizeLines": 103,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_page3_raw_folder_select.py",
+      "language": "python",
+      "sizeLines": 79,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_page3_target_persistence.py",
+      "language": "python",
+      "sizeLines": 155,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_page4_result_render.py",
+      "language": "python",
+      "sizeLines": 84,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_report_exporter.py",
+      "language": "python",
+      "sizeLines": 353,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_sparse_research.py",
+      "language": "python",
+      "sizeLines": 163,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_stage2_sample_weight.py",
+      "language": "python",
+      "sizeLines": 107,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_strata_consistency.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_stratified_stage2.py",
+      "language": "python",
+      "sizeLines": 96,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_table_validator.py",
+      "language": "python",
+      "sizeLines": 78,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_tau_sensitivity_sweep.py",
+      "language": "python",
+      "sizeLines": 167,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_windows_ml_dl_install_contract.py",
+      "language": "python",
+      "sizeLines": 50,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_y_other_monitoring.py",
+      "language": "python",
+      "sizeLines": 148,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hana_app/test_yellow_subtype_view.py",
+      "language": "python",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_integration/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_integration/test_concurrent_reload.py",
+      "language": "python",
+      "sizeLines": 39,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_integration/test_deploy_integrity.py",
+      "language": "python",
+      "sizeLines": 771,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_integration/test_env_contract.py",
+      "language": "python",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_integration/test_gat_deploy.py",
+      "language": "python",
+      "sizeLines": 178,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_integration/test_model_path_fallback.py",
+      "language": "python",
+      "sizeLines": 46,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_integration/test_monitoring_pipeline.py",
+      "language": "python",
+      "sizeLines": 330,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_labeling/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_labeling/test_labeling.py",
+      "language": "python",
+      "sizeLines": 496,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_misc_patches.py",
+      "language": "python",
+      "sizeLines": 59,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_monitoring/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_monitoring/test_dashboard_page.py",
+      "language": "python",
+      "sizeLines": 116,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_monitoring/test_metrics_writer.py",
+      "language": "python",
+      "sizeLines": 288,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_monitoring/test_monitoring.py",
+      "language": "python",
+      "sizeLines": 559,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_build_drug_vocab_audit.py",
+      "language": "python",
+      "sizeLines": 162,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_build_drug_vocab.py",
+      "language": "python",
+      "sizeLines": 94,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_build_edi_wk_map.py",
+      "language": "python",
+      "sizeLines": 90,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_build_future_outcome_dataset.py",
+      "language": "python",
+      "sizeLines": 248,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_build_sparse_training_dataset.py",
+      "language": "python",
+      "sizeLines": 194,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_ddi_mapping_audit.py",
+      "language": "python",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_eligibility_loader.py",
+      "language": "python",
+      "sizeLines": 61,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_extract_raw_subset.py",
+      "language": "python",
+      "sizeLines": 279,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_future_outcome_label.py",
+      "language": "python",
+      "sizeLines": 242,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_inspect_parquet_history.py",
+      "language": "python",
+      "sizeLines": 132,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_label_audit.py",
+      "language": "python",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_make_patient_disjoint_dataset.py",
+      "language": "python",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_measure_edi_wk_coverage.py",
+      "language": "python",
+      "sizeLines": 40,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_medication_class_features.py",
+      "language": "python",
+      "sizeLines": 58,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_mlp_smoke_save_roundtrip.py",
+      "language": "python",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_mlp_smoke_train.py",
+      "language": "python",
+      "sizeLines": 183,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_multi_day_parquet_provider.py",
+      "language": "python",
+      "sizeLines": 225,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_multi_institution_label.py",
+      "language": "python",
+      "sizeLines": 189,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_multihot_encoder.py",
+      "language": "python",
+      "sizeLines": 192,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_parquet_history_provider.py",
+      "language": "python",
+      "sizeLines": 306,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_phase3_baseline_summary.py",
+      "language": "python",
+      "sizeLines": 122,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_retrain_hierarchical.py",
+      "language": "python",
+      "sizeLines": 141,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_smoke_history_provider.py",
+      "language": "python",
+      "sizeLines": 171,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_sparse_training_smoke.py",
+      "language": "python",
+      "sizeLines": 230,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_therapeutic_duplication_label.py",
+      "language": "python",
+      "sizeLines": 156,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_validate_dl_bundle.py",
+      "language": "python",
+      "sizeLines": 128,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ops/test_verify_smoke_dl.py",
+      "language": "python",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_packaging/test_cuda_packaging.py",
+      "language": "python",
+      "sizeLines": 215,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_rules.py",
+      "language": "python",
+      "sizeLines": 463,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_admin_cors.py",
+      "language": "python",
+      "sizeLines": 169,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_admin_reload_dl.py",
+      "language": "python",
+      "sizeLines": 145,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_batch_response_counts.py",
+      "language": "python",
+      "sizeLines": 235,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_count_dup_train_serve_parity.py",
+      "language": "python",
+      "sizeLines": 114,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_ddi_train_serve_parity.py",
+      "language": "python",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_dl_encoder_parity.py",
+      "language": "python",
+      "sizeLines": 86,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_dl_predictor.py",
+      "language": "python",
+      "sizeLines": 284,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_dup_atc_contract.py",
+      "language": "python",
+      "sizeLines": 68,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_export_sparse_linear_bundle.py",
+      "language": "python",
+      "sizeLines": 174,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_feature_contract.py",
+      "language": "python",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_feature_schema_strict.py",
+      "language": "python",
+      "sizeLines": 342,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_hana_history.py",
+      "language": "python",
+      "sizeLines": 175,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_health_hierarchical.py",
+      "language": "python",
+      "sizeLines": 81,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_health_schema_drift.py",
+      "language": "python",
+      "sizeLines": 219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_hierarchical_serving.py",
+      "language": "python",
+      "sizeLines": 397,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_lenient_sunset.py",
+      "language": "python",
+      "sizeLines": 143,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_main_smoke_history_provider.py",
+      "language": "python",
+      "sizeLines": 47,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_middleware_schemas.py",
+      "language": "python",
+      "sizeLines": 173,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_predictor.py",
+      "language": "python",
+      "sizeLines": 475,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_red_backstop.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_rule_feature_gating.py",
+      "language": "python",
+      "sizeLines": 86,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_serving.py",
+      "language": "python",
+      "sizeLines": 353,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_severe_backstop.py",
+      "language": "python",
+      "sizeLines": 110,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_serving/test_sidecar_hash.py",
+      "language": "python",
+      "sizeLines": 195,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_train/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_train/test_gat_trainer.py",
+      "language": "python",
+      "sizeLines": 385,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_train/test_pipeline.py",
+      "language": "python",
+      "sizeLines": 356,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_train/test_train.py",
+      "language": "python",
+      "sizeLines": 431,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_train/test_trainer_sha256.py",
+      "language": "python",
+      "sizeLines": 42,
+      "fileCategory": "code"
+    },
+    {
+      "path": "verify_smoke_dl.bat",
+      "language": "batch",
+      "sizeLines": 38,
+      "fileCategory": "script"
+    },
+    {
+      "path": "web-user-guide.md",
+      "language": "markdown",
+      "sizeLines": 458,
+      "fileCategory": "docs"
+    }
+  ],
+  "totalFiles": 349,
+  "filteredByIgnore": 11,
+  "estimatedComplexity": "large",
+  "stats": {
+    "filesScanned": 349,
+    "byCategory": {
+      "config": 7,
+      "docs": 64,
+      "code": 260,
+      "infra": 1,
+      "script": 17
+    },
+    "byLanguage": {
+      "json": 3,
+      "markdown": 61,
+      "unknown": 2,
+      "python": 258,
+      "yaml": 3,
+      "txt": 3,
+      "dockerfile": 1,
+      "batch": 15,
+      "toml": 1,
+      "shell": 2
+    }
+  },
+  "importMap": {
+    ".agents/agents_config.json": [],
+    ".agents/agy_hq.md": [],
+    ".agents/claude_hq.md": [],
+    ".agents/codex_hq.md": [],
+    ".agents/message_deferral_guide.md": [],
+    ".agents/opencode_hq.md": [],
+    ".claude/agents/agy-bridge.md": [],
+    ".claude/agents/antigravity-worker.md": [],
+    ".claude/agents/claude-bridge.md": [],
+    ".claude/agents/codex-bridge.md": [],
+    ".claude/agents/codex-worker.md": [],
+    ".claude/agents/hermes-worker.md": [],
+    ".claude/agents/opencode-worker.md": [],
+    ".gitattributes": [],
+    ".understand-anything/.understandignore": [],
+    ".understand-anything/config.json": [],
+    "AGENTS.md": [],
+    "CLAUDE.md": [],
+    "CLINICAL_STANDARDS_v1.0.md": [],
+    "config/__init__.py": [],
+    "config/api_config.yaml": [],
+    "config/drug_rules.yaml": [],
+    "config/settings.py": [],
+    "constraints-py312.txt": [],
+    "dags/__init__.py": [],
+    "dags/ddi_batch_predict_dag.py": [
+      "config/settings.py"
+    ],
+    "dags/ddi_etl_dag.py": [
+      "config/settings.py"
+    ],
+    "dags/ddi_feature_dag.py": [
+      "config/settings.py"
+    ],
+    "dags/ddi_train_dag.py": [
+      "config/settings.py"
+    ],
+    "data_pipeline_architecture.md": [],
+    "desktop_app.py": [],
+    "Dockerfile": [],
+    "docs/model_cards/sparse_linear_multi_inst_t6.md": [],
+    "docs/ops/dl-smoke-runbook.md": [],
+    "docs/ops/feature-build-temp-disk-runbook.md": [],
+    "docs/ops/hierarchical-deploy-runbook.md": [],
+    "docs/ops/lenient-sunset-degraded-checklist.md": [],
+    "docs/ops/serving-ddi-edi-wk-coverage.md": [],
+    "docs/ops/sparse-linear-serving-runbook.md": [],
+    "docs/ops/tau_decision_log_template.md": [],
+    "docs/plans/2026-06-09-terminal-raw-subset-extractor.md": [],
+    "docs/reports/2026-05-06-codex-review-for-claude.md": [],
+    "docs/reports/2026-05-06-qwen-review-after-codex-for-claude.md": [],
+    "docs/reports/2026-05-07-cross-family-round.md": [],
+    "docs/reports/2026-05-07-park-decisions.md": [],
+    "docs/reports/2026-05-18-cuda126-dl-next-steps.md": [],
+    "docs/reports/2026-06-02_ml_dl_and_diskfull_review.md": [],
+    "docs/reports/2026-06-19-work-summary.md": [],
+    "docs/reports/phase3_baseline_summary.md": [],
+    "docs/reports/phase3_next_session_checklist.md": [],
+    "docs/superpowers/plans/2026-04-03-codex-review-fixes.md": [],
+    "docs/superpowers/plans/2026-04-03-structural-improvements.md": [],
+    "docs/superpowers/plans/2026-04-04-deploy-atomic-rollback-config.md": [],
+    "docs/superpowers/plans/2026-04-04-middleware-schemas-coverage.md": [],
+    "docs/superpowers/plans/2026-04-04-predictor-coverage.md": [],
+    "docs/superpowers/plans/2026-04-04-trainer-pipeline-coverage.md": [],
+    "docs/superpowers/plans/2026-04-05-phase3-gat-model.md": [],
+    "docs/superpowers/plans/2026-04-06-monitoring-dashboard.md": [],
+    "docs/superpowers/plans/2026-04-07-hana-etl-connection.md": [],
+    "docs/superpowers/plans/2026-04-10-page4-page6-improvement.md": [],
+    "docs/superpowers/plans/2026-04-17-desktop-app-restoration.md": [],
+    "docs/superpowers/plans/2026-04-17-yellow-subtype-hierarchical.md": [],
+    "docs/superpowers/plans/2026-05-26-extracted-sparse-training-ui.md": [],
+    "docs/superpowers/plans/2026-05-28-codex-agy-direct-tool-bridge.md": [],
+    "docs/superpowers/specs/2026-04-03-structural-improvements-design.md": [],
+    "docs/superpowers/specs/2026-04-05-phase3-gat-model-design.md": [],
+    "docs/superpowers/specs/2026-04-06-hana-etl-connection-design.md": [],
+    "docs/superpowers/specs/2026-04-06-monitoring-dashboard-design.md": [],
+    "docs/superpowers/specs/2026-04-10-page4-page6-improvement-design.md": [],
+    "docs/superpowers/specs/2026-04-17-desktop-app-design.md": [],
+    "docs/superpowers/specs/2026-04-17-yellow-subtype-hierarchical-design.md": [],
+    "docs/superpowers/specs/2026-05-23-future-outcome-label-design.md": [],
+    "docs/superpowers/specs/2026-05-28-codex-agy-direct-tool-bridge-design.md": [],
+    "docs/superpowers/specs/2026-06-09-page4-report-export-design.md": [],
+    "download_all.bat": [],
+    "download_pywebview.bat": [],
+    "generate_smoke_dl_bundle.bat": [],
+    "hana_app/__init__.py": [],
+    "hana_app/.streamlit/config.toml": [],
+    "hana_app/app.py": [],
+    "hana_app/core/__init__.py": [],
+    "hana_app/core/config.py": [],
+    "hana_app/core/db.py": [],
+    "hana_app/core/etl_logger.py": [],
+    "hana_app/core/hana_etl.py": [
+      "hana_app/core/db.py",
+      "scripts/etl/models.py"
+    ],
+    "hana_app/core/hierarchical_cv.py": [
+      "hana_app/core/hierarchical_metrics.py",
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "hana_app/core/hierarchical_metrics.py": [
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "hana_app/core/hierarchical_runner.py": [
+      "hana_app/core/ml_runner.py",
+      "scripts/etl/clinical_rules.py"
+    ],
+    "hana_app/core/memory_guard.py": [],
+    "hana_app/core/ml_runner.py": [
+      "hana_app/core/strata_utils.py",
+      "scripts/etl/models.py",
+      "scripts/etl/overlap_calculator.py",
+      "scripts/etl/prescription_aggregator.py"
+    ],
+    "hana_app/core/page_guards.py": [],
+    "hana_app/core/phase3_models.py": [],
+    "hana_app/core/report_exporter.py": [],
+    "hana_app/core/sas_reader.py": [
+      "hana_app/core/strata_utils.py",
+      "scripts/etl/models.py"
+    ],
+    "hana_app/core/sparse_research.py": [],
+    "hana_app/core/strata_utils.py": [],
+    "hana_app/core/table_validator.py": [
+      "hana_app/core/db.py"
+    ],
+    "hana_app/core/y_other_monitoring.py": [],
+    "hana_app/core/yellow_subtype_view.py": [
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "hana_app/pages/__init__.py": [],
+    "hana_app/pages/_monitoring_helpers.py": [],
+    "hana_app/pages/1_🔌_연결_및_테이블설정.py": [
+      "hana_app/core/config.py",
+      "hana_app/core/db.py",
+      "hana_app/core/sas_reader.py",
+      "hana_app/core/table_validator.py"
+    ],
+    "hana_app/pages/2_🔍_데이터_미리보기.py": [
+      "hana_app/core/config.py",
+      "hana_app/core/db.py",
+      "hana_app/core/sas_reader.py"
+    ],
+    "hana_app/pages/3_🤖_모델_학습.py": [
+      "hana_app/core/config.py",
+      "hana_app/core/db.py",
+      "hana_app/core/etl_logger.py",
+      "hana_app/core/hana_etl.py",
+      "hana_app/core/ml_runner.py",
+      "hana_app/core/sas_reader.py",
+      "hana_app/core/sparse_research.py"
+    ],
+    "hana_app/pages/4_📊_결과_분석.py": [
+      "hana_app/core/config.py",
+      "hana_app/core/ml_runner.py",
+      "hana_app/core/page_guards.py",
+      "hana_app/core/report_exporter.py",
+      "hana_app/core/yellow_subtype_view.py"
+    ],
+    "hana_app/pages/5_🗄️_분석DB_관리.py": [
+      "hana_app/core/config.py",
+      "hana_app/core/db.py"
+    ],
+    "hana_app/pages/6_📊_모니터링.py": [
+      "hana_app/core/config.py",
+      "hana_app/core/db.py",
+      "hana_app/core/etl_logger.py",
+      "hana_app/core/ml_runner.py"
+    ],
+    "hana_app/requirements.txt": [],
+    "hana_app/run.bat": [],
+    "hana_app/run.sh": [],
+    "hana/download.bat": [],
+    "hana/install.bat": [],
+    "inspect_parquet_history.bat": [],
+    "install_312.bat": [],
+    "install_all.bat": [],
+    "install_all.sh": [],
+    "install_pywebview.bat": [],
+    "labeling/__init__.py": [],
+    "labeling/adr_labeler.py": [],
+    "labeling/golden_validator.py": [],
+    "labeling/pipeline.py": [
+      "labeling/adr_labeler.py",
+      "labeling/golden_validator.py",
+      "labeling/sample_extractor.py"
+    ],
+    "labeling/sample_extractor.py": [],
+    "monitoring/__init__.py": [],
+    "monitoring/alert_rules.py": [],
+    "monitoring/drift_detector.py": [],
+    "monitoring/grafana/dashboard.json": [],
+    "monitoring/metrics_writer.py": [
+      "config/__init__.py",
+      "config/settings.py"
+    ],
+    "monitoring/metrics.py": [],
+    "monitoring/model_monitor.py": [],
+    "monitoring/prometheus/rules.yml": [],
+    "packages_win/download.bat": [],
+    "packages_win/install.bat": [],
+    "packages_win/requirements.txt": [],
+    "PROJECT_PLAN.md": [],
+    "QA_PLAN_v1.0.md": [],
+    "rules/__init__.py": [
+      "rules/duplicate_detector.py",
+      "rules/safety_net.py"
+    ],
+    "rules/duplicate_detector.py": [],
+    "rules/risk_drug_constants.py": [],
+    "rules/safety_net.py": [],
+    "run_api_smoke_dl.bat": [],
+    "run_desktop.bat": [],
+    "scripts/build_ddi_matrix.py": [],
+    "scripts/datasets/__init__.py": [
+      "scripts/datasets/contracts.py"
+    ],
+    "scripts/datasets/contracts.py": [],
+    "scripts/datasets/export_sparse_linear_bundle.py": [
+      "scripts/datasets/contracts.py"
+    ],
+    "scripts/datasets/smoke_dl_bundle.py": [
+      "scripts/datasets/contracts.py"
+    ],
+    "scripts/etl/__init__.py": [
+      "scripts/etl/models.py",
+      "scripts/etl/pipeline.py",
+      "scripts/etl/sample_factory.py"
+    ],
+    "scripts/etl/clinical_rules.py": [],
+    "scripts/etl/code_standardizer.py": [
+      "scripts/etl/drug_master.py"
+    ],
+    "scripts/etl/drug_master.py": [],
+    "scripts/etl/feature_writer.py": [
+      "scripts/etl/models.py"
+    ],
+    "scripts/etl/models.py": [],
+    "scripts/etl/overlap_calculator.py": [
+      "scripts/etl/models.py"
+    ],
+    "scripts/etl/pipeline.py": [
+      "scripts/etl/code_standardizer.py",
+      "scripts/etl/drug_master.py",
+      "scripts/etl/feature_writer.py",
+      "scripts/etl/models.py",
+      "scripts/etl/overlap_calculator.py",
+      "scripts/etl/prescription_aggregator.py",
+      "scripts/etl/quality_checker.py",
+      "scripts/etl/schema_validator.py"
+    ],
+    "scripts/etl/prescription_aggregator.py": [
+      "rules/risk_drug_constants.py",
+      "scripts/etl/clinical_rules.py",
+      "scripts/etl/drug_master.py",
+      "scripts/etl/models.py",
+      "scripts/etl/overlap_calculator.py"
+    ],
+    "scripts/etl/pseudonymizer.py": [],
+    "scripts/etl/quality_checker.py": [
+      "scripts/etl/models.py"
+    ],
+    "scripts/etl/sample_factory.py": [],
+    "scripts/etl/schema_validator.py": [
+      "scripts/etl/models.py"
+    ],
+    "scripts/features/__init__.py": [
+      "scripts/features/cyp_features.py",
+      "scripts/features/feature_engineer.py",
+      "scripts/features/normalizer.py",
+      "scripts/features/selector.py",
+      "scripts/features/temporal_features.py"
+    ],
+    "scripts/features/cyp_features.py": [],
+    "scripts/features/feature_engineer.py": [
+      "scripts/features/cyp_features.py",
+      "scripts/features/normalizer.py",
+      "scripts/features/selector.py",
+      "scripts/features/temporal_features.py"
+    ],
+    "scripts/features/graph_builder.py": [],
+    "scripts/features/normalizer.py": [],
+    "scripts/features/selector.py": [],
+    "scripts/features/temporal_features.py": [
+      "scripts/etl/models.py"
+    ],
+    "scripts/fetch_dur_api.py": [],
+    "scripts/ops/__init__.py": [],
+    "scripts/ops/build_drug_vocab_audit.py": [],
+    "scripts/ops/build_drug_vocab.py": [
+      "scripts/ops/build_drug_vocab_audit.py"
+    ],
+    "scripts/ops/build_edi_wk_map.py": [],
+    "scripts/ops/build_future_outcome_dataset.py": [
+      "scripts/ops/eligibility_loader.py",
+      "scripts/ops/full_cohort_history_loader.py",
+      "scripts/ops/future_outcome_label.py",
+      "scripts/ops/medication_class_features.py"
+    ],
+    "scripts/ops/build_multihot_smoke.py": [
+      "scripts/ops/multi_day_parquet_provider.py",
+      "scripts/ops/multihot_encoder.py"
+    ],
+    "scripts/ops/build_sparse_training_dataset.py": [
+      "scripts/ops/full_cohort_history_loader.py",
+      "scripts/ops/multi_institution_label.py",
+      "scripts/ops/therapeutic_duplication_label.py"
+    ],
+    "scripts/ops/ddi_mapping_audit.py": [
+      "scripts/etl/drug_master.py",
+      "scripts/ops/multi_day_parquet_provider.py"
+    ],
+    "scripts/ops/eligibility_loader.py": [],
+    "scripts/ops/extract_raw_subset.py": [],
+    "scripts/ops/full_cohort_history_loader.py": [],
+    "scripts/ops/future_outcome_label.py": [
+      "scripts/ops/multi_day_parquet_provider.py"
+    ],
+    "scripts/ops/gen_result_docx.py": [],
+    "scripts/ops/inspect_parquet_history.py": [
+      "scripts/datasets/contracts.py",
+      "scripts/ops/parquet_history_provider.py",
+      "serving/hana_history.py"
+    ],
+    "scripts/ops/label_audit.py": [
+      "labeling/adr_labeler.py",
+      "scripts/ops/multi_day_parquet_provider.py"
+    ],
+    "scripts/ops/make_patient_disjoint_dataset.py": [],
+    "scripts/ops/measure_edi_wk_coverage.py": [
+      "hana_app/core/ml_runner.py",
+      "scripts/etl/code_standardizer.py",
+      "scripts/etl/models.py",
+      "scripts/etl/overlap_calculator.py",
+      "scripts/etl/prescription_aggregator.py"
+    ],
+    "scripts/ops/medication_class_features.py": [],
+    "scripts/ops/mlp_smoke_train.py": [
+      "scripts/ops/label_audit.py",
+      "scripts/ops/multi_day_parquet_provider.py",
+      "scripts/ops/multi_institution_label.py",
+      "scripts/ops/multihot_encoder.py",
+      "scripts/ops/therapeutic_duplication_label.py"
+    ],
+    "scripts/ops/multi_day_parquet_provider.py": [],
+    "scripts/ops/multi_institution_label.py": [
+      "scripts/ops/multi_day_parquet_provider.py"
+    ],
+    "scripts/ops/multihot_encoder.py": [],
+    "scripts/ops/parquet_history_provider.py": [
+      "scripts/datasets/contracts.py",
+      "serving/hana_history.py"
+    ],
+    "scripts/ops/phase3_baseline_summary.py": [],
+    "scripts/ops/retrain_hierarchical.py": [
+      "hana_app/core/hierarchical_runner.py",
+      "hana_app/core/ml_runner.py",
+      "scripts/etl/models.py"
+    ],
+    "scripts/ops/smoke_history_provider.py": [
+      "serving/hana_history.py"
+    ],
+    "scripts/ops/sparse_training_smoke.py": [
+      "scripts/ops/mlp_smoke_train.py"
+    ],
+    "scripts/ops/therapeutic_duplication_label.py": [
+      "scripts/ops/multi_day_parquet_provider.py"
+    ],
+    "scripts/ops/validate_dl_bundle.py": [
+      "scripts/datasets/contracts.py"
+    ],
+    "scripts/ops/verify_smoke_dl.py": [
+      "scripts/datasets/smoke_dl_bundle.py",
+      "scripts/ops/validate_dl_bundle.py"
+    ],
+    "scripts/parse_drugbank.py": [],
+    "scripts/train/__init__.py": [
+      "scripts/train/dataset.py",
+      "scripts/train/evaluator.py",
+      "scripts/train/experiment.py",
+      "scripts/train/hyperparams.py",
+      "scripts/train/pipeline.py",
+      "scripts/train/trainer.py"
+    ],
+    "scripts/train/base_graph_trainer.py": [
+      "scripts/train/gat_dataset.py",
+      "scripts/train/trainer.py"
+    ],
+    "scripts/train/dataset.py": [],
+    "scripts/train/evaluator.py": [],
+    "scripts/train/experiment.py": [
+      "scripts/train/evaluator.py"
+    ],
+    "scripts/train/gat_dataset.py": [],
+    "scripts/train/gat_model.py": [],
+    "scripts/train/gat_trainer.py": [
+      "scripts/features/graph_builder.py",
+      "scripts/train/base_graph_trainer.py",
+      "scripts/train/gat_dataset.py"
+    ],
+    "scripts/train/hyperparams.py": [],
+    "scripts/train/pipeline.py": [
+      "scripts/train/dataset.py",
+      "scripts/train/evaluator.py",
+      "scripts/train/experiment.py",
+      "scripts/train/hyperparams.py",
+      "scripts/train/trainer.py"
+    ],
+    "scripts/train/tau_sensitivity.py": [
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "scripts/train/trainer.py": [
+      "scripts/train/dataset.py",
+      "scripts/train/evaluator.py"
+    ],
+    "serving/__init__.py": [],
+    "serving/dl_predictor.py": [
+      "config/__init__.py",
+      "config/settings.py",
+      "scripts/datasets/contracts.py",
+      "serving/hana_history.py"
+    ],
+    "serving/hana_history.py": [
+      "scripts/datasets/contracts.py"
+    ],
+    "serving/main.py": [
+      "config/__init__.py",
+      "monitoring/metrics_writer.py",
+      "serving/middleware.py",
+      "serving/predictor.py",
+      "serving/routers/__init__.py",
+      "serving/routers/health.py",
+      "serving/routers/predict.py"
+    ],
+    "serving/middleware.py": [],
+    "serving/predictor.py": [
+      "rules/risk_drug_constants.py",
+      "serving/dl_predictor.py",
+      "serving/hana_history.py",
+      "serving/schemas.py"
+    ],
+    "serving/routers/__init__.py": [],
+    "serving/routers/health.py": [
+      "config/__init__.py",
+      "scripts/datasets/contracts.py",
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "serving/routers/metrics.py": [
+      "monitoring/metrics_writer.py",
+      "serving/routers/health.py"
+    ],
+    "serving/routers/predict.py": [
+      "monitoring/metrics_writer.py",
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "serving/schemas.py": [],
+    "tests/__init__.py": [],
+    "tests/test_dags/__init__.py": [],
+    "tests/test_dags/test_dag_imports.py": [
+      "tests/test_dags/test_dags.py"
+    ],
+    "tests/test_dags/test_dags.py": [],
+    "tests/test_dags/test_ddi_train_dag.py": [],
+    "tests/test_datasets/test_contracts.py": [
+      "scripts/datasets/contracts.py"
+    ],
+    "tests/test_datasets/test_smoke_dl_bundle.py": [
+      "serving/dl_predictor.py",
+      "serving/predictor.py",
+      "serving/routers/__init__.py",
+      "serving/routers/health.py"
+    ],
+    "tests/test_desktop_app.py": [
+      "desktop_app.py"
+    ],
+    "tests/test_etl/__init__.py": [],
+    "tests/test_etl/test_clinical_rules.py": [
+      "scripts/etl/clinical_rules.py"
+    ],
+    "tests/test_etl/test_drug_master.py": [
+      "scripts/etl/drug_master.py"
+    ],
+    "tests/test_etl/test_overlap_calculator.py": [
+      "scripts/etl/models.py",
+      "scripts/etl/overlap_calculator.py"
+    ],
+    "tests/test_etl/test_pipeline.py": [
+      "scripts/etl/models.py",
+      "scripts/etl/pipeline.py",
+      "scripts/etl/sample_factory.py"
+    ],
+    "tests/test_etl/test_prescription_aggregator.py": [
+      "scripts/etl/models.py",
+      "scripts/etl/prescription_aggregator.py"
+    ],
+    "tests/test_etl/test_risk_drug_constants.py": [
+      "rules/risk_drug_constants.py"
+    ],
+    "tests/test_etl/test_risk_drug_flags.py": [
+      "scripts/etl/models.py",
+      "scripts/etl/prescription_aggregator.py"
+    ],
+    "tests/test_etl/test_sampling_reproducibility.py": [
+      "hana_app/core/ml_runner.py",
+      "hana_app/core/sas_reader.py"
+    ],
+    "tests/test_etl/test_triple_whammy.py": [
+      "scripts/etl/prescription_aggregator.py"
+    ],
+    "tests/test_etl/test_yellow_subtype.py": [
+      "scripts/etl/models.py",
+      "scripts/etl/prescription_aggregator.py"
+    ],
+    "tests/test_features/__init__.py": [],
+    "tests/test_features/test_features.py": [
+      "scripts/etl/models.py",
+      "scripts/features/cyp_features.py",
+      "scripts/features/feature_engineer.py",
+      "scripts/features/normalizer.py",
+      "scripts/features/selector.py",
+      "scripts/features/temporal_features.py"
+    ],
+    "tests/test_hana_app/__init__.py": [],
+    "tests/test_hana_app/conftest.py": [],
+    "tests/test_hana_app/test_config.py": [
+      "hana_app/core/config.py"
+    ],
+    "tests/test_hana_app/test_date_normalize.py": [
+      "hana_app/core/hana_etl.py"
+    ],
+    "tests/test_hana_app/test_db_reconnect.py": [
+      "hana_app/core/db.py"
+    ],
+    "tests/test_hana_app/test_db.py": [
+      "hana_app/core/db.py"
+    ],
+    "tests/test_hana_app/test_df_schema_validation.py": [
+      "hana_app/core/hana_etl.py"
+    ],
+    "tests/test_hana_app/test_drugmaster_ddi_wiring.py": [],
+    "tests/test_hana_app/test_etl_logger.py": [],
+    "tests/test_hana_app/test_hierarchical_cv.py": [
+      "hana_app/core/hierarchical_cv.py",
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "tests/test_hana_app/test_hierarchical_metrics.py": [
+      "hana_app/core/hierarchical_metrics.py",
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "tests/test_hana_app/test_hierarchical_runner.py": [
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "tests/test_hana_app/test_load_features_from_parquet_list.py": [
+      "hana_app/core/ml_runner.py"
+    ],
+    "tests/test_hana_app/test_ml_runner_pseudo_dl.py": [],
+    "tests/test_hana_app/test_ml_runner_sample_weight.py": [
+      "hana_app/core/ml_runner.py"
+    ],
+    "tests/test_hana_app/test_ml_runner_sampling.py": [
+      "hana_app/core/ml_runner.py"
+    ],
+    "tests/test_hana_app/test_ml_runner_validation.py": [
+      "hana_app/core/ml_runner.py"
+    ],
+    "tests/test_hana_app/test_page_guards.py": [
+      "hana_app/core/page_guards.py"
+    ],
+    "tests/test_hana_app/test_page3_data_mode_gate.py": [],
+    "tests/test_hana_app/test_page3_raw_folder_select.py": [],
+    "tests/test_hana_app/test_page3_target_persistence.py": [],
+    "tests/test_hana_app/test_page4_result_render.py": [],
+    "tests/test_hana_app/test_report_exporter.py": [
+      "hana_app/core/report_exporter.py"
+    ],
+    "tests/test_hana_app/test_sparse_research.py": [],
+    "tests/test_hana_app/test_stage2_sample_weight.py": [
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "tests/test_hana_app/test_strata_consistency.py": [
+      "hana_app/core/hana_etl.py",
+      "hana_app/core/strata_utils.py"
+    ],
+    "tests/test_hana_app/test_stratified_stage2.py": [
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "tests/test_hana_app/test_table_validator.py": [],
+    "tests/test_hana_app/test_tau_sensitivity_sweep.py": [
+      "hana_app/core/hierarchical_runner.py"
+    ],
+    "tests/test_hana_app/test_windows_ml_dl_install_contract.py": [],
+    "tests/test_hana_app/test_y_other_monitoring.py": [
+      "hana_app/core/y_other_monitoring.py"
+    ],
+    "tests/test_hana_app/test_yellow_subtype_view.py": [
+      "hana_app/core/hierarchical_runner.py",
+      "hana_app/core/yellow_subtype_view.py"
+    ],
+    "tests/test_integration/__init__.py": [],
+    "tests/test_integration/test_concurrent_reload.py": [],
+    "tests/test_integration/test_deploy_integrity.py": [],
+    "tests/test_integration/test_env_contract.py": [],
+    "tests/test_integration/test_gat_deploy.py": [
+      "scripts/features/graph_builder.py",
+      "scripts/train/gat_dataset.py",
+      "scripts/train/gat_trainer.py"
+    ],
+    "tests/test_integration/test_model_path_fallback.py": [],
+    "tests/test_integration/test_monitoring_pipeline.py": [],
+    "tests/test_labeling/__init__.py": [],
+    "tests/test_labeling/test_labeling.py": [],
+    "tests/test_misc_patches.py": [],
+    "tests/test_monitoring/__init__.py": [],
+    "tests/test_monitoring/test_dashboard_page.py": [],
+    "tests/test_monitoring/test_metrics_writer.py": [],
+    "tests/test_monitoring/test_monitoring.py": [],
+    "tests/test_ops/test_build_drug_vocab_audit.py": [],
+    "tests/test_ops/test_build_drug_vocab.py": [],
+    "tests/test_ops/test_build_edi_wk_map.py": [
+      "scripts/ops/__init__.py"
+    ],
+    "tests/test_ops/test_build_future_outcome_dataset.py": [],
+    "tests/test_ops/test_build_sparse_training_dataset.py": [],
+    "tests/test_ops/test_ddi_mapping_audit.py": [],
+    "tests/test_ops/test_eligibility_loader.py": [],
+    "tests/test_ops/test_extract_raw_subset.py": [
+      "scripts/ops/extract_raw_subset.py"
+    ],
+    "tests/test_ops/test_future_outcome_label.py": [],
+    "tests/test_ops/test_inspect_parquet_history.py": [],
+    "tests/test_ops/test_label_audit.py": [],
+    "tests/test_ops/test_make_patient_disjoint_dataset.py": [],
+    "tests/test_ops/test_measure_edi_wk_coverage.py": [
+      "scripts/etl/models.py",
+      "scripts/ops/__init__.py"
+    ],
+    "tests/test_ops/test_medication_class_features.py": [],
+    "tests/test_ops/test_mlp_smoke_save_roundtrip.py": [],
+    "tests/test_ops/test_mlp_smoke_train.py": [],
+    "tests/test_ops/test_multi_day_parquet_provider.py": [],
+    "tests/test_ops/test_multi_institution_label.py": [],
+    "tests/test_ops/test_multihot_encoder.py": [],
+    "tests/test_ops/test_parquet_history_provider.py": [
+      "scripts/datasets/contracts.py",
+      "serving/hana_history.py"
+    ],
+    "tests/test_ops/test_phase3_baseline_summary.py": [],
+    "tests/test_ops/test_retrain_hierarchical.py": [
+      "hana_app/core/hierarchical_runner.py",
+      "scripts/etl/models.py",
+      "scripts/etl/prescription_aggregator.py",
+      "scripts/ops/__init__.py"
+    ],
+    "tests/test_ops/test_smoke_history_provider.py": [
+      "scripts/datasets/contracts.py",
+      "serving/hana_history.py"
+    ],
+    "tests/test_ops/test_sparse_training_smoke.py": [],
+    "tests/test_ops/test_therapeutic_duplication_label.py": [],
+    "tests/test_ops/test_validate_dl_bundle.py": [
+      "scripts/datasets/contracts.py"
+    ],
+    "tests/test_ops/test_verify_smoke_dl.py": [],
+    "tests/test_packaging/test_cuda_packaging.py": [],
+    "tests/test_rules.py": [
+      "rules/duplicate_detector.py",
+      "rules/safety_net.py"
+    ],
+    "tests/test_serving/__init__.py": [],
+    "tests/test_serving/test_admin_cors.py": [],
+    "tests/test_serving/test_admin_reload_dl.py": [
+      "scripts/datasets/contracts.py",
+      "serving/dl_predictor.py",
+      "serving/predictor.py",
+      "serving/routers/__init__.py",
+      "serving/routers/health.py"
+    ],
+    "tests/test_serving/test_batch_response_counts.py": [
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_count_dup_train_serve_parity.py": [],
+    "tests/test_serving/test_ddi_train_serve_parity.py": [],
+    "tests/test_serving/test_dl_encoder_parity.py": [
+      "scripts/ops/multihot_encoder.py",
+      "serving/dl_predictor.py"
+    ],
+    "tests/test_serving/test_dl_predictor.py": [
+      "scripts/datasets/contracts.py"
+    ],
+    "tests/test_serving/test_dup_atc_contract.py": [
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_export_sparse_linear_bundle.py": [
+      "scripts/datasets/export_sparse_linear_bundle.py",
+      "scripts/ops/multihot_encoder.py",
+      "serving/dl_predictor.py"
+    ],
+    "tests/test_serving/test_feature_contract.py": [],
+    "tests/test_serving/test_feature_schema_strict.py": [
+      "serving/predictor.py"
+    ],
+    "tests/test_serving/test_hana_history.py": [
+      "serving/hana_history.py"
+    ],
+    "tests/test_serving/test_health_hierarchical.py": [
+      "serving/predictor.py"
+    ],
+    "tests/test_serving/test_health_schema_drift.py": [
+      "serving/predictor.py"
+    ],
+    "tests/test_serving/test_hierarchical_serving.py": [
+      "hana_app/core/hierarchical_runner.py",
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_lenient_sunset.py": [
+      "serving/predictor.py"
+    ],
+    "tests/test_serving/test_main_smoke_history_provider.py": [],
+    "tests/test_serving/test_middleware_schemas.py": [
+      "serving/middleware.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_predictor.py": [
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_red_backstop.py": [
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_rule_feature_gating.py": [
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_serving.py": [
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_severe_backstop.py": [
+      "serving/predictor.py",
+      "serving/schemas.py"
+    ],
+    "tests/test_serving/test_sidecar_hash.py": [],
+    "tests/test_train/__init__.py": [],
+    "tests/test_train/test_gat_trainer.py": [],
+    "tests/test_train/test_pipeline.py": [
+      "scripts/train/dataset.py",
+      "scripts/train/evaluator.py",
+      "scripts/train/hyperparams.py",
+      "scripts/train/pipeline.py",
+      "scripts/train/trainer.py"
+    ],
+    "tests/test_train/test_train.py": [
+      "scripts/train/dataset.py",
+      "scripts/train/evaluator.py",
+      "scripts/train/experiment.py",
+      "scripts/train/hyperparams.py",
+      "scripts/train/pipeline.py"
+    ],
+    "tests/test_train/test_trainer_sha256.py": [],
+    "verify_smoke_dl.bat": [],
+    "web-user-guide.md": []
+  },
+  "importStats": {
+    "filesScanned": 349,
+    "filesWithImports": 131,
+    "totalEdges": 287
+  }
+}

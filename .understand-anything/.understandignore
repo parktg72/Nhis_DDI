@@ -1,0 +1,91 @@
+# MODE_11_hana .understandignore
+# Goal: full project architecture graph without protected/generated/heavy artifacts.
+# Keep repo-local agent docs included because they are part of orchestration surface.
+
+# VCS / caches / OS metadata
+.git/
+._*
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Virtualenvs / local tool state
+.venv/
+venv/
+.venv_hana/
+.venv_macos/
+.venv_macos_broken_*/
+.venv_wsl/
+.venv.bak/
+.venv.bak.py311/
+.worktrees/
+.omc/
+.tri-bridge/
+.antigravitycli/
+
+# Secrets / local credentials
+.env
+*.env
+hana_app/hana_config.json
+
+# Protected or heavy generated artifacts
+packages_linux/
+packages_mac/
+packages_win/py*/
+packages_win/spark/
+hana/py312/
+mlruns/
+models/
+out/
+cache/
+hana_app/results/
+hana_app/models/
+hana_app/data/features_cache/
+docs/reports/*.docx
+*.parquet
+*.whl
+*.joblib
+*.pkl
+*.pickle
+*.db
+*.sqlite
+*.sqlite3
+
+# Raw/external reference data too large or privacy-sensitive for graph analysis
+data/
+drugbank/
+hira/
+
+# Generated graph/debug artifacts
+.graphify_python
+graphify-out/
+debug_logs/
+reviews/
+.understand-anything/intermediate/
+.understand-anything/tmp/
+.understand-anything/.trash-*/
+
+# Binary/media exports
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.xlsx
+*.zip
+*.7z
+*.gz
+
+# Include repo-local orchestration surface despite gitignore defaults
+!.agents/
+!.agents/agents_config.json
+!.agents/*_hq.md
+!.agents/message_deferral_guide.md
+!.claude/
+!.claude/agents/
+!.claude/agents/*.md

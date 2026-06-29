@@ -104,3 +104,29 @@ web-user-guide.md
 cache/
 hana_app/results/
 *.code-workspace
+
+# Repo-local agent orchestration surface (versioned by request)
+!.agents/
+.agents/*
+!.agents/agents_config.json
+!.agents/*_hq.md
+!.agents/message_deferral_guide.md
+!.claude/
+.claude/*
+!.claude/agents/
+!.claude/agents/*.md
+
+# Understand Anything knowledge graph (version final graph + reproducibility metadata)
+.understand-anything/
+!.understand-anything/
+!.understand-anything/.understandignore
+!.understand-anything/config.json
+!.understand-anything/knowledge-graph.json
+!.understand-anything/meta.json
+!.understand-anything/fingerprints.json
+!.understand-anything/intermediate/
+.understand-anything/intermediate/*
+!.understand-anything/intermediate/scan-result.json
+!.understand-anything/intermediate/review.json
+.understand-anything/tmp/
+.understand-anything/.trash-*/
