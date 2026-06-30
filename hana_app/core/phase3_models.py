@@ -19,6 +19,20 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 logger = logging.getLogger(__name__)
 
 
+def _batch_size(value: int) -> int:
+    """Return a positive mini-batch size for pseudo-DL wrappers."""
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return 1024
+
+
+def _iter_slices(n_rows: int, batch_size: int):
+    size = _batch_size(batch_size)
+    for start in range(0, n_rows, size):
+        yield slice(start, min(start + size, n_rows))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TabNet 래퍼
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,6 +142,7 @@ class GNNWrapper(ClassifierMixin, BaseEstimator):
         dropout: float = 0.3,
         max_epochs: int = 50,
         lr: float = 0.001,
+        batch_size: int = 1024,
         n_classes: int = 2,
         use_gpu: bool = False,
     ):
@@ -136,6 +151,7 @@ class GNNWrapper(ClassifierMixin, BaseEstimator):
         self.dropout = dropout
         self.max_epochs = max_epochs
         self.lr = lr
+        self.batch_size = batch_size
         self.n_classes = n_classes
         self.use_gpu = use_gpu
         self._model = None
@@ -146,10 +162,10 @@ class GNNWrapper(ClassifierMixin, BaseEstimator):
         import torch
         import torch.nn as nn
 
-        X_t = torch.tensor(np.array(X, dtype=np.float32))
-        y_t = torch.tensor(np.array(y, dtype=np.int64))
-        self.classes_ = np.unique(y)
-        n_feat = X_t.shape[1]
+        X_arr = np.array(X, dtype=np.float32)
+        y_arr = np.array(y, dtype=np.int64)
+        self.classes_ = np.unique(y_arr)
+        n_feat = X_arr.shape[1]
 
         device = torch.device("cuda" if self.use_gpu and torch.cuda.is_available() else "cpu")
 
@@ -169,14 +185,16 @@ class GNNWrapper(ClassifierMixin, BaseEstimator):
         optimizer = torch.optim.Adam(net.parameters(), lr=self.lr)
         loss_fn = nn.CrossEntropyLoss()
 
-        X_t, y_t = X_t.to(device), y_t.to(device)
         net.train()
         for _ in range(self.max_epochs):
-            optimizer.zero_grad()
-            out = net(X_t)
-            loss = loss_fn(out, y_t)
-            loss.backward()
-            optimizer.step()
+            for _sl in _iter_slices(len(X_arr), self.batch_size):
+                X_t = torch.tensor(X_arr[_sl]).to(device)
+                y_t = torch.tensor(y_arr[_sl]).to(device)
+                optimizer.zero_grad()
+                out = net(X_t)
+                loss = loss_fn(out, y_t)
+                loss.backward()
+                optimizer.step()
 
         self._model = net
         self._device = device
@@ -192,17 +210,21 @@ class GNNWrapper(ClassifierMixin, BaseEstimator):
     def predict_proba(self, X):
         import torch
         self._model.eval()
-        X_t = torch.tensor(np.array(X, dtype=np.float32)).to(self._device)
+        X_arr = np.array(X, dtype=np.float32)
+        probs = []
         with torch.no_grad():
-            logits = self._model(X_t)
-            proba = torch.softmax(logits, dim=1).cpu().numpy()
-        return proba
+            for _sl in _iter_slices(len(X_arr), self.batch_size):
+                X_t = torch.tensor(X_arr[_sl]).to(self._device)
+                logits = self._model(X_t)
+                probs.append(torch.softmax(logits, dim=1).cpu().numpy())
+        return np.concatenate(probs, axis=0) if probs else np.empty((0, self.n_classes))
 
     def get_params(self, deep=True):
         return {
             "hidden_dim": self.hidden_dim, "num_layers": self.num_layers,
             "dropout": self.dropout, "max_epochs": self.max_epochs,
-            "lr": self.lr, "n_classes": self.n_classes, "use_gpu": self.use_gpu,
+            "lr": self.lr, "batch_size": self.batch_size,
+            "n_classes": self.n_classes, "use_gpu": self.use_gpu,
         }
 
     def set_params(self, **params):
@@ -233,6 +255,7 @@ class TemporalTransformerWrapper(ClassifierMixin, BaseEstimator):
         dropout: float = 0.1,
         max_epochs: int = 50,
         lr: float = 0.001,
+        batch_size: int = 1024,
         n_classes: int = 2,
         use_gpu: bool = False,
     ):
@@ -242,6 +265,7 @@ class TemporalTransformerWrapper(ClassifierMixin, BaseEstimator):
         self.dropout = dropout
         self.max_epochs = max_epochs
         self.lr = lr
+        self.batch_size = batch_size
         self.n_classes = n_classes
         self.use_gpu = use_gpu
         self._model = None
@@ -283,16 +307,16 @@ class TemporalTransformerWrapper(ClassifierMixin, BaseEstimator):
         optimizer = torch.optim.Adam(net.parameters(), lr=self.lr)
         loss_fn = nn.CrossEntropyLoss()
 
-        X_t = torch.tensor(X_arr).to(device)
-        y_t = torch.tensor(y_arr).to(device)
-
         net.train()
         for _ in range(self.max_epochs):
-            optimizer.zero_grad()
-            out = net(X_t)
-            loss = loss_fn(out, y_t)
-            loss.backward()
-            optimizer.step()
+            for _sl in _iter_slices(len(X_arr), self.batch_size):
+                X_t = torch.tensor(X_arr[_sl]).to(device)
+                y_t = torch.tensor(y_arr[_sl]).to(device)
+                optimizer.zero_grad()
+                out = net(X_t)
+                loss = loss_fn(out, y_t)
+                loss.backward()
+                optimizer.step()
 
         self._model = net
         self._device = device
@@ -310,17 +334,21 @@ class TemporalTransformerWrapper(ClassifierMixin, BaseEstimator):
     def predict_proba(self, X):
         import torch
         self._model.eval()
-        X_t = torch.tensor(np.array(X, dtype=np.float32)).to(self._device)
+        X_arr = np.array(X, dtype=np.float32)
+        probs = []
         with torch.no_grad():
-            logits = self._model(X_t)
-            proba = torch.softmax(logits, dim=1).cpu().numpy()
-        return proba
+            for _sl in _iter_slices(len(X_arr), self.batch_size):
+                X_t = torch.tensor(X_arr[_sl]).to(self._device)
+                logits = self._model(X_t)
+                probs.append(torch.softmax(logits, dim=1).cpu().numpy())
+        return np.concatenate(probs, axis=0) if probs else np.empty((0, self.n_classes))
 
     def get_params(self, deep=True):
         return {
             "d_model": self.d_model, "nhead": self.nhead,
             "num_layers": self.num_layers, "dropout": self.dropout,
             "max_epochs": self.max_epochs, "lr": self.lr,
+            "batch_size": self.batch_size,
             "n_classes": self.n_classes, "use_gpu": self.use_gpu,
         }
 
@@ -364,6 +392,7 @@ def build_phase3_model(
             dropout=p.get("dropout", 0.3),
             max_epochs=p.get("max_epochs", 50),
             lr=p.get("lr", 0.001),
+            batch_size=p.get("batch_size", 1024),
             n_classes=n_classes,
             use_gpu=use_gpu,
         )
@@ -376,6 +405,7 @@ def build_phase3_model(
             dropout=p.get("dropout", 0.1),
             max_epochs=p.get("max_epochs", 50),
             lr=p.get("lr", 0.001),
+            batch_size=p.get("batch_size", 1024),
             n_classes=n_classes,
             use_gpu=use_gpu,
         )

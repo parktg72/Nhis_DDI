@@ -178,6 +178,14 @@ def _build_misclassified_cases(x_test, y_true, y_pred, y_proba=None,
 
 GPU_MEMORY_FRACTION: float = 0.70  # GPU 메모리 최대 사용 비율 (기본 70%)
 PSEUDO_DL_MODELS = {"gnn", "temporal_transformer"}
+GPU_SERIAL_CV_MODELS = {"tabnet", "gnn", "temporal_transformer"}
+
+
+def _effective_cv_n_jobs(model_name: str, n_jobs: int, use_gpu: bool) -> int:
+    """Avoid concurrent GPU fits for Phase 3 torch-based models."""
+    if use_gpu and model_name in GPU_SERIAL_CV_MODELS:
+        return 1
+    return n_jobs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1857,6 +1865,7 @@ def train_model(
         _use_gpu = _has_cuda()
         _gpu_guard = _GpuMemoryGuard(gpu_memory_fraction)
         _gpu_guard.__enter__()
+        _cv_n_jobs = _effective_cv_n_jobs(model_name, _n_jobs, _use_gpu)
         if _round == 0 and progress_cb:
             if _use_gpu and _gpu_guard.info:
                 progress_cb(f"GPU 사용: {_gpu_guard.info}")
@@ -1867,6 +1876,8 @@ def train_model(
                 )
             else:
                 progress_cb("CPU 모드 (CUDA GPU 없음)")
+            if _cv_n_jobs != _n_jobs:
+                progress_cb("Phase 3 GPU CV는 GPU OOM 방지를 위해 병렬=1로 실행")
 
         model = _build_model(
             model_name, target, params, use_gpu=_use_gpu, n_jobs=_n_jobs,
@@ -1939,7 +1950,7 @@ def train_model(
                 _gc.collect()
             cv_scores = np.array(_cv_fold_scores)
         else:
-            cv_scores = cross_val_score(model, X_train, y_train, cv=cv_folds, scoring=scoring, n_jobs=_n_jobs)
+            cv_scores = cross_val_score(model, X_train, y_train, cv=cv_folds, scoring=scoring, n_jobs=_cv_n_jobs)
 
         if progress_cb:
             progress_cb(f"{_round_label}CV 완료: {scoring} = {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
