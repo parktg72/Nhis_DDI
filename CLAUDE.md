@@ -77,7 +77,7 @@ UI 변경 시 PyWebView 데스크톱 모드에서 **실제 클릭 검증**.
 - **Critical** (라벨 정의·학습/서빙 스키마·HANA 쿼리) → cross-family 필수 (Anthropic ↔ OpenAI).
 - 일상 구현 (UI·작은 리팩터) → Sonnet 단독 가능.
 - **OpenCode** (dev-only 보조): read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·계획 second opinion. Direct CLI `opencode run`으로만 사용하며, additive only라 critical cross-family gate를 충족하지 않고 Windows 폐쇄망 production dependency가 될 수 없다.
-  - 모델: `opencode-go` provider 우선 (기본 `opencode-go/qwen3.7-max`). go 한도 소진(429/quota) 시 zen provider 폴백 `--model opencode/qwen3.6-plus-free`.
+  - 모델: `opencode-go` provider 우선 (기본 `opencode-go/qwen3.7-max`). go 한도 소진(429/quota) 시 zen provider 폴백 `--model opencode/glm-5` (수동 재시도 — `opencode run` one-shot은 자동 폴백 미작동).
 - **L0 결정**: Hermes가 LO로 호출한 세션은 Hermes가 오케스트레이션 L0, 그 외 단독 세션은 Claude가 L0. L0가 과제 성격에 따라 codex/opencode/agy 역할·모델을 배정한다 (전역 `~/.claude/CLAUDE.md` 위임 라우팅 참조).
 - `/advisor` 는 plan + 마무리 두 번이 기본.
 

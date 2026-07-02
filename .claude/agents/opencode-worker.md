@@ -21,7 +21,9 @@ tools:
 [모델 정책 — go 우선, zen 폴백]
 - 기본: `opencode-go` provider 사용 (config 기본값 `opencode-go/qwen3.7-max`; `--model` 미지정 시 자동 적용).
 - go 한도 소진 신호(429, quota exceeded, rate limit 에러) 감지 시 opencode zen provider로 폴백:
-  `--model opencode/qwen3.6-plus-free` (고성능 필요 시 `--model opencode/kimi-k2.7-code`).
+  `--model opencode/glm-5` (무료 대안 `--model opencode/big-pickle`, 고성능 `--model opencode/kimi-k2.7-code`).
+- `opencode run` one-shot 모드에서는 oh-my-openagent 자동 폴백이 작동하지 않는다(에러 즉시 종료).
+  폴백은 반드시 `--model` 수동 재시도로 수행한다. `opencode/qwen3.6-plus-free`는 폐기된 모델명 — 사용 금지.
 - 폴백 발생 사실은 결과 보고의 Validation 항목에 명시한다.
 
 [위임 규칙]
