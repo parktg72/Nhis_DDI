@@ -21,6 +21,7 @@ from .clinical_rules import (
     collect_red_triggers, collect_yellow_triggers, collect_severe_immediate_triggers,
 )
 from .drug_master import DrugMaster
+from .drug_ontology import DrugOntology, SEVERITY_ORDER, _lookup_cache, get_lookup
 from .models import DrugOverlapPair, PatientFeatures, PrescriptionRecord
 from .overlap_calculator import calculate_overlaps_for_patient, get_concurrent_drug_count
 
@@ -197,8 +198,8 @@ def aggregate_patient_features(
     return features
 
 
-_ddi_lookup_cache: dict[int, dict[frozenset, str]] = {}
-_SEVERITY_ORDER = {"Contraindicated": 4, "Major": 3, "Moderate": 2, "Minor": 1}
+_ddi_lookup_cache = _lookup_cache
+_SEVERITY_ORDER = SEVERITY_ORDER
 
 # DDI 피처 시맨틱 버전 (단일 출처). DDI 카운트의 **의미**가 바뀌면 올린다.
 #   v2: WK_COMPN_CD→DrugMaster→DB-code, overlap 쌍 기준(edi→wk 브릿지로 서빙 정합, Task B).
@@ -215,28 +216,9 @@ DDI_FEATURE_SEMANTICS_VERSION = "ddi.v2"
 FEATURE_SEMANTICS_VERSION = "rulefeat.v1"
 
 
-def _get_ddi_lookup(ddi_matrix: pd.DataFrame) -> dict[frozenset, str]:
+def _get_ddi_lookup(ddi_matrix: pd.DataFrame) -> dict[frozenset[str], str]:
     """DDI 매트릭스 → ID 쌍 기반 조회 딕셔너리 (캐시됨)."""
-    matrix_id = id(ddi_matrix)
-    if matrix_id in _ddi_lookup_cache:
-        return _ddi_lookup_cache[matrix_id]
-
-    ddi_lookup: dict[frozenset, str] = {}
-    id_cols = ("drug_a_id", "drug_b_id")
-    if all(c in ddi_matrix.columns for c in id_cols):
-        for row in ddi_matrix.itertuples(index=False):
-            a_id = str(row.drug_a_id).strip()
-            b_id = str(row.drug_b_id).strip()
-            if not a_id or not b_id:
-                continue
-            key = frozenset({a_id, b_id})
-            new_sev = str(row.severity)
-            existing = ddi_lookup.get(key)
-            if existing is None or _SEVERITY_ORDER.get(new_sev, 0) > _SEVERITY_ORDER.get(existing, 0):
-                ddi_lookup[key] = new_sev
-
-    _ddi_lookup_cache[matrix_id] = ddi_lookup
-    return ddi_lookup
+    return get_lookup(ddi_matrix).pairs
 
 
 def ddi_pair_severities(
@@ -255,26 +237,8 @@ def ddi_pair_severities(
         # ddi_lookup 은 drug_a_id/drug_b_id 기반 → drug_master 없으면 WK 직접조회 불가 → 미평가.
         return out
 
-    ddi_lookup = _get_ddi_lookup(ddi_matrix)
-
-    def _best_severity_for_pair(ids_a: list[str], ids_b: list[str]) -> str | None:
-        best: str | None = None
-        for ia in ids_a:
-            for ib in ids_b:
-                sev = ddi_lookup.get(frozenset({ia, ib}))
-                if sev and _SEVERITY_ORDER.get(sev, 0) > _SEVERITY_ORDER.get(best or "", 0):
-                    best = sev
-        return best
-
-    for pair in pairs:
-        ids_a = drug_master.get_ddi_ids(pair.drug_a_wk_compn)
-        ids_b = drug_master.get_ddi_ids(pair.drug_b_wk_compn)
-        if not (ids_a and ids_b):
-            continue
-        severity = _best_severity_for_pair(ids_a, ids_b)
-        if severity:
-            out.append((pair, severity))
-    return out
+    ontology = DrugOntology(drug_master, ddi_matrix)
+    return ontology.pair_severities(pairs)
 
 
 def count_ddi_severities(

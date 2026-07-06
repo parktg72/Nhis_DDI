@@ -160,6 +160,41 @@ def _parse_date(s: str | None) -> date | None:
         return None
 
 
+def _parse_total_days(value: object, *, source: str, column: str, bill_no: object) -> int:
+    """Parse HANA total prescription days with an actionable schema-drift error."""
+    if value is None:
+        return 1
+    try:
+        if isinstance(value, float) and value != value:
+            return 1
+    except TypeError:
+        pass
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return 1
+    else:
+        raw = str(value)
+
+    parse_value = raw
+    if raw.endswith(".0") and raw[:-2].isdigit():
+        parse_value = raw[:-2]
+
+    try:
+        parsed = int(parse_value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        hint = ""
+        if len(raw) == 29:
+            hint = " Value is CMN_KEY-shaped; check whether a bill_no/common-key column is being read as total_days."
+        raise ValueError(
+            f"{source}.{column} total_days must be numeric; got {value!r} "
+            f"for bill_no={bill_no!r}.{hint} Check hana_config.json "
+            f"columns.{source.lower()}.total_days and the deployed target copy."
+        ) from exc
+    return parsed or 1
+
+
 def _yyyymm_range(year_from: str, month_from: str,
                   year_to: str, month_to: str) -> list[str]:
     result = []
@@ -1001,7 +1036,12 @@ ORDER BY "{pid_col}" ASC
             start_dt = _parse_date(getattr(row, c30["start_date"]))
             if not start_dt:
                 continue
-            total_days = int(getattr(row, c30["total_days"]) or 1)
+            total_days = _parse_total_days(
+                getattr(row, c30["total_days"]),
+                source="T30",
+                column=c30["total_days"],
+                bill_no=bill_no,
+            )
             wk     = str(getattr(row, c30["drug_code"]) or "").strip()
             wk_alt = str(getattr(row, c30["drug_code_alt"]) or "").strip()
             drug_code = wk if wk else wk_alt
@@ -1041,7 +1081,12 @@ ORDER BY "{pid_col}" ASC
             start_dt = _parse_date(getattr(row, c60["start_date"]))
             if not start_dt:
                 continue
-            total_days = int(getattr(row, c60["total_days"]) or 1)
+            total_days = _parse_total_days(
+                getattr(row, c60["total_days"]),
+                source="T60",
+                column=c60["total_days"],
+                bill_no=bill_no,
+            )
             gnl    = str(getattr(row, c60["drug_code"]) or "").strip()
             wk_alt = str(getattr(row, c60["drug_code_alt"]) or "").strip()
             drug_code = gnl if gnl else wk_alt

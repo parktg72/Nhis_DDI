@@ -332,6 +332,28 @@ def _docx_table_rows_after_heading(doc, heading: str):
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_docx_analysis_subject_deduplicates_demographics_by_patient_id():
+    from docx import Document
+
+    df = pd.DataFrame([
+        _row(patient_id="P1", risk_level="Red", age=70, sex_m=1, drug_count=10),
+        _row(patient_id="P1", risk_level="Yellow", age=70, sex_m=1, drug_count=20),
+        _row(patient_id="P2", risk_level="Green", age=80, sex_m=0, drug_count=5),
+    ])
+
+    b = build_docx_bytes({"model_name": "dedup_model", "metrics": {}}, df)
+    doc = Document(io.BytesIO(b))
+    rows = _docx_table_rows_after_heading(doc, "7. 분석 대상 정보")
+    values = {row[0]: row[1] for row in rows[1:]}
+
+    assert values["총 환자 수"] == "2명"
+    assert values["성별 — 남"] == "1명 (50.0%)"
+    assert values["성별 — 여"] == "1명 (50.0%)"
+    assert values["연령 평균"] == "75.0세"
+    assert values["약물 수 평균"] == "7.5종"
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
 def test_docx_model_comparison_uses_current_ml_and_dl_training_results():
     from docx import Document
 

@@ -549,6 +549,24 @@ def _add_table(doc, headers: list[str], rows: list[list[str]]) -> None:
             row[i].text = str(val)
 
 
+def _deduplicate_features_by_patient_id(features_df: pd.DataFrame) -> pd.DataFrame:
+    """Return patient-level rows for report subject summaries.
+
+    Rows with a non-empty ``patient_id`` are counted once, keeping the first
+    occurrence. Rows without a usable patient id are left untouched because
+    they cannot be safely deduplicated.
+    """
+    if "patient_id" not in features_df.columns:
+        return features_df
+
+    keys = features_df["patient_id"].astype("string").str.strip()
+    has_key = keys.notna() & (keys != "")
+    duplicate_patient = has_key & keys.where(has_key).duplicated(keep="first")
+    if not bool(duplicate_patient.any()):
+        return features_df
+    return features_df.loc[~duplicate_patient].copy()
+
+
 def _chart_yellow_subtype(features_df: pd.DataFrame) -> bytes:
     """Yellow 서브타입 분포 바차트."""
     if "yellow_subtype" not in features_df.columns:
@@ -1154,24 +1172,33 @@ def build_docx_bytes(last_result: dict,
     doc.add_heading("7. 분석 대상 정보", level=1)
 
     if has_df:
-        total_n = len(features_df)
-        rl_dist = features_df["risk_level"].value_counts().to_dict() if "risk_level" in features_df.columns else {}
+        assert features_df is not None
+        analysis_subject_df = _deduplicate_features_by_patient_id(features_df)
+        total_n = len(analysis_subject_df)
+        rl_dist = analysis_subject_df["risk_level"].value_counts().to_dict() if "risk_level" in analysis_subject_df.columns else {}
 
         target_rows: list[list[str]] = [["총 환자 수", f"{total_n:,}명"]]
         for lbl in ["Red", "Yellow", "Green", "Normal"]:
             cnt = rl_dist.get(lbl, 0)
             target_rows.append([f"  위험도 — {lbl}", f"{cnt:,}명 ({cnt / total_n * 100:.1f}%)"])
 
-        if "sex_m" in features_df.columns:
-            sex_m = int(features_df["sex_m"].sum())
+        if "sex_m" in analysis_subject_df.columns:
+            sex_m = 0
+            for sex_value in analysis_subject_df["sex_m"].tolist():
+                if pd.isna(sex_value):
+                    continue
+                try:
+                    sex_m += int(float(sex_value))
+                except (TypeError, ValueError):
+                    continue
             sex_f = total_n - sex_m
             target_rows += [
                 ["성별 — 남", f"{sex_m:,}명 ({sex_m / total_n * 100:.1f}%)"],
                 ["성별 — 여", f"{sex_f:,}명 ({sex_f / total_n * 100:.1f}%)"],
             ]
 
-        if "age" in features_df.columns:
-            age_v = features_df["age"].dropna()
+        if "age" in analysis_subject_df.columns:
+            age_v = analysis_subject_df["age"].dropna()
             age_v = age_v[age_v >= 0]
             if not age_v.empty:
                 target_rows += [
@@ -1180,8 +1207,8 @@ def build_docx_bytes(last_result: dict,
                     ["연령 범위",  f"{int(age_v.min())}~{int(age_v.max())}세"],
                 ]
 
-        if "drug_count" in features_df.columns:
-            dc = features_df["drug_count"].dropna()
+        if "drug_count" in analysis_subject_df.columns:
+            dc = analysis_subject_df["drug_count"].dropna()
             if not dc.empty:
                 target_rows += [
                     ["약물 수 평균", f"{dc.mean():.1f}종"],
@@ -1192,8 +1219,8 @@ def build_docx_bytes(last_result: dict,
         doc.add_paragraph()
 
         if MPL_AVAILABLE:
-            _drug_png = _chart_drug_hist(features_df)
-            _age_png  = _chart_age_hist(features_df)
+            _drug_png = _chart_drug_hist(analysis_subject_df)
+            _age_png  = _chart_age_hist(analysis_subject_df)
             if _drug_png:
                 _add_png(doc, _drug_png, width_inches=5.5)
             if _age_png:

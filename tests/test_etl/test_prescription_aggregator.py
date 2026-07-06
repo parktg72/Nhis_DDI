@@ -15,12 +15,14 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scripts.etl.models import PatientFeatures, PrescriptionRecord
+from scripts.etl.drug_ontology import SEVERITY_ORDER
 from scripts.etl.prescription_aggregator import (
     _assign_risk_level,
     _assign_yellow_subtype,
@@ -34,6 +36,10 @@ from scripts.etl.prescription_aggregator import (
     _HIGH_RISK_ATC_PREFIXES,
     _RENAL_RISK_ATC_PREFIXES,
     _HEPATIC_RISK_ATC_PREFIXES,
+    _SEVERITY_ORDER,
+    _ddi_lookup_cache,
+    count_ddi_severities,
+    ddi_pair_severities,
 )
 
 
@@ -69,6 +75,116 @@ def _make_rx(
         end_date=start + timedelta(days=days - 1),
         total_days=days,
     )
+
+
+def _make_pair(a: str, b: str):
+    from scripts.etl.models import DrugOverlapPair
+
+    return DrugOverlapPair(
+        patient_id="P000001",
+        drug_a_wk_compn=a,
+        drug_a_edi=None,
+        drug_a_atc=None,
+        drug_a_name=None,
+        drug_b_wk_compn=b,
+        drug_b_edi=None,
+        drug_b_atc=None,
+        drug_b_name=None,
+        overlap_start=date(2024, 1, 1),
+        overlap_end=date(2024, 1, 5),
+        overlap_days=5,
+        window_start=date(2024, 1, 1),
+        window_end=date(2024, 3, 30),
+    )
+
+
+class _FakeDrugMaster:
+    def __init__(self, mapping: dict[str, list[str]]) -> None:
+        self.mapping = mapping
+
+    def get_ddi_ids(self, wk_compn_cd: str) -> list[str]:
+        return self.mapping.get(str(wk_compn_cd), [])
+
+
+class TestDDIOntologyCompatibility:
+    def setup_method(self) -> None:
+        _ddi_lookup_cache.clear()
+
+    def test_private_severity_order_aliases_new_single_source(self):
+        assert _SEVERITY_ORDER == SEVERITY_ORDER
+
+    def test_ddi_lookup_cache_clear_remains_available(self):
+        ddi_matrix = pd.DataFrame([
+            {"drug_a_id": "D_A", "drug_b_id": "D_B", "severity": "Major"},
+        ])
+        pairs = [_make_pair("WK_A", "WK_B")]
+        master = _FakeDrugMaster({"WK_A": ["D_A"], "WK_B": ["D_B"]})
+
+        assert ddi_pair_severities(pairs, ddi_matrix, master) == [(pairs[0], "Major")]
+        assert _ddi_lookup_cache
+
+        _ddi_lookup_cache.clear()
+        assert _ddi_lookup_cache == {}
+
+    def test_ddi_pair_severities_and_counts_cover_all_severities(self):
+        ddi_matrix = pd.DataFrame([
+            {"drug_a_id": "D_CON_A", "drug_b_id": "D_CON_B", "severity": "Contraindicated"},
+            {"drug_a_id": "D_MAJ_A", "drug_b_id": "D_MAJ_B", "severity": "Major"},
+            {"drug_a_id": "D_MOD_A", "drug_b_id": "D_MOD_B", "severity": "Moderate"},
+            {"drug_a_id": "D_MIN_A", "drug_b_id": "D_MIN_B", "severity": "Minor"},
+        ])
+        pairs = [
+            _make_pair("WK_CON_A", "WK_CON_B"),
+            _make_pair("WK_MAJ_A", "WK_MAJ_B"),
+            _make_pair("WK_MOD_A", "WK_MOD_B"),
+            _make_pair("WK_MIN_A", "WK_MIN_B"),
+        ]
+        master = _FakeDrugMaster({
+            "WK_CON_A": ["D_CON_A"],
+            "WK_CON_B": ["D_CON_B"],
+            "WK_MAJ_A": ["D_MAJ_A"],
+            "WK_MAJ_B": ["D_MAJ_B"],
+            "WK_MOD_A": ["D_MOD_A"],
+            "WK_MOD_B": ["D_MOD_B"],
+            "WK_MIN_A": ["D_MIN_A"],
+            "WK_MIN_B": ["D_MIN_B"],
+        })
+
+        assert ddi_pair_severities(pairs, ddi_matrix, master) == [
+            (pairs[0], "Contraindicated"),
+            (pairs[1], "Major"),
+            (pairs[2], "Moderate"),
+            (pairs[3], "Minor"),
+        ]
+        assert count_ddi_severities(pairs, ddi_matrix, master) == {
+            "Contraindicated": 1,
+            "Major": 1,
+            "Moderate": 1,
+            "Minor": 1,
+        }
+
+    def test_combo_cross_product_and_unmapped_pairs_match_existing_behavior(self):
+        ddi_matrix = pd.DataFrame([
+            {"drug_a_id": "D_A", "drug_b_id": "D_B", "severity": "Minor"},
+            {"drug_a_id": "D_C", "drug_b_id": "D_B", "severity": "Major"},
+        ])
+        combo = _make_pair("WK_COMBO", "WK_B")
+        unmapped = _make_pair("WK_UNKNOWN", "WK_B")
+        master = _FakeDrugMaster({
+            "WK_COMBO": ["D_A", "D_C"],
+            "WK_B": ["D_B"],
+        })
+
+        result = ddi_pair_severities([combo, unmapped], ddi_matrix, master)
+
+        assert result == [(combo, "Major")]
+        assert result[0][0] is combo
+        assert count_ddi_severities([combo, unmapped], ddi_matrix, master) == {
+            "Contraindicated": 0,
+            "Major": 1,
+            "Moderate": 0,
+            "Minor": 0,
+        }
 
 
 # ─── _assign_risk_level 테스트 ───────────────────────────────────────────────
