@@ -281,7 +281,20 @@ def df_row_to_record(row) -> PrescriptionRecord:
             s = str(s)
             return date(int(s[:4]), int(s[5:7]), int(s[8:10]))
         except Exception:
-            return date.today()
+            # date.today() 폴백 금지 — 2024년 처방이 오늘 날짜가 되면 overlap/DDI
+            # 피처가 조용히 붕괴. _parse_total_days와 동일하게 실행 가능한 에러로.
+            raise ValueError(
+                f"잘못된 날짜값 {s!r} (bill_no={getattr(row, 'bill_no', '?')}) — "
+                "raw Parquet 손상 행. 원본 추출/컬럼 매핑(hana_config.json)을 확인하세요."
+            ) from None
+
+    _start = _d(row.start_date)
+    # end_date 결측은 ETL 시맨틱(start + total_days - 1)으로 유도 — 값이 있는데
+    # 파싱 불가면 _d가 raise (손상 행)
+    if row.end_date is None or (isinstance(row.end_date, float) and row.end_date != row.end_date) or str(row.end_date).strip() == "":
+        _end = _start + timedelta(days=max(int(row.total_days or 1), 1) - 1)
+    else:
+        _end = _d(row.end_date)
 
     return PrescriptionRecord(
         patient_id=str(row.patient_id or ""),
@@ -291,8 +304,8 @@ def df_row_to_record(row) -> PrescriptionRecord:
         edi_code=row.edi_code or None,
         gnl_nm_cd=row.gnl_nm_cd or None,
         efmdc_clsf_no=row.efmdc_clsf_no or None,
-        start_date=_d(row.start_date),
-        end_date=_d(row.end_date),
+        start_date=_start,
+        end_date=_end,
         total_days=int(row.total_days or 1),
         dose_once=float(row.dose_once or 1.0),
         dose_freq=int(row.dose_freq or 1),

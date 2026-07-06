@@ -86,7 +86,7 @@ _INTERVENTION_ROWS = [
     ("약사 전화",  "Y_DDI_MAJOR",                _C["MAJOR"]),
     ("문자 안내",  "Y_TRIPLE",                   _C["TRIPLE"]),
     ("모니터링",   "Y_DOUBLE·Y_DDI_MOD·Y_DUP·Y_FRAG", _C["monitor"]),
-    ("관여 안함",  "No_Alert·Green·Normal",       _C["noalert"]),
+    ("관여안함",   "No_Alert·Green·Normal",       _C["noalert"]),  # _count_distribution 키와 일치 필수
 ]
 
 _MONITORING_SUBTYPES = frozenset({"Y_DOUBLE", "Y_DDI_MOD", "Y_DUP", "Y_FRAG"})
@@ -1147,10 +1147,12 @@ def build_docx_bytes(last_result: dict,
                 str(r.get("model_name", "?")),
                 str(r.get("model_family", _model_family(r.get("model_name", "?")))),
                 str(r.get("target", "?")),
-                _fmt_report_metric(_metric_float(m.get("accuracy"))),
-                _fmt_report_metric(_metric_float(m.get("f1_macro"))),
-                _fmt_report_metric(_metric_float(m.get("roc_auc", m.get("roc_auc_ovr")))),
-                _fmt_report_metric(_metric_float(m.get("cv_mean"))),
+                # 미측정(None) 지표는 §5와 동일하게 "—" 표기 — _metric_float로
+                # 감싸면 None→0.0000으로 렌더되어 '최악 성능'처럼 오독됨
+                _fmt_report_metric(m.get("accuracy")),
+                _fmt_report_metric(m.get("f1_macro")),
+                _fmt_report_metric(m.get("roc_auc", m.get("roc_auc_ovr"))),
+                _fmt_report_metric(m.get("cv_mean")),
                 str(m.get("train_size", 0)),
             ])
         _add_table(doc, ["시간", "모델", "구분", "타겟", "Accuracy", "F1", "AUC", "CV 평균", "학습 수"], rows)

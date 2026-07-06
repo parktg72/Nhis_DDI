@@ -616,11 +616,13 @@ def stratify_and_sample_patients(
 
     # ── 나이·층화 키 생성 ─────────────────────────────────────────────
     df["_age"] = reference_year - pd.to_numeric(df[byear_col], errors="coerce")
+    # 주의: astype(str)이 NaN을 문자열 "nan"으로 바꿔 뒤의 fillna가 죽은 코드가 됨
+    # → fillna/replace를 문자열 변환과 올바른 순서로 적용 (NULL BYEAR/SEX 행 방어)
     df["_age_grp"] = pd.cut(
         df["_age"], bins=bins, labels=labels, right=False
-    ).astype(str).fillna("unknown")
-    df["_sex"] = df[sex_col].astype(str).str.strip().fillna("U")
-    df["_addr"] = df[addr_col].astype(str).str[:addr_digits].fillna("00000")
+    ).astype(str).replace("nan", "unknown")
+    df["_sex"] = df[sex_col].fillna("U").astype(str).str.strip().replace("", "U")
+    df["_addr"] = df[addr_col].fillna("00000").astype(str).str[:addr_digits]
     df["_strata"] = df["_sex"] + "|" + df["_age_grp"] + "|" + df["_addr"]
 
     total = len(df)
@@ -668,11 +670,15 @@ def stratify_and_sample_patients(
         if not pid:
             continue
         byear = getattr(row, byear_col, None)
-        sex   = str(getattr(row, sex_col, "") or "").strip() or None
-        addr  = str(getattr(row, addr_col, "") or "").strip()
+        _sex_raw = getattr(row, sex_col, None)
+        _addr_raw = getattr(row, addr_col, None)
+        # pd.isna 가드 — NaN float가 `or ""`를 통과해 str(nan)="nan" 문자열이 되거나
+        # int(float(nan))이 ValueError로 전체 샘플링을 죽이는 것 방지
+        sex  = None if pd.isna(_sex_raw) else (str(_sex_raw).strip() or None)
+        addr = "" if pd.isna(_addr_raw) else str(_addr_raw).strip()
         sampled_pids.append(pid)
         demographics[pid] = {
-            "byear":    int(float(byear)) if byear is not None else None,
+            "byear":    int(float(byear)) if byear is not None and pd.notna(byear) else None,
             "sex_type": sex,
             "addr_cd":  addr[:addr_digits] if addr else None,
         }
@@ -1607,7 +1613,7 @@ def save_demographics(
         rows.append({
             "patient_id": pid,
             "byear":      byear,
-            "age":        (ref - int(byear)) if byear is not None else None,
+            "age":        (ref - int(byear)) if byear is not None and pd.notna(byear) else None,
             "sex_type":   d.get("sex_type"),
             "addr_cd":    d.get("addr_cd"),
         })
@@ -1960,7 +1966,11 @@ def train_model(
         # train/test 크기 기록 (del 전)
         _train_size = len(X_train)
         _test_size = len(X_test)
-        _y_classes = sorted(y_test.unique() if hasattr(y_test, 'unique') else np.unique(y_test))
+        # train∪test 합집합 — y_test에만 의존하면 소수 클래스(Normal≈0 파일럿)가
+        # 빠져 classification_report ValueError / label_binarize 차원 불일치 유발
+        _y_classes = sorted(
+            set(np.unique(np.asarray(y_train))) | set(np.unique(np.asarray(y_test)))
+        )
 
         # 최종 학습 — XGBoost 4분류는 sample_weight 로 클래스 가중치 전달
         # (XGBClassifier 는 class_weights 파라미터 무시하므로 fit() 에 직접)
@@ -2048,18 +2058,23 @@ def train_model(
                     average_precision_score(_y_bin, y_proba, average="weighted")
                 )
         except Exception:
-            pass
+            # AUC 계산 실패를 침묵하면 결과 JSON에서 지표가 소리 없이 사라져
+            # 리포트가 '미측정'과 '누락'을 구분 못 함 — 반드시 로그
+            logger.warning("ROC/PR AUC 계산 실패 — 지표 생략됨", exc_info=True)
 
         # 분류 보고서
         class_names = {0: "Normal", 1: "위험"} if target == "risk_binary" else {
             v: k for k, v in RISK_LABEL_MAP.items()
         }
         target_names = [class_names.get(c, str(c)) for c in _y_classes]
-        report = classification_report(y_test, y_pred, target_names=target_names)
+        # labels= 명시 — y_pred가 y_test에 없는 클래스를 내도 shape 불일치 없음
+        report = classification_report(
+            y_test, y_pred, labels=_y_classes, target_names=target_names,
+        )
         metrics["classification_report"] = report
 
         # 혼동 행렬
-        metrics["confusion_matrix"] = confusion_matrix(y_test, y_pred).tolist()
+        metrics["confusion_matrix"] = confusion_matrix(y_test, y_pred, labels=_y_classes).tolist()
         metrics["classes"] = _y_classes
         metrics["misclassified_cases"] = _build_misclassified_cases(
             X_test, y_test, y_pred, y_proba=_miscls_proba, class_names=class_names,
@@ -2462,7 +2477,9 @@ def _save_result(result: dict) -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    # %f(마이크로초) 포함 — sampling_rounds>1이 같은 초에 끝나면 이전 라운드의
+    # pkl/result를 덮어써 best_result.model_path가 딴 라운드 바이트를 가리킴
+    ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S_%f")
     model_name = result["model_name"]
 
     # 모델 저장 (hierarchical은 별도 디렉터리에 이미 저장돼 "model" 키 없음)
