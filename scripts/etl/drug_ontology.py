@@ -46,8 +46,13 @@ class DDIMatrixLookup:
             b_id = str(raw_b).strip()
             if not a_id or not b_id:
                 continue
+            raw_sev = getattr(row, "severity")
+            if pd.isna(raw_sev):
+                # NaN severity가 str()로 truthy "nan"이 되어 서빙 DDI 알림에
+                # severity="nan"으로 노출되는 것 방지
+                continue
             key = frozenset({a_id, b_id})
-            new_sev = str(getattr(row, "severity"))
+            new_sev = str(raw_sev)
             ddi_lookup[key] = higher_severity(ddi_lookup.get(key), new_sev) or new_sev
         return cls(ddi_lookup)
 
@@ -86,7 +91,12 @@ def get_lookup(ddi_matrix: pd.DataFrame) -> DDIMatrixLookup:
         return entry.lookup
 
     lookup = DDIMatrixLookup.from_matrix(ddi_matrix)
-    _lookup_cache[matrix_id] = _LookupCacheEntry(weakref.ref(ddi_matrix), lookup)
+    # 소멸 콜백으로 엔트리 자동 축출 — 없으면 죽은 DataFrame의 대형 lookup
+    # (금기 매트릭스 ≈ 1.4M행)이 장수 프로세스에 무한 누적
+    _lookup_cache[matrix_id] = _LookupCacheEntry(
+        weakref.ref(ddi_matrix, lambda _r, _mid=matrix_id: _lookup_cache.pop(_mid, None)),
+        lookup,
+    )
     return lookup
 
 

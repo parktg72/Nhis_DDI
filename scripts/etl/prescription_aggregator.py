@@ -551,9 +551,12 @@ def aggregate_batch(
             demo_df = df_prescriptions[demo_cols].drop_duplicates("INDI_DSCM_NO")
             for row in demo_df.itertuples(index=False):
                 pid = str(row.INDI_DSCM_NO)
+                _sex_raw = getattr(row, "SEX_TYPE", None)
+                _age_raw = getattr(row, "SUJIN_POTM_AGE_ID", None)
+                # NaN이 str()로 "nan" 문자열이 되면 결측 성별이 유령 카테고리로 학습됨
                 patient_demo[pid] = {
-                    "sex": str(getattr(row, "SEX_TYPE", "")) or None,
-                    "age_id": str(getattr(row, "SUJIN_POTM_AGE_ID", "")) or None,
+                    "sex": None if pd.isna(_sex_raw) else (str(_sex_raw).strip() or None),
+                    "age_id": None if pd.isna(_age_raw) else (str(_age_raw).strip() or None),
                 }
 
     # 동시복용 쌍 → 환자별 그룹
