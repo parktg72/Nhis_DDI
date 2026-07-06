@@ -161,7 +161,9 @@ class StratifiedSampler:
         adr_pos = pool[pool[adr_col] == 1]
         adr_neg = pool[pool[adr_col] == 0]
 
-        n_pos = min(len(adr_pos), max(int(target_n * 0.20), len(adr_pos)))
+        # 20% 하한 보장하되 target_n 초과 금지 — 기존 max(..., len(adr_pos))는
+        # 항상 len(adr_pos)로 붕괴해 n_neg가 음수(rng.choice ValueError) 가능했음
+        n_pos = min(len(adr_pos), target_n, max(int(target_n * 0.20), target_n - len(adr_neg)))
         n_neg = target_n - n_pos
 
         parts = []
