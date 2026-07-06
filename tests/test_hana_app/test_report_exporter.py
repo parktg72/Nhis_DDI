@@ -346,11 +346,38 @@ def test_docx_analysis_subject_deduplicates_demographics_by_patient_id():
     rows = _docx_table_rows_after_heading(doc, "7. 분석 대상 정보")
     values = {row[0]: row[1] for row in rows[1:]}
 
-    assert values["총 환자 수"] == "2명"
+    assert values["분석대상 환자 수 (다제≥5·중복제거 후)"] == "2명"
     assert values["성별 — 남"] == "1명 (50.0%)"
-    assert values["성별 — 여"] == "1명 (50.0%)"
+    assert values["성별 — 여·미상"] == "1명 (50.0%)"
     assert values["연령 평균"] == "75.0세"
     assert values["약물 수 평균"] == "7.5종"
+    # ③ raw(3행) != 고유환자(2명) → 행/환자 불일치 경고 노출
+    assert "⚠ 행/환자 불일치" in values
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_docx_analysis_subject_reports_female_unknown_bucket_not_subtraction():
+    """① 여성 치우침 방지: demographics 결측(sex_m 전부 0)이면 여를 (총-남)으로
+    부풀리지 않고 '여·미상'으로 정직 표기하고 남성비율 저하 경고를 낸다."""
+    from docx import Document
+
+    df = pd.DataFrame([
+        _row(patient_id="P1", risk_level="Green", age=70, sex_m=0, drug_count=6),
+        _row(patient_id="P2", risk_level="Green", age=72, sex_m=0, drug_count=6),
+        _row(patient_id="P3", risk_level="Green", age=74, sex_m=0, drug_count=6),
+    ])
+
+    b = build_docx_bytes({"model_name": "m", "metrics": {}}, df)
+    doc = Document(io.BytesIO(b))
+    rows = _docx_table_rows_after_heading(doc, "7. 분석 대상 정보")
+    values = {row[0]: row[1] for row in rows[1:]}
+
+    assert values["성별 — 남"] == "0명 (0.0%)"
+    assert values["성별 — 여·미상"] == "3명 (100.0%)"
+    assert "성별 — 여" not in values           # 뺄셈 추론 '여' 라벨 폐기
+    assert "⚠ 성별 데이터 점검" in values       # 남성비율<20% 경고
+    # 정상 코호트(고유=행)이므로 행/환자 불일치 경고는 없어야 함
+    assert "⚠ 행/환자 불일치" not in values
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")

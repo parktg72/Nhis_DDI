@@ -2037,8 +2037,8 @@ if run_btn:
 
         _t_col1, _t_col2, _t_col3 = st.columns(3)
         if _stage1_trained:
-            _t_col1.metric("τ_red", f"{thresholds.get('tau_red', '?'):.3f}" if isinstance(thresholds.get('tau_red'), float) else "?")
-            _t_col2.metric("τ_review", f"{thresholds.get('tau_review', '?'):.3f}" if isinstance(thresholds.get('tau_review'), float) else "?")
+            _t_col1.metric("τ_red", f"{thresholds.get('tau_red', '?'):.6f}" if isinstance(thresholds.get('tau_red'), float) else "?")
+            _t_col2.metric("τ_review", f"{thresholds.get('tau_review', '?'):.6f}" if isinstance(thresholds.get('tau_review'), float) else "?")
         else:
             _t_col1.metric("τ_red", "— (Stage1 미학습)")
             _t_col2.metric("Red 표본", f"{_red_cnt:,}명")

@@ -105,8 +105,8 @@ if target == "hierarchical":
     _tau_red = _th.get("tau_red")
     _tau_review = _th.get("tau_review")
     hc1, hc2, hc3 = st.columns(3)
-    hc1.metric("τ_red", f"{_tau_red:.3f}" if isinstance(_tau_red, (int, float)) else "?")
-    hc2.metric("τ_review", f"{_tau_review:.3f}" if isinstance(_tau_review, (int, float)) else "?")
+    hc1.metric("τ_red", f"{_tau_red:.6f}" if isinstance(_tau_red, (int, float)) else "?")
+    hc2.metric("τ_review", f"{_tau_review:.6f}" if isinstance(_tau_review, (int, float)) else "?")
     hc3.metric("F1 (macro)", f"{metrics.get('f1_macro', 0):.4f}")
     st.info(
         "계층 분류 결과입니다. 아래 **🧮 위험도 분포** 탭에서 Yellow 세분화"

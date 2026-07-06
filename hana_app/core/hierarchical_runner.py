@@ -323,6 +323,15 @@ def select_thresholds_from_pr(
     # 불변식 τ_review < τ_red 를 유지하도록 미세 조정.
     if tau_review >= tau_red:
         tau_review = max(0.0, tau_red - 1e-6)
+        # 밴드 붕괴 신호: stage-1 이 거의 완벽분리(과확신) → score 기반 review 구간이
+        # 폭 1e-6 로 사실상 死(score 로는 "Red 의심" 거의 안 걸림). rulefeat 누수·
+        # 확률보정 재검토 필요. 최종 Red 는 금기 결정적 백스톱으로만 좌우될 수 있음.
+        print(
+            f"[hierarchical] ⚠ PR band collapsed: tau_red={tau_red:.6f}, "
+            f"review band forced to width 1e-6 — score-based review queue effectively inert "
+            f"(stage-1 overconfident; check rulefeat leakage / calibration)",
+            file=sys.stderr,
+        )
 
     return {"tau_red": tau_red, "tau_review": tau_review}
 

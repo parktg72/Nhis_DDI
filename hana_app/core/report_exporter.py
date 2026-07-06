@@ -1177,25 +1177,46 @@ def build_docx_bytes(last_result: dict,
         total_n = len(analysis_subject_df)
         rl_dist = analysis_subject_df["risk_level"].value_counts().to_dict() if "risk_level" in analysis_subject_df.columns else {}
 
-        target_rows: list[list[str]] = [["총 환자 수", f"{total_n:,}명"]]
+        # 카운트 기준 투명화 (③): 피처 행수 vs 고유 환자수. 중복 patient_id 가 있으면
+        # §1 위험도분포(행 기준)와 본 표(환자·중복제거 기준)의 총 N 이 달라진다 — 명시 경고.
+        raw_n = len(features_df)
+        if "patient_id" in features_df.columns:
+            _pid = features_df["patient_id"].astype("string").str.strip()
+            distinct_pid = int(_pid[_pid != ""].nunique(dropna=True))
+        else:
+            distinct_pid = raw_n
+
+        target_rows: list[list[str]] = []
+        if raw_n != distinct_pid:
+            target_rows.append(
+                ["⚠ 행/환자 불일치",
+                 f"피처 {raw_n:,}행 · 고유 환자 {distinct_pid:,}명 — 중복 patient_id 존재. "
+                 "§1 위험도분포는 행 기준, 본 표는 환자(중복제거) 기준."]
+            )
+        # '총 환자 수' → 다제·중복제거 후임을 라벨에 명시(추출 대상자 N 과의 차이 설명).
+        target_rows.append(["분석대상 환자 수 (다제≥5·중복제거 후)", f"{total_n:,}명"])
         for lbl in ["Red", "Yellow", "Green", "Normal"]:
             cnt = rl_dist.get(lbl, 0)
-            target_rows.append([f"  위험도 — {lbl}", f"{cnt:,}명 ({cnt / total_n * 100:.1f}%)"])
+            pct = cnt / total_n * 100 if total_n else 0.0
+            target_rows.append([f"  위험도 — {lbl}", f"{cnt:,}명 ({pct:.1f}%)"])
 
-        if "sex_m" in analysis_subject_df.columns:
-            sex_m = 0
-            for sex_value in analysis_subject_df["sex_m"].tolist():
-                if pd.isna(sex_value):
-                    continue
-                try:
-                    sex_m += int(float(sex_value))
-                except (TypeError, ValueError):
-                    continue
-            sex_f = total_n - sex_m
+        if "sex_m" in analysis_subject_df.columns and total_n > 0:
+            # sex_m 은 남성(=1) 단일지표 → 여성과 미상을 구분할 수 없다. 여를 (총-남)
+            # 뺄셈으로 추론하면 demographics 결측·미상이 전부 여로 오계상되어 '여성 치우침'
+            # 착시가 생긴다. '여·미상' 버킷으로 정직 표기. 정확 구분은 raw sex 보존 필요.
+            _sex_vals = pd.to_numeric(analysis_subject_df["sex_m"], errors="coerce").fillna(0.0)
+            male_n = int((_sex_vals >= 0.5).sum())
+            other_n = total_n - male_n
             target_rows += [
-                ["성별 — 남", f"{sex_m:,}명 ({sex_m / total_n * 100:.1f}%)"],
-                ["성별 — 여", f"{sex_f:,}명 ({sex_f / total_n * 100:.1f}%)"],
+                ["성별 — 남", f"{male_n:,}명 ({male_n / total_n * 100:.1f}%)"],
+                ["성별 — 여·미상", f"{other_n:,}명 ({other_n / total_n * 100:.1f}%)"],
             ]
+            if male_n / total_n < 0.20:
+                target_rows.append(
+                    ["⚠ 성별 데이터 점검",
+                     "남성 비율이 비정상적으로 낮습니다 — eligibility_demographics 미스테이징 시 "
+                     "sex_m 이 0 으로 채워져 왜곡됩니다. DEMOGRAPHICS_PATH·sex_type dtype 확인."]
+                )
 
         if "age" in analysis_subject_df.columns:
             age_v = analysis_subject_df["age"].dropna()
