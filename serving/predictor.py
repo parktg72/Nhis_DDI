@@ -190,6 +190,9 @@ def _detect_risk_flags(drugs: list[DrugItem]) -> tuple[bool, bool]:
         )
         return has_renal, has_hepatic
     except Exception:
+        # fail-safe 반환은 유지하되 침묵 금지 — 플래그 전멸 시 SafetyNet의
+        # 고령+다약제+신장/간 Red 조건이 영원히 못 걸리는 silent degradation
+        logger.error("_detect_risk_flags 실패 — renal/hepatic 플래그 비활성화", exc_info=True)
         return False, False
 
 
@@ -474,7 +477,11 @@ class MLModel:
                                 import numpy as np
                                 p_xgb = self._xgb.predict_proba(X)[:, 1]
                                 p_lgb = self._lgb.predict_proba(X)[:, 1]
-                                prob = self._w[0] * p_xgb + self._w[1] * p_lgb
+                                # 학습(EnsembleTrainer3Way.predict_proba)과 동일하게 (w1+w2)
+                                # 정규화 — 미정규화면 서빙 확률이 (w1+w2)배 축소되어
+                                # best_threshold 스케일과 어긋남 (Red/Yellow 과소판정)
+                                norm = (self._w[0] + self._w[1]) or 1.0
+                                prob = (self._w[0] * p_xgb + self._w[1] * p_lgb) / norm
                                 return np.column_stack([1 - prob, prob])
                         self._model = _EnsembleWrapper(xgb_state["model"], lgb_state["model"], weights)
                         logger.info("앙상블 모델 로드 완료: %s + %s", xgb_path.name, lgb_path.name)
@@ -712,8 +719,11 @@ class HierarchicalPredictor:
             for p, key in ((p1, "stage1_sha256"), (p2, "stage2_sha256")):
                 expected = self._meta.get(key)
                 if not expected:
-                    logger.warning("%s 메타 누락 — 무결성 검증 스킵: %s", key, p.name)
-                    continue
+                    # fail-closed — MLModel._verify_hash와 동일 정책. 메타에 해시가
+                    # 없으면 훼손/구버전 번들 가능성 → 로드 거부 (스킵 = fail-open)
+                    logger.error("%s 메타 누락 — 무결성 검증 불가, 로드 거부: %s", key, p.name)
+                    self._clear_state()
+                    return False
                 actual = hashlib.sha256(p.read_bytes()).hexdigest()
                 if actual != expected:
                     logger.error(
@@ -1357,8 +1367,9 @@ class HybridPredictor:
         # Step 2: 중복약물 탐지
         dup_count, dup_reasons = _run_duplicate_detector(req.drugs, dd_instance=self._dup_detector)
 
-        # Rule 등급 보완 (중복약물) — rule_level이 NORMAL일 때만 등급 상향
-        if dup_count >= 1 and rule_level == RiskLevel.NORMAL:
+        # Rule 등급 보완 (중복약물) — 학습 라벨(_assign_risk_level: dup>=1 → Yellow,
+        # Green 판정보다 선행)과 정렬: Yellow 미만(NORMAL/GREEN)이면 상향
+        if dup_count >= 1 and rule_level.order < RiskLevel.YELLOW.order:
             rule_level = RiskLevel.YELLOW
 
         # Step 3: ML 예측 — 계층 모드 우선, 아니면 단일 모델
