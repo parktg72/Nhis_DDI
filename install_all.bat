@@ -111,6 +111,16 @@ if "%CREATE_VENV%"=="1" (
         pause
         exit /b 1
     )
+    REM venv 실버전 검증 — py -3.12 실패 시 python 폴백이 3.11/3.13 venv를
+    REM 조용히 만들면 cp312 wheel 전부 설치 실패로 이어짐. 여기서 즉시 차단.
+    if "%PY_VERSION%"=="312" (
+        "!PYTHON_BIN!" -c "import sys; raise SystemExit(0 if sys.version_info[:2]==(3,12) else 1)"
+        if errorlevel 1 (
+            echo [오류] .venv 의 Python 이 3.12 가 아닙니다. Python 3.12 설치 확인 후 .venv 삭제하고 재실행하세요.
+            pause
+            exit /b 1
+        )
+    )
     echo 가상환경: !VENV_PATH!
     echo.
 ) else (
@@ -131,13 +141,21 @@ echo [2/5] 핵심 데이터 처리 및 ML 패키지 설치...
     %FIND_LINKS% ^
     %CONSTRAINT% ^
     numpy pandas pyarrow scipy scikit-learn xgboost lightgbm shap joblib
+if errorlevel 1 (
+    echo [오류] 핵심 데이터/ML 패키지 설치 실패 — 이후 단계 진행 불가
+    echo        packages_win\py%PY_VERSION% 폴더와 Python 버전을 확인하세요.
+    pause
+    exit /b 1
+)
 
 REM ── 3단계: HANA 연결 ─────────────────────────────────────────
 echo.
 echo [3/5] SAP HANA 연결 패키지 설치...
 
 REM setuptools 부트스트랩 (pydotplus 소스 빌드에 필요)
-%PYTHON_BIN% -m ensurepip --upgrade >nul 2>&1
+REM ensurepip 호출 제거 — py312 venv 는 pip 를 이미 갖고 있고, ensurepip 이
+REM 번들 setuptools 를 재설치하며 dist-info 를 깨뜨려 "invalid metadata entry
+REM 'name'" 경고 홍수를 유발했음 (2026-07-07 폐쇄망 실측). wheelhouse 설치로 충분.
 %PYTHON_BIN% -m pip install --no-index %FIND_LINKS% --upgrade setuptools wheel >nul 2>&1
 if errorlevel 1 (
     echo       [참고] setuptools 업그레이드 건너뜀 ^(시스템 버전 사용^)
