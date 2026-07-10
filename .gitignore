@@ -116,6 +116,11 @@ hana_app/results/
 !.claude/agents/
 !.claude/agents/*.md
 
+# MultiAgent orchestration scaffold — 생성물. 재설치:
+# python3 ~/.claude/plugins/cache/multi-agent-starter/*/*/skills/configure-multiagent/generator/init.py \
+#   --flavor claude --target "$PWD/.multiagent" --yes
+.multiagent/
+
 # Understand Anything knowledge graph (version final graph + reproducibility metadata)
 .understand-anything/
 !.understand-anything/
