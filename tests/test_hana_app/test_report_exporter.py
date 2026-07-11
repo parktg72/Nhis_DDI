@@ -348,7 +348,8 @@ def test_docx_analysis_subject_deduplicates_demographics_by_patient_id():
 
     assert values["분석대상 환자 수 (다제≥5·중복제거 후)"] == "2명"
     assert values["성별 — 남"] == "1명 (50.0%)"
-    assert values["성별 — 여·미상"] == "1명 (50.0%)"
+    assert values["성별 — 여"] == "1명 (50.0%)"
+    assert values["성별 — 미상"] == "0명 (0.0%)"
     assert values["연령 평균"] == "75.0세"
     assert values["약물 수 평균"] == "7.5종"
     # ③ raw(3행) != 고유환자(2명) → 행/환자 불일치 경고 노출
@@ -356,9 +357,8 @@ def test_docx_analysis_subject_deduplicates_demographics_by_patient_id():
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
-def test_docx_analysis_subject_reports_female_unknown_bucket_not_subtraction():
-    """① 여성 치우침 방지: demographics 결측(sex_m 전부 0)이면 여를 (총-남)으로
-    부풀리지 않고 '여·미상'으로 정직 표기하고 남성비율 저하 경고를 낸다."""
+def test_docx_analysis_subject_reports_female_as_exact_zero():
+    """sex_m==0 is female, while non-0/1 values remain unknown."""
     from docx import Document
 
     df = pd.DataFrame([
@@ -373,11 +373,75 @@ def test_docx_analysis_subject_reports_female_unknown_bucket_not_subtraction():
     values = {row[0]: row[1] for row in rows[1:]}
 
     assert values["성별 — 남"] == "0명 (0.0%)"
-    assert values["성별 — 여·미상"] == "3명 (100.0%)"
-    assert "성별 — 여" not in values           # 뺄셈 추론 '여' 라벨 폐기
+    assert values["성별 — 여"] == "3명 (100.0%)"
+    assert values["성별 — 미상"] == "0명 (0.0%)"
+    assert "성별 — 여·미상" not in values       # combined bucket retired
     assert "⚠ 성별 데이터 점검" in values       # 남성비율<20% 경고
     # 정상 코호트(고유=행)이므로 행/환자 불일치 경고는 없어야 함
     assert "⚠ 행/환자 불일치" not in values
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_docx_analysis_subject_treats_fractional_and_nan_sex_as_unknown():
+    from docx import Document
+
+    df = pd.DataFrame([
+        _row(patient_id="P1", risk_level="Green", age=70, sex_m=1, drug_count=6),
+        _row(patient_id="P2", risk_level="Green", age=72, sex_m=0, drug_count=6),
+        _row(patient_id="P3", risk_level="Green", age=74, sex_m=0.5, drug_count=6),
+        _row(patient_id="P4", risk_level="Green", age=76, sex_m=float("nan"), drug_count=6),
+    ])
+
+    b = build_docx_bytes({"model_name": "m", "metrics": {}}, df)
+    doc = Document(io.BytesIO(b))
+    rows = _docx_table_rows_after_heading(doc, "7. 분석 대상 정보")
+    values = {row[0]: row[1] for row in rows[1:]}
+
+    assert values["성별 — 남"] == "1명 (25.0%)"
+    assert values["성별 — 여"] == "1명 (25.0%)"
+    assert values["성별 — 미상"] == "2명 (50.0%)"
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_docx_analysis_subject_treats_raw_two_and_string_sex_as_unknown():
+    from docx import Document
+
+    df = pd.DataFrame([
+        _row(patient_id="P1", risk_level="Green", age=70, sex_m=1, drug_count=6),
+        _row(patient_id="P2", risk_level="Green", age=72, sex_m=0, drug_count=6),
+        _row(patient_id="P3", risk_level="Green", age=74, sex_m=2, drug_count=6),
+        _row(patient_id="P4", risk_level="Green", age=76, sex_m="male", drug_count=6),
+    ])
+
+    b = build_docx_bytes({"model_name": "m", "metrics": {}}, df)
+    doc = Document(io.BytesIO(b))
+    rows = _docx_table_rows_after_heading(doc, "7. 분석 대상 정보")
+    values = {row[0]: row[1] for row in rows[1:]}
+
+    assert values["성별 — 남"] == "1명 (25.0%)"
+    assert values["성별 — 여"] == "1명 (25.0%)"
+    assert values["성별 — 미상"] == "2명 (50.0%)"
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_docx_analysis_subject_warns_generalized_when_all_sex_m_unknown():
+    from docx import Document
+
+    df = pd.DataFrame([
+        _row(patient_id="U1", risk_level="Green", age=70, sex_m=float("nan"), drug_count=6),
+        _row(patient_id="U2", risk_level="Green", age=72, sex_m=float("nan"), drug_count=6),
+        _row(patient_id="U3", risk_level="Green", age=74, sex_m=float("nan"), drug_count=6),
+    ])
+
+    b = build_docx_bytes({"model_name": "m", "metrics": {}}, df)
+    doc = Document(io.BytesIO(b))
+    rows = _docx_table_rows_after_heading(doc, "7. 분석 대상 정보")
+    values = {row[0]: row[1] for row in rows[1:]}
+
+    assert values["성별 — 남"] == "0명 (0.0%)"
+    assert values["성별 — 여"] == "0명 (0.0%)"
+    assert values["성별 — 미상"] == "3명 (100.0%)"
+    assert "누락, 또는 비정상 값" in values["⚠ 성별 데이터 점검"]
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")

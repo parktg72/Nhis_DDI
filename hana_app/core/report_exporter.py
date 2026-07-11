@@ -1203,21 +1203,23 @@ def build_docx_bytes(last_result: dict,
             target_rows.append([f"  위험도 — {lbl}", f"{cnt:,}명 ({pct:.1f}%)"])
 
         if "sex_m" in analysis_subject_df.columns and total_n > 0:
-            # sex_m 은 남성(=1) 단일지표 → 여성과 미상을 구분할 수 없다. 여를 (총-남)
-            # 뺄셈으로 추론하면 demographics 결측·미상이 전부 여로 오계상되어 '여성 치우침'
-            # 착시가 생긴다. '여·미상' 버킷으로 정직 표기. 정확 구분은 raw sex 보존 필요.
-            _sex_vals = pd.to_numeric(analysis_subject_df["sex_m"], errors="coerce").fillna(0.0)
-            male_n = int((_sex_vals >= 0.5).sum())
-            other_n = total_n - male_n
+            # sex_m contract: 1=남, 0=여. Any other raw/coerced value is unknown.
+            # Do not infer sex by threshold or subtraction; fractional values, NaN,
+            # strings, and raw 2 are intentionally reported as 미상.
+            _sex_vals = pd.to_numeric(analysis_subject_df["sex_m"], errors="coerce")
+            male_n = int((_sex_vals == 1).sum())
+            female_n = int((_sex_vals == 0).sum())
+            unknown_n = total_n - male_n - female_n
             target_rows += [
                 ["성별 — 남", f"{male_n:,}명 ({male_n / total_n * 100:.1f}%)"],
-                ["성별 — 여·미상", f"{other_n:,}명 ({other_n / total_n * 100:.1f}%)"],
+                ["성별 — 여", f"{female_n:,}명 ({female_n / total_n * 100:.1f}%)"],
+                ["성별 — 미상", f"{unknown_n:,}명 ({unknown_n / total_n * 100:.1f}%)"],
             ]
             if male_n / total_n < 0.20:
                 target_rows.append(
                     ["⚠ 성별 데이터 점검",
-                     "남성 비율이 비정상적으로 낮습니다 — eligibility_demographics 미스테이징 시 "
-                     "sex_m 이 0 으로 채워져 왜곡됩니다. DEMOGRAPHICS_PATH·sex_type dtype 확인."]
+                     "남성 비율이 비정상적으로 낮습니다 — sex_m 값이 0, 누락, 또는 비정상 값으로 인해 "
+                     "왜곡될 수 있습니다. DEMOGRAPHICS_PATH·sex_type dtype 및 결측 처리 확인."]
                 )
 
         if "age" in analysis_subject_df.columns:
