@@ -164,6 +164,17 @@ class TestTrainDataset:
                     f"meta_{split_name} 에 yellow_subtype 없음 (subgroup 분석 불가)"
                 )
 
+    def test_sex_type_metadata_not_in_generic_train_features(self):
+        df = pd.DataFrame({
+            "patient_id": [f"P{i:04d}" for i in range(20)],
+            "risk_level": ["Red"] * 10 + ["Normal"] * 10,
+            "sex_type": [1, 2] * 10,
+            "drug_count": [float(i) for i in range(20)],
+        })
+        ds = load_dataset_from_df(df, random_state=42)
+
+        assert "sex_type" not in ds.feature_names
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Evaluator 테스트

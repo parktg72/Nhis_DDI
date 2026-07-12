@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # 메타/레이블 컬럼 (피처에서 제외)
 NON_FEATURE_COLS = {
     "patient_id", "window_start", "window_end",
-    "risk_level", "risk_reasons", "yellow_subtype",
+    "risk_level", "risk_reasons", "yellow_subtype", "sex_type",
     "is_high_risk",        # 이진 레이블
     "risk_level_encoded",  # 다중 레이블
 }
