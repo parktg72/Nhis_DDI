@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 BINARY_COLS = {"triple_whammy", "multi_institution_flag"}
 
 # 범주형 피처 (인코딩 제외, 모델에 직접 사용 안함)
-CATEGORICAL_COLS = {"patient_id", "risk_level", "sex", "risk_reasons",
+CATEGORICAL_COLS = {"patient_id", "risk_level", "sex", "sex_type", "risk_reasons",
                     "window_start", "window_end"}
 
 
@@ -126,7 +126,7 @@ class FeatureNormalizer:
         obj = cls()
         obj._medians = state["medians"]
         obj._iqr = state["iqr"]
-        obj._numeric_cols = state["numeric_cols"]
+        obj._numeric_cols = [c for c in state["numeric_cols"] if c not in CATEGORICAL_COLS]
         obj._fitted = state["fitted"]
         logger.info("스케일러 로드: %s (%d 피처)", path, len(obj._numeric_cols))
         return obj

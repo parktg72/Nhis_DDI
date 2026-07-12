@@ -44,6 +44,8 @@ META_COLS = {
     "yellow_subtype",
 }
 
+EXCLUDED_COLS = META_COLS | {"sex_type"}
+
 
 class FeatureSelector:
     """
@@ -155,7 +157,7 @@ class FeatureSelector:
             variance_threshold=state["variance_threshold"],
             correlation_threshold=state["correlation_threshold"],
         )
-        obj._selected = state["selected"]
+        obj._selected = [c for c in state["selected"] if c not in EXCLUDED_COLS]
         obj._removed_variance = state["removed_variance"]
         obj._removed_corr = state["removed_corr"]
         obj._fitted = state["fitted"]
@@ -170,7 +172,7 @@ class FeatureSelector:
         """선택 대상 후보 컬럼 (메타 제외, 수치형만)."""
         result = []
         for col in df.columns:
-            if col in META_COLS:
+            if col in EXCLUDED_COLS:
                 continue
             if pd.api.types.is_numeric_dtype(df[col]):
                 result.append(col)

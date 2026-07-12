@@ -2,6 +2,7 @@
 scripts/features 단위/통합 테스트
 """
 import math
+import pickle
 import pytest
 import tempfile
 from datetime import date, timedelta
@@ -264,6 +265,38 @@ class TestFeatureNormalizer:
         with pytest.raises(RuntimeError):
             norm.transform(sample_df)
 
+    def test_sex_type_metadata_is_not_normalized(self):
+        df = pd.DataFrame({
+            "sex_type": [1, 2, 9],
+            "drug_count": [1.0, 3.0, 5.0],
+        })
+        norm = FeatureNormalizer()
+        out = norm.fit_transform(df)
+
+        assert "sex_type" not in norm.feature_names
+        assert list(out["sex_type"]) == [1, 2, 9]
+
+    def test_load_filters_legacy_sex_type_numeric_col(self, tmp_path):
+        path = tmp_path / "legacy_scaler.pkl"
+        with open(path, "wb") as f:
+            pickle.dump({
+                "medians": {"sex_type": 2.0, "drug_count": 3.0},
+                "iqr": {"sex_type": 1.0, "drug_count": 2.0},
+                "numeric_cols": ["sex_type", "drug_count"],
+                "fitted": True,
+            }, f)
+
+        norm = FeatureNormalizer.load(path)
+        out = norm.transform(pd.DataFrame({
+            "sex_type": [1, 2, 9],
+            "drug_count": [1.0, 3.0, 5.0],
+        }))
+
+        assert norm.feature_names == ["drug_count"]
+        assert list(out["sex_type"]) == [1, 2, 9]
+        assert norm._medians == {"sex_type": 2.0, "drug_count": 3.0}
+        assert norm._iqr == {"sex_type": 1.0, "drug_count": 2.0}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 피처 선택 테스트
@@ -312,6 +345,45 @@ class TestFeatureSelector:
         out = sel.fit_transform(sample_df)
         assert "patient_id" in out.columns
         assert "risk_level" in out.columns
+
+    def test_sex_type_metadata_is_excluded(self):
+        df = pd.DataFrame({
+            "patient_id": ["P1", "P2", "P3", "P4"],
+            "sex_type": [1, 2, 1, 9],
+            "drug_count": [1.0, 2.0, 3.0, 4.0],
+        })
+        sel = FeatureSelector()
+        out = sel.fit_transform(df)
+
+        assert "sex_type" not in sel.selected_features
+        assert "sex_type" not in out.columns
+
+    def test_load_filters_legacy_sex_type_selected_feature(self, tmp_path):
+        path = tmp_path / "legacy_selector.pkl"
+        with open(path, "wb") as f:
+            pickle.dump({
+                "selected": ["sex_type", "drug_count", "ddi_major"],
+                "removed_variance": ["const_col"],
+                "removed_corr": ["drug_count_dup"],
+                "variance_threshold": 0.01,
+                "correlation_threshold": 0.9,
+                "fitted": True,
+            }, f)
+
+        sel = FeatureSelector.load(path)
+        out = sel.transform(pd.DataFrame({
+            "patient_id": ["P1", "P2"],
+            "sex_type": [1, 2],
+            "drug_count": [3.0, 4.0],
+            "ddi_major": [0.0, 1.0],
+        }))
+
+        assert sel.selected_features == ["drug_count", "ddi_major"]
+        assert list(out.columns) == ["patient_id", "drug_count", "ddi_major"]
+        assert sel._removed_variance == ["const_col"]
+        assert sel._removed_corr == ["drug_count_dup"]
+        assert sel.variance_threshold == 0.01
+        assert sel.correlation_threshold == 0.9
 
     def test_transform_without_fit_raises(self, sample_df):
         sel = FeatureSelector()
