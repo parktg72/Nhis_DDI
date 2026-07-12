@@ -336,9 +336,9 @@ def test_docx_analysis_subject_deduplicates_demographics_by_patient_id():
     from docx import Document
 
     df = pd.DataFrame([
-        _row(patient_id="P1", risk_level="Red", age=70, sex_m=1, drug_count=10),
-        _row(patient_id="P1", risk_level="Yellow", age=70, sex_m=1, drug_count=20),
-        _row(patient_id="P2", risk_level="Green", age=80, sex_m=0, drug_count=5),
+        _row(patient_id="P1", risk_level="Red", age=70, sex_type="1", drug_count=10),
+        _row(patient_id="P1", risk_level="Yellow", age=70, sex_type="1", drug_count=20),
+        _row(patient_id="P2", risk_level="Green", age=80, sex_type="2", drug_count=5),
     ])
 
     b = build_docx_bytes({"model_name": "dedup_model", "metrics": {}}, df)
@@ -357,14 +357,14 @@ def test_docx_analysis_subject_deduplicates_demographics_by_patient_id():
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
-def test_docx_analysis_subject_reports_female_as_exact_zero():
-    """sex_m==0 is female, while non-0/1 values remain unknown."""
+def test_docx_analysis_subject_reports_raw_sex_type_two_as_female():
+    """sex_type raw code 2 is female after string normalization."""
     from docx import Document
 
     df = pd.DataFrame([
-        _row(patient_id="P1", risk_level="Green", age=70, sex_m=0, drug_count=6),
-        _row(patient_id="P2", risk_level="Green", age=72, sex_m=0, drug_count=6),
-        _row(patient_id="P3", risk_level="Green", age=74, sex_m=0, drug_count=6),
+        _row(patient_id="P1", risk_level="Green", age=70, sex_type="2", drug_count=6),
+        _row(patient_id="P2", risk_level="Green", age=72, sex_type=" 2 ", drug_count=6),
+        _row(patient_id="P3", risk_level="Green", age=74, sex_type=2, drug_count=6),
     ])
 
     b = build_docx_bytes({"model_name": "m", "metrics": {}}, df)
@@ -382,14 +382,14 @@ def test_docx_analysis_subject_reports_female_as_exact_zero():
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
-def test_docx_analysis_subject_treats_fractional_and_nan_sex_as_unknown():
+def test_docx_analysis_subject_raw_sex_type_wins_over_contradictory_sex_m():
     from docx import Document
 
     df = pd.DataFrame([
-        _row(patient_id="P1", risk_level="Green", age=70, sex_m=1, drug_count=6),
-        _row(patient_id="P2", risk_level="Green", age=72, sex_m=0, drug_count=6),
-        _row(patient_id="P3", risk_level="Green", age=74, sex_m=0.5, drug_count=6),
-        _row(patient_id="P4", risk_level="Green", age=76, sex_m=float("nan"), drug_count=6),
+        _row(patient_id="P1", risk_level="Green", age=70, sex_type="1", sex_m=0, drug_count=6),
+        _row(patient_id="P2", risk_level="Green", age=72, sex_type="2", sex_m=1, drug_count=6),
+        _row(patient_id="P3", risk_level="Green", age=74, sex_type="3", sex_m=1, drug_count=6),
+        _row(patient_id="P4", risk_level="Green", age=76, sex_type=pd.NA, sex_m=0, drug_count=6),
     ])
 
     b = build_docx_bytes({"model_name": "m", "metrics": {}}, df)
@@ -403,14 +403,12 @@ def test_docx_analysis_subject_treats_fractional_and_nan_sex_as_unknown():
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
-def test_docx_analysis_subject_treats_raw_two_and_string_sex_as_unknown():
+def test_docx_analysis_subject_absent_raw_sex_type_warns_without_counts():
     from docx import Document
 
     df = pd.DataFrame([
         _row(patient_id="P1", risk_level="Green", age=70, sex_m=1, drug_count=6),
         _row(patient_id="P2", risk_level="Green", age=72, sex_m=0, drug_count=6),
-        _row(patient_id="P3", risk_level="Green", age=74, sex_m=2, drug_count=6),
-        _row(patient_id="P4", risk_level="Green", age=76, sex_m="male", drug_count=6),
     ])
 
     b = build_docx_bytes({"model_name": "m", "metrics": {}}, df)
@@ -418,19 +416,21 @@ def test_docx_analysis_subject_treats_raw_two_and_string_sex_as_unknown():
     rows = _docx_table_rows_after_heading(doc, "7. 분석 대상 정보")
     values = {row[0]: row[1] for row in rows[1:]}
 
-    assert values["성별 — 남"] == "1명 (25.0%)"
-    assert values["성별 — 여"] == "1명 (25.0%)"
-    assert values["성별 — 미상"] == "2명 (50.0%)"
+    assert values["⚠ 원본 성별 데이터 없음"] == "sex_type 컬럼이 없어 성별 집계를 생략했습니다."
+    assert "성별 — 남" not in values
+    assert "성별 — 여" not in values
+    assert "성별 — 미상" not in values
+    assert "⚠ 성별 데이터 점검" not in values
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
-def test_docx_analysis_subject_warns_generalized_when_all_sex_m_unknown():
+def test_docx_analysis_subject_warns_when_raw_sex_type_male_share_is_low():
     from docx import Document
 
     df = pd.DataFrame([
-        _row(patient_id="U1", risk_level="Green", age=70, sex_m=float("nan"), drug_count=6),
-        _row(patient_id="U2", risk_level="Green", age=72, sex_m=float("nan"), drug_count=6),
-        _row(patient_id="U3", risk_level="Green", age=74, sex_m=float("nan"), drug_count=6),
+        _row(patient_id="U1", risk_level="Green", age=70, sex_type="2", drug_count=6),
+        _row(patient_id="U2", risk_level="Green", age=72, sex_type="2", drug_count=6),
+        _row(patient_id="U3", risk_level="Green", age=74, sex_type="", drug_count=6),
     ])
 
     b = build_docx_bytes({"model_name": "m", "metrics": {}}, df)
@@ -439,9 +439,9 @@ def test_docx_analysis_subject_warns_generalized_when_all_sex_m_unknown():
     values = {row[0]: row[1] for row in rows[1:]}
 
     assert values["성별 — 남"] == "0명 (0.0%)"
-    assert values["성별 — 여"] == "0명 (0.0%)"
-    assert values["성별 — 미상"] == "3명 (100.0%)"
-    assert "누락, 또는 비정상 값" in values["⚠ 성별 데이터 점검"]
+    assert values["성별 — 여"] == "2명 (66.7%)"
+    assert values["성별 — 미상"] == "1명 (33.3%)"
+    assert "sex_type" in values["⚠ 성별 데이터 점검"]
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")

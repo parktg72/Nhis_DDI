@@ -1202,24 +1202,28 @@ def build_docx_bytes(last_result: dict,
             pct = cnt / total_n * 100 if total_n else 0.0
             target_rows.append([f"  위험도 — {lbl}", f"{cnt:,}명 ({pct:.1f}%)"])
 
-        if "sex_m" in analysis_subject_df.columns and total_n > 0:
-            # sex_m contract: 1=남, 0=여. Any other raw/coerced value is unknown.
-            # Do not infer sex by threshold or subtraction; fractional values, NaN,
-            # strings, and raw 2 are intentionally reported as 미상.
-            _sex_vals = pd.to_numeric(analysis_subject_df["sex_m"], errors="coerce")
-            male_n = int((_sex_vals == 1).sum())
-            female_n = int((_sex_vals == 0).sum())
-            unknown_n = total_n - male_n - female_n
-            target_rows += [
-                ["성별 — 남", f"{male_n:,}명 ({male_n / total_n * 100:.1f}%)"],
-                ["성별 — 여", f"{female_n:,}명 ({female_n / total_n * 100:.1f}%)"],
-                ["성별 — 미상", f"{unknown_n:,}명 ({unknown_n / total_n * 100:.1f}%)"],
-            ]
-            if male_n / total_n < 0.20:
+        if total_n > 0:
+            if "sex_type" in analysis_subject_df.columns:
+                # Raw HANA sex_type contract: 1=남, 2=여. Do not fall back to
+                # derived sex_m; other/missing raw values are reported as 미상.
+                _sex_vals = analysis_subject_df["sex_type"].astype("string").str.strip()
+                male_n = int((_sex_vals == "1").sum())
+                female_n = int((_sex_vals == "2").sum())
+                unknown_n = total_n - male_n - female_n
+                target_rows += [
+                    ["성별 — 남", f"{male_n:,}명 ({male_n / total_n * 100:.1f}%)"],
+                    ["성별 — 여", f"{female_n:,}명 ({female_n / total_n * 100:.1f}%)"],
+                    ["성별 — 미상", f"{unknown_n:,}명 ({unknown_n / total_n * 100:.1f}%)"],
+                ]
+                if male_n / total_n < 0.20:
+                    target_rows.append(
+                        ["⚠ 성별 데이터 점검",
+                         "남성 비율이 비정상적으로 낮습니다 — 원본 sex_type 값이 누락 또는 비정상 값으로 인해 "
+                         "왜곡될 수 있습니다. DEMOGRAPHICS_PATH·sex_type dtype 및 결측 처리 확인."]
+                    )
+            else:
                 target_rows.append(
-                    ["⚠ 성별 데이터 점검",
-                     "남성 비율이 비정상적으로 낮습니다 — sex_m 값이 0, 누락, 또는 비정상 값으로 인해 "
-                     "왜곡될 수 있습니다. DEMOGRAPHICS_PATH·sex_type dtype 및 결측 처리 확인."]
+                    ["⚠ 원본 성별 데이터 없음", "sex_type 컬럼이 없어 성별 집계를 생략했습니다."]
                 )
 
         if "age" in analysis_subject_df.columns:
