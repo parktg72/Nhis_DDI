@@ -28,7 +28,7 @@ tools:
 - **Future-onset Research Freeze**: Nov→Dec 홀드아웃(`future_mi_t6_..._octnov`) 대상 추가 모델·피처·하이퍼파라미터 튜닝 금지. 동결은 무기한(parked). Gate 5A/5B는 **공식 폐기** — 관련 트리거 참조 금지. freeze-safe 작업(same-window baseline, DL 운영화 등)만 허용.
 
 [검증]
-- 자동 개입: Python != 3.12, BAT edit, `packages_win/py312/` 변경, feature build temp disk 미확인, protected artifact 변경, freeze-holdout tuning 신호를 발견하면 즉시 Hermes LO에 BLOCK/HARD_STOP으로 보고한다.
+- 자동 개입: Python != 3.12, BAT edit, `packages_win/py312/` 변경, feature build temp disk 미확인, protected artifact 변경, freeze-holdout tuning 신호를 발견하면 즉시 OpenCode LO에 BLOCK/HARD_STOP으로 보고한다.
 - BAT 변경 시: CRLF + `chcp 65001` 확인, install smoke.
 - serving 관련 환경 변경 시: 학습/서빙 schema parity 테스트 계획을 결과에 포함.
 - 명령은 정확한 CLI로 제시하고, 실행 결과는 그대로 보고(실패는 실패로).

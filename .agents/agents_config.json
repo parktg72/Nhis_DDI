@@ -1,31 +1,41 @@
 {
   "project": "MODE_11_hana",
   "version": "1.3.0",
-  "_note": "설계상의 개념적 본부/서브에이전트를 실제 하니스 핸들러에 매핑한다. handler 필드가 실제 호출 경로다. local = 에이전트 정의 (.claude/agents/*.md, Agent 툴), mcp = hermes-multi-cli-agents 브릿지 (ask_*_hq), main = 메인 Claude 세션 자체. local_workers(antigravity/codex/hermes-worker/opencode-worker)는 MODE_11_hana 가드레일(HANA 스키마 추측 금지·학습↔서빙 schema parity·Research Freeze·py312/BAT CRLF)을 반영한 프로젝트 스코프 정의를 .claude/agents/ 에 두며, 이는 동명 글로벌 ~/.claude/agents/*.md 보다 우선 적용된다. bridge_agents(agy/claude/codex-bridge)는 글로벌 정의를 그대로 사용한다. OpenCode는 ask_opencode_hq MCP 채널이 없으므로 direct CLI /home/ptg/.opencode/bin/opencode run 을 사용하는 dev-only additive worker로만 등록한다.",
+  "_note": "설계상의 개념적 본부/서브에이전트를 실제 하니스 핸들러에 매핑한다. handler 필드가 실제 호출 경로다. local = 에이전트 정의 (.claude/agents/*.md, Agent 툴), mcp = hermes-multi-cli-agents 브릿지 (ask_*_hq), main = 메인 Claude 세션 자체. local_workers(antigravity/codex/hermes-worker/opencode-worker)는 MODE_11_hana 가드레일(HANA 스키마 추측 금지·학습↔서빙 schema parity·Research Freeze·py312/BAT CRLF)을 반영한 프로젝트 스코프 정의를 .claude/agents/ 에 두며, 이는 동명 글로벌 ~/.claude/agents/*.md 보다 우선 적용된다. bridge_agents(agy/claude/codex-bridge)는 글로벌 정의를 그대로 사용한다. OpenCode HQ / opencode-worker는 ask_opencode_hq MCP 채널이 없으므로 direct CLI /home/ptg/.opencode/bin/opencode run 을 사용하는 dev-only additive worker로만 등록한다.",
   "operating_model": {
     "_decided": "2026-06-03 (사용자 확정)",
     "default": "lean",
     "lean": {
-      "summary": "기본 운영 모드. 메인 Claude 세션이 Hermes(총괄 오케스트레이터 = 사용자 유일 소통 창구)를 겸할 수 있으나, Hermes가 외부 OpenAI Codex gpt-5.5 프로세스로 실행 중인 multi-agent 모드에서는 Claude 세션은 Claude HQ 서브에이전트 역할만 수행한다. 단독으로 orient→설계→구현→검증→기록을 수행하고, advisor 를 plan·마무리 2회 호출한다. Critical 변경(라벨 정의·학습/서빙 스키마·HANA 쿼리·freeze/gate 정책)은 LO 엔진 계열에 따라 cross-family 검증을 고른다. Claude-main lean 모드에서는 codex-bridge, Codex-family Hermes LO 모드에서는 논리·schema·freeze 검증은 claude-bridge, 환경·DevOps 검증은 agy-bridge를 우선 사용한다. 2026-06-02 실제 작업이 이 패턴으로 수행됨.",
-      "default_path": "main(Hermes) + advisor(plan/finish) + (critical 시 cross-family: Claude-main→codex-bridge, Codex-family Hermes LO→claude-bridge/agy-bridge)"
+      "summary": "기본 운영 모드. OpenCode LO가 총괄 오케스트레이터이자 사용자 유일 소통 창구로서 orient→설계→구현→검증→기록을 수행하고, advisor를 plan·마무리 2회 호출한다. Critical 변경(라벨 정의·학습/서빙 스키마·HANA 쿼리·freeze/gate 정책)은 bridge_agents를 통해 cross-family 검증한다.",
+      "default_path": "OpenCode LO + advisor(plan/finish) + (critical cross-family via bridge_agents)"
     },
     "summon_when_needed": {
-      "summary": "아래 hq_agents 의 무거운 4본부 시퀀스(AGY→Claude→Codex→Claude→AGY→Hermes)는 폐기가 아니라 '필요시 소집' 자원으로 보존한다. 전체 의례를 기본값으로 강제하지 않는다.",
+      "summary": "아래 hq_agents 의 무거운 4본부 시퀀스(AGY→Claude→Codex→Claude→AGY→OpenCode LO)는 폐기가 아니라 '필요시 소집' 자원으로 보존한다. 전체 의례를 기본값으로 강제하지 않는다.",
       "triggers": [
         "환경·DevOps·offline wheel·BAT·HANA Raw 확보 리스크 분석 필요 → agy-bridge / antigravity-worker 소집",
         "독립 설계·논리 review·second opinion(same-family) 필요 → claude-bridge 소집",
-        "병렬 구현·대량 리팩터 → codex-worker 소집; true cross-family 구현·기술 검증 → codex-bridge 소집 (Codex-family Hermes LO 모드의 logic/schema/freeze 검증은 claude-bridge/agy-bridge 우선)",
+        "병렬 구현·대량 리팩터 → codex-worker 소집; true cross-family 구현·기술 검증 → codex-bridge 소집 (OpenCode LO 모드의 logic/schema/freeze 검증은 claude-bridge/agy-bridge 우선)",
         "provider-agnostic read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·구현 계획 second opinion 필요 → opencode-worker 소집 (dev-only, additive-only, critical cross-family gate 미충족)",
-        "런타임 에러 RCA·대용량 로그 요약 → hermes-worker(read-only) 소집"
+        "런타임 에러 RCA·대용량 로그 요약 → OpenCode LO 처리 (hermes-worker는 추가 지시까지 suspended)"
       ]
     },
-    "naming_caution": "용어 충돌 주의: 노트·doctrine 의 'Hermes'(총괄 오케스트레이터)는 lean 단독 모드에서는 메인 Claude 세션이 겸할 수 있고, multi-agent 모드에서는 외부 OpenAI Codex gpt-5.5 프로세스가 담당한다. 어느 경우든 로컬 에이전트 'hermes-worker'(haiku, read-only)는 로그/RCA/컨텍스트 요약 보조일 뿐 오케스트레이터가 아니다 — 같은 이름, 다른 역할."
+    "naming_caution": "용어 충돌 주의: OpenCode LO가 총괄 오케스트레이터다. 로컬 에이전트 'hermes-worker'(haiku, read-only)는 추가 지시까지 suspended 상태이며 LO가 아니다."
+  },
+  "lo_configuration": {
+    "lo_agent": "OpenCode",
+    "dispatch_rules": [
+      "OpenCode LO interprets the user request and project situation, then assigns tasks to the appropriate HQ/worker.",
+      "OpenCode LO receives results from subagents/workers, verifies them, and reports back to the user.",
+      "Cross-family critical work uses bridge_agents (claude-bridge, codex-bridge, agy-bridge).",
+      "OpenCode HQ / opencode-worker remains dev-only and additive-only."
+    ],
+    "suspended_agents": ["hermes-worker", "Hermes LO"]
   },
   "actual_handlers": {
     "local_workers": {
       "antigravity-worker": { "model": "claude-haiku-4-5-20251001", "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"], "role": "DevOps·인프라·배포" },
       "codex-worker": { "model": "claude-haiku-4-5-20251001", "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"], "role": "코드 구현·리팩터·유닛테스트" },
-      "hermes-worker": { "model": "claude-haiku-4-5-20251001", "tools": ["Read", "Bash", "Glob", "Grep"], "role": "로그 분석·디버깅·컨텍스트 요약" },
+      "hermes-worker": { "model": "claude-haiku-4-5-20251001", "tools": ["Read", "Bash", "Glob", "Grep"], "role": "로그 분석·디버깅·컨텍스트 요약", "note": "Suspended until further instruction." },
       "opencode-worker": { "model": "claude-sonnet-4-6", "tools": ["Read", "Grep", "Glob", "Bash"], "channel": "direct_cli:/home/ptg/.opencode/bin/opencode run", "default_sandbox": "read-only", "dev_only": true, "cross_family_gate": "additive-only; does NOT satisfy the critical cross-family requirement", "role": "OpenCode CLI read-only 리뷰·리팩터 대안·UI/UX 아이디어·계획 second opinion" }
     },
     "mcp_bridge": {
@@ -36,7 +46,7 @@
       "purpose": "cross-family 교차검증 (Anthropic ↔ OpenAI ↔ Gemini). Critical 작업(라벨 정의·학습/서빙 스키마·HANA 쿼리) 필수. OpenCode는 이 MCP server에 ask_opencode_hq로 연결되지 않는다."
     },
     "bridge_agents": {
-      "_note": "메인 Claude 또는 Hermes LO가 외부 CLI를 자기 컨텍스트 오염 없이 위임/검수하도록 하는 브릿지 서브에이전트. 우선순위는 repo-local .claude/agents/*-bridge.md이며, 동일 정의가 전역 ~/.claude/agents에 있으면 fallback으로 사용할 수 있다. 로컬 *-worker(haiku, 자체 실행)와 달리 MCP 채널로 외부 엔진 호출.",
+      "_note": "OpenCode LO가 외부 CLI를 자기 컨텍스트 오염 없이 위임/검수하도록 하는 브릿지 서브에이전트. 우선순위는 repo-local .claude/agents/*-bridge.md이며, 동일 정의가 전역 ~/.claude/agents에 있으면 fallback으로 사용할 수 있다. 로컬 *-worker(haiku, 자체 실행)와 달리 MCP 채널로 외부 엔진 호출.",
       "codex-bridge": { "model": "claude-sonnet-4-6", "channel": "mcp:ask_codex_hq", "tools": ["Read", "Grep", "Glob", "ToolSearch", "mcp__hermes-multi-cli-agents__ask_codex_hq"], "default_sandbox": "read-only", "role": "Claude↔Codex 구현·테스트·리뷰 위임 후 검수" },
       "agy-bridge": { "model": "claude-sonnet-4-6", "channel": "mcp:ask_agy_hq", "tools": ["Read", "Grep", "Glob", "ToolSearch", "mcp__hermes-multi-cli-agents__ask_agy_hq"], "role": "Claude↔AGY 리서치·리스크·second opinion 위임 후 교차검증" },
       "claude-bridge": { "model": "claude-sonnet-4-6", "channel": "mcp:ask_claude_hq", "tools": ["Read", "Grep", "Glob", "ToolSearch", "mcp__hermes-multi-cli-agents__ask_claude_hq"], "default_allowed_tools": "Read,Grep,Glob", "role": "Claude↔Claude(독립 인스턴스) 설계·리뷰·second opinion 위임 후 검수 (same-family, 메인 컨텍스트 분리)" }
@@ -45,10 +55,10 @@
   "hq_agents": {
     "AGY": {
       "name": "Antigravity-Gemini HQ",
-      "description": "환경·DevOps·리스크·외부 조사 본부. 총괄 조율 및 사용자 소통 창구는 AGY가 아니라 Hermes(메인 Claude 세션)다 — 역할 노트(2026-05-29/05-30)·CLAUDE.md 단일 출처. AGY는 구현·최종 스펙 담당이 아니며, 미확인 HANA schema는 blocker로 Hermes에 반환한다.",
+      "description": "환경·DevOps·리스크·외부 조사 본부. 총괄 조율 및 사용자 소통 창구는 AGY가 아니라 OpenCode LO다. AGY는 구현·최종 스펙 담당이 아니며, 미확인 HANA schema는 blocker로 OpenCode LO에 반환한다.",
       "primary_channel": "mcp:ask_agy_hq",
       "subagents": {
-        "agy_intake": { "role": "AGY 내부 작업 조율(환경·리스크·리서치 질의 정리·결과 취합). 프로젝트 전체 오케스트레이션 아님 — 그것은 Hermes 담당.", "handler": "local:agy-bridge → mcp:ask_agy_hq" },
+        "agy_intake": { "role": "AGY 내부 작업 조율(환경·리스크·리서치 질의 정리·결과 취합). 프로젝트 전체 오케스트레이션 아님 — 그것은 OpenCode LO 담당.", "handler": "local:agy-bridge → mcp:ask_agy_hq" },
         "agy_env_devops": { "role": "인프라·배포 스크립트·py312 휠 관리", "handler": "local:antigravity-worker" },
         "agy_research_doc": { "role": "외부 의약 사전 리서치·문서화", "handler": "local:agy-bridge → mcp:ask_agy_hq" }
       }
@@ -74,16 +84,16 @@
     },
     "OpenCode": {
       "name": "OpenCode HQ",
-      "description": "provider-agnostic 외부 코딩 에이전트 보조 레인. Read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·구현 계획 second opinion. Hermes LO·critical 게이트(Claude/AGY/Codex)를 대체하지 않으며 Windows production 의존성 아님. dev-only, additive-only.",
+      "description": "provider-agnostic 외부 코딩 에이전트 보조 레인. Read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·구현 계획 second opinion. OpenCode LO와 별개이며 critical 게이트(Claude/AGY/Codex)를 대체하지 않고 Windows production 의존성도 아니다. dev-only, additive-only.",
       "primary_channel": "local:opencode-worker -> direct_cli:/home/ptg/.opencode/bin/opencode run",
       "subagents": {
         "opencode_review": { "role": "read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·구현 계획 second opinion", "handler": "local:opencode-worker -> direct_cli:/home/ptg/.opencode/bin/opencode run --dir /mnt/c/model/mode_11_hana --format json" },
-        "opencode_bounded_impl": { "role": "Hermes LO가 명시 승인한 작고 격리된 구현/리팩터만 수행. 기본값 아님. Protected path/HARD_STOP은 즉시 중단.", "handler": "local:opencode-worker -> direct_cli:/home/ptg/.opencode/bin/opencode run (Hermes-approved isolated scope only)" }
+        "opencode_bounded_impl": { "role": "OpenCode LO가 명시 승인한 작고 격리된 구현/리팩터만 수행. 기본값 아님. Protected path/HARD_STOP은 즉시 중단.", "handler": "local:opencode-worker -> direct_cli:/home/ptg/.opencode/bin/opencode run (OpenCode LO-approved isolated scope only)" }
       }
     }
   },
   "context_management": {
-    "hermes": { "role": "런타임 로그·디버깅·컨텍스트 요약 및 본부 간 전달", "handler": "local:hermes-worker" }
+    "hermes": { "role": "추가 지시까지 suspended: 런타임 로그·디버깅·컨텍스트 요약 및 본부 간 전달", "suspended": true, "handler": "local:hermes-worker" }
   },
   "dataset_gates": {
     "final_raw_dataset": "2024-07..12, 184 daily records_YYYYMMDD.parquet files + 500k eligibility",
@@ -93,15 +103,15 @@
   },
   "severity_taxonomy": {
     "WARN": "Continue only for read-only or reversible work; include the risk in the agent report.",
-    "BLOCK": "Pause the current step and route the blocker to Hermes LO before proceeding.",
-    "HARD_STOP": "Abort downstream action and require explicit human approval through Hermes LO."
+    "BLOCK": "Pause the current step and route the blocker to OpenCode LO before proceeding.",
+    "HARD_STOP": "Abort downstream action and require explicit human approval through OpenCode LO."
   },
   "automatic_intervention_triggers": [
     {
       "name": "python_312_runtime_lock",
       "condition": "Active python/pytest runtime is not Python 3.12, or Python 3.11 is being used as active runtime rather than legacy backup context.",
       "severity": "BLOCK",
-      "owner": "AGY / Hermes LO",
+      "owner": "AGY / OpenCode LO",
       "action": "Stop the step and request .venv Python 3.12 activation or recreation."
     },
     {
@@ -115,7 +125,7 @@
       "name": "windows_wheelhouse_lock",
       "condition": "Any write/delete to packages_win/py312/ or Python 3.12 offline wheel/constraint files.",
       "severity": "HARD_STOP",
-      "owner": "AGY / Hermes LO",
+      "owner": "AGY / OpenCode LO",
       "action": "Abort unless the user explicitly approved this protected-path change."
     },
     {
@@ -129,7 +139,7 @@
       "name": "protected_artifact_lock",
       "condition": "Any write/delete/commit involving mlruns/, generated parquet, or out/ artifacts.",
       "severity": "HARD_STOP",
-      "owner": "Hermes LO",
+      "owner": "OpenCode LO",
       "action": "Abort and request explicit user approval before touching artifacts."
     },
     {

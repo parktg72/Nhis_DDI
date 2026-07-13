@@ -78,7 +78,7 @@ UI 변경 시 PyWebView 데스크톱 모드에서 **실제 클릭 검증**.
 - 일상 구현 (UI·작은 리팩터) → Sonnet 단독 가능.
 - **OpenCode** (dev-only 보조): read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·계획 second opinion. Direct CLI `opencode run`으로만 사용하며, additive only라 critical cross-family gate를 충족하지 않고 Windows 폐쇄망 production dependency가 될 수 없다.
   - 모델: `opencode-go` provider 우선 (기본 `opencode-go/qwen3.7-max`). go 한도 소진(429/quota) 시 zen provider 폴백 `--model opencode/glm-5` (수동 재시도 — `opencode run` one-shot은 자동 폴백 미작동).
-- **L0 결정**: Hermes가 LO로 호출한 세션은 Hermes가 오케스트레이션 L0, 그 외 단독 세션은 Claude가 L0. L0가 과제 성격에 따라 codex/opencode/agy 역할·모델을 배정한다 (전역 `~/.claude/CLAUDE.md` 위임 라우팅 참조).
+- **L0 결정**: 이 프로젝트(MODE_11_hana)에서는 OpenCode가 LO이며, 별도 지시가 있을 때까지 Hermes는 사용하지 않는다. L0가 과제 성격에 따라 codex/opencode/agy 역할·모델을 배정한다 (전역 `~/.claude/CLAUDE.md` 위임 라우팅 참조).
 - **file-as-memory 오케스트레이션**: `.multiagent/` (gitignored — 생성물, `configure-multiagent` 로 재설치). 승인 게이트·재진입 프로토콜·worker 라우팅 정본은 `.multiagent/_shared/orchestrator-rules.md` + `.multiagent/CLAUDE.md`. 이 규칙은 **`cd .multiagent && claude`** 세션에만 자동 적용되므로, 루트 세션에서 태스크 파이프라인을 돌릴 땐 해당 파일을 직접 읽는다. 워커 정의(`.claude/agents/*.md`)와 본부 매핑(`.agents/agents_config.json`)이 프로젝트 가드레일 정본이며 스캐폴드가 이를 재생성하지 않는다.
 - `/advisor` 는 plan + 마무리 두 번이 기본.
 

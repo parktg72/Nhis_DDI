@@ -1,0 +1,54 @@
+# Phase 1: ruff check-only config. Contract-related rules, no autofix.
+# Ruff is NOT installed in .venv. Config validation is BLOCKED until ruff
+# is available in an approved Python 3.12 environment.
+# Run when available: ruff check . (no --fix flag)
+
+target-version = "py312"
+
+# Check-only: never autofix.
+fix = false
+
+# Explicit excludes. Protected/generated/venv/non-source paths.
+extend-exclude = [
+    ".venv",
+    ".venv_hana",
+    ".venv_macos",
+    ".venv_wsl",
+    ".venv.bak",
+    ".venv.bak.py311",
+    "__pycache__",
+    ".pytest_cache",
+    ".uv-cache",
+    "packages_win",
+    "mlruns",
+    "models",
+    "data",
+    "drugbank",
+    "graphify-out",
+    ".understand-anything",
+    ".agents",
+    ".multiagent",
+    ".worktrees",
+    "cache",
+    "debug_logs",
+    "reviews",
+    "out",
+    "hana",
+    "hira",
+    "lay_out",
+    "python",
+    "error",
+    "desktop_app.py",
+]
+
+# Contract-related rules:
+#   F401  - unused imports
+#   F811  - redefined-while-unused
+#   I     - isort rules (import ordering)
+#   TID   - tidy-imports (banned-imports, relative-imports)
+# Note: TID is included for import tidy rules. No banned-import
+# configuration is set in this file. TID does NOT enforce architecture
+# boundaries unless explicit banned-imports are configured (not done here).
+[lint]
+select = ["F401", "F811", "I", "TID"]
+ignore = []
