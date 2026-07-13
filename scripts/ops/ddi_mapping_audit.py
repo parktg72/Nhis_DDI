@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime
-import json
 from pathlib import Path
-import sys
 from typing import Iterable, Sequence
 
 import pandas as pd

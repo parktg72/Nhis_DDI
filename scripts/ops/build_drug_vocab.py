@@ -2,17 +2,16 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
 import json
-from pathlib import Path
 import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.ops.build_drug_vocab_audit import build_vocab_audit
-
 
 SORT_POLICY = "freq_desc_lex_asc"
 UNK_TOKEN = "_unk"

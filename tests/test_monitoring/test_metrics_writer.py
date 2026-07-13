@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import threading
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -70,8 +69,9 @@ class TestMetricsWriterAppend:
 
     def test_append_lock_timeout_raises(self, tmp_path):
         """append() lock 타임아웃 시 filelock.Timeout 예외 전파."""
-        from monitoring.metrics_writer import MetricsWriter
         from filelock import FileLock, Timeout
+
+        from monitoring.metrics_writer import MetricsWriter
         path = tmp_path / "metrics.jsonl"
         w = MetricsWriter(path=path, lock_timeout=0.001)
         lock = FileLock(str(path) + ".lock")
@@ -129,8 +129,9 @@ class TestMetricsWriterReadRecent:
 
     def test_read_recent_returns_empty_on_timeout(self, tmp_path):
         """읽기 중 락 타임아웃 → [] 반환."""
-        from monitoring.metrics_writer import MetricsWriter
         from filelock import FileLock
+
+        from monitoring.metrics_writer import MetricsWriter
         path = tmp_path / "metrics.jsonl"
         ts = datetime.now(timezone.utc).isoformat()
         path.write_text('{"timestamp": "' + ts + '", "x": 1}\n')
@@ -160,8 +161,9 @@ class TestAppendRetryBackoff:
 
     def test_append_succeeds_after_one_timeout(self, tmp_path, monkeypatch):
         """첫 시도 timeout, 두 번째 성공. counter=1, 결과 OK."""
-        from monitoring.metrics_writer import MetricsWriter
         from filelock import Timeout
+
+        from monitoring.metrics_writer import MetricsWriter
         path = tmp_path / "metrics.jsonl"
         w = MetricsWriter(path=path, lock_timeout=0.5)
 
@@ -181,8 +183,9 @@ class TestAppendRetryBackoff:
 
     def test_append_succeeds_after_multiple_timeouts(self, tmp_path, monkeypatch):
         """첫·둘째 시도 timeout, 세 번째 성공. counter=2."""
-        from monitoring.metrics_writer import MetricsWriter
         from filelock import Timeout
+
+        from monitoring.metrics_writer import MetricsWriter
         path = tmp_path / "metrics.jsonl"
         w = MetricsWriter(path=path, lock_timeout=0.5)
 
@@ -201,8 +204,9 @@ class TestAppendRetryBackoff:
 
     def test_append_raises_after_retry_exhaustion(self, tmp_path, monkeypatch):
         """모든 시도 timeout → Timeout 전파. counter=4 (1 시도 + 3 retry)."""
-        from monitoring.metrics_writer import MetricsWriter
         from filelock import Timeout
+
+        from monitoring.metrics_writer import MetricsWriter
         path = tmp_path / "metrics.jsonl"
         w = MetricsWriter(path=path, lock_timeout=0.05)
 
@@ -216,8 +220,9 @@ class TestAppendRetryBackoff:
 
     def test_lock_timeout_count_thread_safe(self, tmp_path, monkeypatch):
         """동시 timeout 발생 시 카운터 race 없이 누적 (threading.Lock 보호)."""
-        from monitoring.metrics_writer import MetricsWriter
         from filelock import Timeout
+
+        from monitoring.metrics_writer import MetricsWriter
         path = tmp_path / "metrics.jsonl"
         w = MetricsWriter(path=path, lock_timeout=0.01)
 
@@ -251,8 +256,9 @@ class TestAppendRetryBackoff:
 
         라우터 측 except 패턴은 routers/predict.py:43-60 의 기존 로직 그대로.
         """
-        from monitoring.metrics_writer import MetricsWriter
         from filelock import Timeout
+
+        from monitoring.metrics_writer import MetricsWriter
         path = tmp_path / "metrics.jsonl"
         w = MetricsWriter(path=path, lock_timeout=0.01)
 

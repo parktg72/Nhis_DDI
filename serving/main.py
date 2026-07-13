@@ -25,11 +25,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from config import settings as _settings
+from monitoring.metrics_writer import init_metrics_writer
 from serving.middleware import RequestLoggingMiddleware
 from serving.predictor import init_predictor
-from serving.routers import health, predict, metrics as metrics_router
-from monitoring.metrics_writer import init_metrics_writer
-from config import settings as _settings
+from serving.routers import health, predict
+from serving.routers import metrics as metrics_router
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 로깅 설정

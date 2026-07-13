@@ -54,13 +54,13 @@ _need_data = pytest.mark.skipif(
 
 
 def _training_feats(drugs) -> dict:
+    import pandas as pd
+
     import hana_app.core.ml_runner as M
+    from scripts.etl.code_standardizer import CodeStandardizer
     from scripts.etl.models import PrescriptionRecord
     from scripts.etl.overlap_calculator import calculate_overlaps_for_patient
     from scripts.etl.prescription_aggregator import aggregate_patient_features
-
-    import pandas as pd
-    from scripts.etl.code_standardizer import CodeStandardizer
     M._DRUG_MASTER_CACHE.update({"obj": None, "loaded": False})
     dm = M._load_drug_master()
     ddi_matrix = M._load_ddi_matrix()

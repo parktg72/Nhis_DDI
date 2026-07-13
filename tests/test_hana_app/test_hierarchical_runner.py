@@ -13,11 +13,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hana_app.core.hierarchical_runner import (
-    YELLOW_SUBTYPE_LABELS,
     STAGE2_LABELS,
+    YELLOW_SUBTYPE_LABELS,
     build_stage2_label,
-    encode_stage2_labels,
     decode_stage2_labels,
+    encode_stage2_labels,
 )
 
 
@@ -99,8 +99,9 @@ def test_select_thresholds_returns_both_tau():
 
 
 def test_tau_red_respects_recall_floor():
-    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
     from sklearn.metrics import recall_score
+
+    from hana_app.core.hierarchical_runner import select_thresholds_from_pr
 
     rng = np.random.default_rng(0)
     y_true = np.array([1] * 100 + [0] * 900)
@@ -131,6 +132,7 @@ def test_tau_review_is_lower_than_tau_red():
 
 def test_threshold_rejects_non_binary_y_true():
     import pytest
+
     from hana_app.core.hierarchical_runner import select_thresholds_from_pr
     with pytest.raises(ValueError, match="이진"):
         select_thresholds_from_pr(
@@ -141,6 +143,7 @@ def test_threshold_rejects_non_binary_y_true():
 
 def test_threshold_rejects_single_class_y_true():
     import pytest
+
     from hana_app.core.hierarchical_runner import select_thresholds_from_pr
     with pytest.raises(ValueError, match="양성/음성"):
         select_thresholds_from_pr(
@@ -151,6 +154,7 @@ def test_threshold_rejects_single_class_y_true():
 
 def test_threshold_rejects_out_of_range_proba():
     import pytest
+
     from hana_app.core.hierarchical_runner import select_thresholds_from_pr
     with pytest.raises(ValueError, match=r"\[0.0, 1.0\]"):
         select_thresholds_from_pr(
@@ -162,6 +166,7 @@ def test_threshold_rejects_out_of_range_proba():
 def test_threshold_rejects_review_target_below_floor():
     """review_recall_target <= recall_floor 이면 τ_review < τ_red 가 깨짐 → 거부."""
     import pytest
+
     from hana_app.core.hierarchical_runner import select_thresholds_from_pr
     with pytest.raises(ValueError, match="보다 커야 함"):
         select_thresholds_from_pr(
@@ -174,6 +179,7 @@ def test_threshold_rejects_review_target_below_floor():
 
 def test_threshold_rejects_mismatched_lengths():
     import pytest
+
     from hana_app.core.hierarchical_runner import select_thresholds_from_pr
     with pytest.raises(ValueError, match="길이 불일치"):
         select_thresholds_from_pr(
@@ -256,10 +262,12 @@ def test_train_hierarchical_excludes_y_other_from_stage2(tmp_path):
 def test_train_hierarchical_local_global_remapping_roundtrip(tmp_path):
     """Stage 2 학습 시 일부 클래스가 누락되어도 predict_proba + classes_present 로
     올바르게 STAGE2_LABELS 문자열로 복원 가능한지."""
-    from hana_app.core.hierarchical_runner import (
-        train_hierarchical, STAGE2_LABELS,
-    )
     import joblib
+
+    from hana_app.core.hierarchical_runner import (
+        STAGE2_LABELS,
+        train_hierarchical,
+    )
 
     rng = np.random.default_rng(99)
     n = 200
@@ -327,7 +335,7 @@ def test_train_hierarchical_cost_sensitive_with_missing_class(tmp_path):
 
 
 def test_dispatch_no_alert_action():
-    from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
+    from hana_app.core.hierarchical_runner import STAGE2_LABELS, _dispatch_result
     # 마지막 원소 No_Alert 가 가장 높음 (STAGE2_LABELS 7-class)
     probs = np.array([0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.70])
     r = _dispatch_result(
@@ -339,7 +347,7 @@ def test_dispatch_no_alert_action():
 
 
 def test_dispatch_red_confirmed_above_tau_red():
-    from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
+    from hana_app.core.hierarchical_runner import STAGE2_LABELS, _dispatch_result
     r = _dispatch_result(
         p_red=0.95, stage2_probs=None, stage2_labels=STAGE2_LABELS,
         tau_red=0.7, tau_review=0.3,
@@ -352,7 +360,7 @@ def test_dispatch_red_confirmed_above_tau_red():
 
 def test_dispatch_red_suspect_between_thresholds():
     """τ_review ≤ P(Red) < τ_red → Stage 2 출력 + red_suspect=True."""
-    from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
+    from hana_app.core.hierarchical_runner import STAGE2_LABELS, _dispatch_result
     probs = np.array([0.6, 0.1, 0.1, 0.05, 0.05, 0.05, 0.05])  # index0 = Y_TRIPLE
     r = _dispatch_result(
         p_red=0.5, stage2_probs=probs, stage2_labels=STAGE2_LABELS,
@@ -365,7 +373,7 @@ def test_dispatch_red_suspect_between_thresholds():
 
 def test_predict_risk_end_to_end(tmp_path):
     """predict_risk 가 train_hierarchical 번들로 추론 결과 리스트를 반환하는지."""
-    from hana_app.core.hierarchical_runner import train_hierarchical, predict_risk
+    from hana_app.core.hierarchical_runner import predict_risk, train_hierarchical
 
     rng = np.random.default_rng(42)
     n = 500
@@ -405,10 +413,13 @@ def test_predict_risk_end_to_end(tmp_path):
 
 def test_predict_risk_with_missing_class_uses_classes_present(tmp_path):
     """Y_FRAG 없이 학습된 모델에서 predict_risk 가 classes_present 로 올바르게 복원."""
-    from hana_app.core.hierarchical_runner import (
-        train_hierarchical, predict_risk, STAGE2_LABELS,
-    )
     import joblib
+
+    from hana_app.core.hierarchical_runner import (
+        STAGE2_LABELS,
+        predict_risk,
+        train_hierarchical,
+    )
 
     rng = np.random.default_rng(123)
     n = 300
@@ -456,8 +467,9 @@ def test_predict_risk_with_missing_class_uses_classes_present(tmp_path):
 
 def test_dispatch_raises_valueerror_on_missing_stage2_probs():
     """assert 대신 ValueError — production -O 모드에서도 안전."""
-    from hana_app.core.hierarchical_runner import _dispatch_result, STAGE2_LABELS
     import pytest
+
+    from hana_app.core.hierarchical_runner import STAGE2_LABELS, _dispatch_result
     with pytest.raises(ValueError, match="stage2_probs"):
         _dispatch_result(
             p_red=0.5, stage2_probs=None,
@@ -472,13 +484,16 @@ def test_end_to_end_train_predict(tmp_path):
     Task 0-9 의 모든 컴포넌트를 하나의 워크플로우에서 검증.
     """
     from datetime import date
-    from scripts.etl.models import PatientFeatures
-    from scripts.etl.prescription_aggregator import (
-        _assign_risk_level, _assign_yellow_subtype,
+
+    from hana_app.core.hierarchical_runner import (
+        predict_risk,
+        train_hierarchical,
     )
     from hana_app.core.ml_runner import _patient_features_to_row
-    from hana_app.core.hierarchical_runner import (
-        train_hierarchical, predict_risk,
+    from scripts.etl.models import PatientFeatures
+    from scripts.etl.prescription_aggregator import (
+        _assign_risk_level,
+        _assign_yellow_subtype,
     )
 
     # 합성 PatientFeatures 생성 — 각 카테고리별 최소 30건
@@ -566,6 +581,7 @@ def test_end_to_end_train_predict(tmp_path):
 def test_end_to_end_meta_has_clinical_standards_version(tmp_path):
     """학습 결과 메타 파일이 CLINICAL_STANDARDS_VERSION 을 기록해 재현성을 보장."""
     import json
+
     from hana_app.core.hierarchical_runner import train_hierarchical
 
     rng = np.random.default_rng(7)
@@ -613,8 +629,12 @@ def _no_red_df(n=400, seed=0):
 
 def test_train_hierarchical_degrades_stage1_when_no_red(tmp_path):
     """Red 0건이면 ValueError 대신 상수 비-Red Stage1 로 degrade, Stage2 정상 학습."""
-    from hana_app.core.hierarchical_runner import train_hierarchical, _ConstantNegativeStage1
     import json
+
+    from hana_app.core.hierarchical_runner import (
+        _ConstantNegativeStage1,
+        train_hierarchical,
+    )
 
     df = _no_red_df()
     result = train_hierarchical(
@@ -634,8 +654,9 @@ def test_train_hierarchical_degrades_stage1_when_no_red(tmp_path):
 
 def test_train_hierarchical_accepts_stage2_softprob_predict_matrix(tmp_path, monkeypatch):
     """Windows XGBoost 조합에서 Stage2 predict 가 softprob 행렬이어도 평가 지표를 계산한다."""
-    from hana_app.core.hierarchical_runner import train_hierarchical
     from xgboost import XGBClassifier
+
+    from hana_app.core.hierarchical_runner import train_hierarchical
 
     def _predict_softprob(self, X, *args, **kwargs):
         return self.predict_proba(X)
@@ -655,8 +676,9 @@ def test_train_hierarchical_accepts_stage2_softprob_predict_matrix(tmp_path, mon
 
 def test_degraded_predict_risk_routes_all_to_stage2(tmp_path):
     """degrade 모델로 predict_risk: 아무도 Red/red_suspect 아니고 모두 Stage2 라벨."""
-    from hana_app.core.hierarchical_runner import train_hierarchical, predict_risk
     import joblib
+
+    from hana_app.core.hierarchical_runner import predict_risk, train_hierarchical
 
     df = _no_red_df()
     result = train_hierarchical(

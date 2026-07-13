@@ -23,11 +23,9 @@ Output:
   python scripts/build_ddi_matrix.py --skip-dur    (DUR 데이터 없을 때)
 """
 import argparse
-import sys
 from pathlib import Path
 
 import pandas as pd
-
 
 SEVERITY_RANK = {"Contraindicated": 0, "Major": 1, "Moderate": 2, "Minor": 3, "Unknown": 4}
 

@@ -23,8 +23,8 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.etl.models import PrescriptionRecord
 from hana_app.core.db import _assert_safe_identifier
+from scripts.etl.models import PrescriptionRecord
 
 logger = logging.getLogger(__name__)
 
@@ -1452,8 +1452,10 @@ def _count_unique_patients(parquet_paths: list[Path], memory_limit_mb: int = 0) 
     미설치 시: pandas 루프 폴백.
     """
     try:
+        import shutil
+        import tempfile
+
         import duckdb
-        import tempfile, shutil
         _src_list = ", ".join(f"'{Path(p).as_posix()}'" for p in parquet_paths)
         _mem = max(256, memory_limit_mb // 4) if memory_limit_mb > 0 else 512
         _tmp = Path(tempfile.mkdtemp(prefix="duck_cnt_"))

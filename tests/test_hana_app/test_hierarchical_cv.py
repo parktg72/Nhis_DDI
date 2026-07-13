@@ -18,7 +18,6 @@ from hana_app.core.hierarchical_cv import (
 )
 from hana_app.core.hierarchical_runner import STAGE2_LABELS
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 공통 fixture — 작은 합성 데이터로 5-fold 가능
 # ─────────────────────────────────────────────────────────────────────────────

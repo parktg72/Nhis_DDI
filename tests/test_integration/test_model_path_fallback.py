@@ -1,7 +1,6 @@
 """MODEL_PATH 환경변수 폴백 동작 검증."""
 import importlib
 import os
-import pytest
 
 
 def test_model_path_fallback_uses_model_dir(monkeypatch, tmp_path):

@@ -19,15 +19,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
 from serving.predictor import (
-    MLModel,
-    HybridPredictor,
-    HierarchicalPredictor,
-    _FEATURE_ALLOWED,
     _BUILDER_KNOWN_COLS,
+    _FEATURE_ALLOWED,
     _INTENTIONAL_FEATURE_ALLOWLIST,
+    HierarchicalPredictor,
+    HybridPredictor,
+    MLModel,
     _validate_feature_schema,
 )
 
@@ -226,9 +225,11 @@ def test_reload_hierarchical_accepts_known(monkeypatch):
 
 def _write_hier_artifact(root: Path, feature_cols: list[str], *, corrupt_stage1_hash: bool = False) -> Path:
     import json
-    import joblib
     import types
+
+    import joblib
     import numpy as np
+
     from hana_app.core.hierarchical_runner import STAGE2_LABELS
     from scripts.etl.prescription_aggregator import DDI_FEATURE_SEMANTICS_VERSION
 

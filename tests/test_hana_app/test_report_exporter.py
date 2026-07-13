@@ -1,19 +1,19 @@
 """tests for hana_app.core.report_exporter"""
 import io
-import pytest
+
 import pandas as pd
+import pytest
 
 from hana_app.core.report_exporter import (
-    build_csv_bytes,
-    build_docx_bytes,
     DOCX_AVAILABLE,
     MPL_AVAILABLE,
     _collect_page4_docx_sections,
     _comparison_results,
     _derive_reason,
-    _effective_label,
     _summarize_misclassification_reasons,
     _yellow_summary,
+    build_csv_bytes,
+    build_docx_bytes,
 )
 
 
@@ -303,9 +303,9 @@ def test_docx_records_current_sequential_training_results():
 
 
 def _docx_block_texts(doc):
+    from docx.oxml.ns import qn
     from docx.table import Table
     from docx.text.paragraph import Paragraph
-    from docx.oxml.ns import qn
 
     for child in doc.element.body.iterchildren():
         if child.tag == qn("w:p"):
@@ -316,9 +316,9 @@ def _docx_block_texts(doc):
 
 
 def _docx_table_rows_after_heading(doc, heading: str):
+    from docx.oxml.ns import qn
     from docx.table import Table
     from docx.text.paragraph import Paragraph
-    from docx.oxml.ns import qn
 
     found = False
     for child in doc.element.body.iterchildren():

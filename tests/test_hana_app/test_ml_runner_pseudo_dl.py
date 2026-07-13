@@ -4,8 +4,7 @@ import logging
 
 
 def test_build_model_warns_when_using_pseudo_dl_model(monkeypatch, caplog):
-    from hana_app.core import ml_runner
-    from hana_app.core import phase3_models
+    from hana_app.core import ml_runner, phase3_models
 
     calls = []
 
@@ -37,8 +36,7 @@ def test_build_model_warns_when_using_pseudo_dl_model(monkeypatch, caplog):
 
 
 def test_build_model_does_not_warn_for_tabnet(monkeypatch, caplog):
-    from hana_app.core import ml_runner
-    from hana_app.core import phase3_models
+    from hana_app.core import ml_runner, phase3_models
 
     monkeypatch.setattr(
         phase3_models,

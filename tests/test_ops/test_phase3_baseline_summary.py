@@ -100,7 +100,10 @@ def test_summary_rejected_ddi_includes_reason(tmp_path) -> None:
 
 
 def test_summary_markdown_has_key_sections(tmp_path) -> None:
-    from scripts.ops.phase3_baseline_summary import build_phase3_baseline_summary, write_summary
+    from scripts.ops.phase3_baseline_summary import (
+        build_phase3_baseline_summary,
+        write_summary,
+    )
 
     summary = build_phase3_baseline_summary(
         linear_report_path=tmp_path / "missing_linear.json",

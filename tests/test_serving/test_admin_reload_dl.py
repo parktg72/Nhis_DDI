@@ -7,7 +7,10 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from scripts.datasets.contracts import DL_BUNDLE_REQUIRED_FILES, write_dl_bundle_manifest
+from scripts.datasets.contracts import (
+    DL_BUNDLE_REQUIRED_FILES,
+    write_dl_bundle_manifest,
+)
 from serving.dl_predictor import DLModel
 from serving.predictor import HybridPredictor
 from serving.routers import health

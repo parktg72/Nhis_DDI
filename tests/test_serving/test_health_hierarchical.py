@@ -47,8 +47,8 @@ def hierarchical_only_predictor():
 
 @pytest.fixture
 def app_client_hierarchical(hierarchical_only_predictor):
-    from serving.main import app
     import serving.predictor as pred_module
+    from serving.main import app
 
     # lifespan startup 이 _predictor 를 덮어쓰므로, TestClient 진입 직후
     # mock 으로 교체한다 (mock_predictor 와 동일 패턴이지만 시점이 늦음).

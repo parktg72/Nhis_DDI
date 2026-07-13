@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
-from datetime import date, datetime
 import json
-from pathlib import Path
 import random
 import sys
+from dataclasses import asdict, dataclass
+from datetime import date, datetime
+from pathlib import Path
 from time import perf_counter
 from typing import Sequence
 
@@ -20,6 +20,8 @@ from scripts.ops.label_audit import label_patient_histories as label_sick_code_h
 from scripts.ops.multi_day_parquet_provider import MultiDayParquetHistoryProvider
 from scripts.ops.multi_institution_label import (
     MULTI_INSTITUTION_THRESHOLD,
+)
+from scripts.ops.multi_institution_label import (
     label_patient_histories as label_multi_institution_histories,
 )
 from scripts.ops.multihot_encoder import encode_batch

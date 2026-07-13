@@ -1,8 +1,9 @@
 """hana_app/core/db.py 단위 테스트."""
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
 import pytest
 
-from hana_app.core.db import HANAConnection, get_connection, _fallback_conn
+from hana_app.core.db import HANAConnection, get_connection
 
 
 class TestGetConnection:

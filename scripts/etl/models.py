@@ -10,9 +10,6 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
-import pandas as pd
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 청구 데이터 스키마 (컬럼명 → dtype)
 # 출처: lay_out/t20.txt, t30.txt, t40.txt, t60.txt, 요양기관.txt

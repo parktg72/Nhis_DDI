@@ -10,10 +10,9 @@ import importlib
 import sys
 import types
 from datetime import date, datetime
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Airflow Mock (미설치 환경 대응)
@@ -188,6 +187,7 @@ class TestETLDag:
     def test_aggregate_and_write_features_aggregate_once(self, tmp_path):
         mod = _import_dag("ddi_etl_dag")
         import json
+
         import pandas as pd
 
         partition = "20260319"
@@ -527,8 +527,9 @@ class TestBatchPredictDag:
 
     def test_generate_summary_distribution(self, tmp_path):
         mod = _import_dag("ddi_batch_predict_dag")
-        import pandas as pd
         import json
+
+        import pandas as pd
 
         # 예측 결과 파일 생성
         pred_path = str(tmp_path / "predictions_20260319.parquet")

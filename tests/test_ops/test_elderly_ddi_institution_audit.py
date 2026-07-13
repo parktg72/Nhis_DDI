@@ -24,7 +24,9 @@ class _FakeDrugMaster:
 
 
 def test_pdf_text_code_extraction_preserves_trailing_star_display() -> None:
-    from scripts.ops.elderly_ddi_institution_audit import normalize_disease_codes_from_pdf_text
+    from scripts.ops.elderly_ddi_institution_audit import (
+        normalize_disease_codes_from_pdf_text,
+    )
 
     text = "치매 F00*. 예시 F10.2*. 혈관성치매 F01 중복 F00*,"
 
@@ -671,7 +673,9 @@ def test_summarize_institution_ddi_severity_counts_same_institution_pair_once() 
 
 
 def test_summarize_institution_ddi_severity_empty_schema_has_no_patient_or_drug_columns() -> None:
-    from scripts.ops.elderly_ddi_institution_audit import summarize_institution_ddi_severity
+    from scripts.ops.elderly_ddi_institution_audit import (
+        summarize_institution_ddi_severity,
+    )
 
     summary, preflight = summarize_institution_ddi_severity([], death_exclusion_status="complete")
 
@@ -717,7 +721,9 @@ def test_summarize_institution_ddi_severity_reports_unmatched_name_count() -> No
 
 
 def test_summarize_institution_ddi_severity_provisional_without_death_exclusion_is_not_final() -> None:
-    from scripts.ops.elderly_ddi_institution_audit import summarize_institution_ddi_severity
+    from scripts.ops.elderly_ddi_institution_audit import (
+        summarize_institution_ddi_severity,
+    )
 
     _summary, preflight = summarize_institution_ddi_severity([], death_exclusion_status="unavailable")
 

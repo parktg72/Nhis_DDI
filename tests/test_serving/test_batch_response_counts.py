@@ -11,7 +11,6 @@ Codex 합의 검증:
 from __future__ import annotations
 
 import threading
-from datetime import date
 from unittest.mock import patch
 
 import pytest
@@ -19,9 +18,9 @@ from fastapi.testclient import TestClient
 
 from serving.predictor import HybridPredictor, RequestFeatureBuilder
 from serving.schemas import (
-    BatchPredictResponse, PredictResponse, RiskLevel,
+    BatchPredictResponse,
+    RiskLevel,
 )
-
 
 # ─── Schema 단위 — 0 건 / 정합성 ─────────────────────────────────────────────
 
@@ -55,8 +54,8 @@ def test_schema_total_alias_to_success():
 @pytest.fixture
 def app_client_for_batch():
     """직전 test_serving 의 mock_predictor 패턴 재현."""
-    from serving.main import app
     import serving.predictor as pred_module
+    from serving.main import app
 
     pred = HybridPredictor.__new__(HybridPredictor)
     pred._start_time = 0.0

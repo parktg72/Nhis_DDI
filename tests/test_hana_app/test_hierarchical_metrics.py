@@ -19,7 +19,6 @@ from hana_app.core.hierarchical_metrics import (
 )
 from hana_app.core.hierarchical_runner import STAGE2_LABELS
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 1
 # ─────────────────────────────────────────────────────────────────────────────

@@ -13,8 +13,11 @@ from fastapi import APIRouter, HTTPException
 from monitoring.metrics_writer import get_metrics_writer
 from serving.predictor import get_predictor
 from serving.schemas import (
-    BatchPredictRequest, BatchPredictResponse,
-    PredictRequest, PredictResponse, RiskLevel,
+    BatchPredictRequest,
+    BatchPredictResponse,
+    PredictRequest,
+    PredictResponse,
+    RiskLevel,
 )
 
 logger = logging.getLogger(__name__)

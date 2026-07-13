@@ -12,13 +12,12 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hana_app.core.config import load_config, is_hana, is_sas
+from hana_app.core.config import is_hana, is_sas, load_config
 from hana_app.core.db import get_connection
 from hana_app.core.sas_reader import (
-    read_sas_chunks,
     get_sas_columns,
     get_sas_row_count,
-    scan_sas_files,
+    read_sas_chunks,
 )
 
 st.set_page_config(page_title="데이터 미리보기", page_icon="🔍", layout="wide")

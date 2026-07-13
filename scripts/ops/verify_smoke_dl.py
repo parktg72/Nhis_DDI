@@ -13,7 +13,6 @@ from urllib import error, request
 from scripts.datasets.smoke_dl_bundle import create_smoke_dl_bundle
 from scripts.ops.validate_dl_bundle import VerificationReport, validate_bundle
 
-
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_RUN_ID = "smoke-deploy"
 DEFAULT_SCHEMA_VERSION = "dl.v1.smoke"

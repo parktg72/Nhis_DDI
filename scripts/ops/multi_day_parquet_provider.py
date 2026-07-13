@@ -1,15 +1,14 @@
 """Multi-day parquet-backed prescription history provider for ops validation."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-import logging
 from pathlib import Path
 from typing import Sequence
 
 import pandas as pd
 import pyarrow.parquet as pq
-
 
 LOGGER = logging.getLogger(__name__)
 

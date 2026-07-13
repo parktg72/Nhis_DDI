@@ -20,9 +20,9 @@ Nov→Dec 홀드아웃 트랙이 아니다 → freeze-safe. 학습 데이터(raw
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
-import sys
 from time import perf_counter
 
 import pandas as pd
@@ -30,12 +30,12 @@ import pandas as pd
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from hana_app.core.hierarchical_runner import STAGE2_LABELS, train_hierarchical
 from hana_app.core.ml_runner import (
     FEATURE_COLS,
     _patient_features_to_row,
     build_patient_features_from_parquet,
 )
-from hana_app.core.hierarchical_runner import STAGE2_LABELS, train_hierarchical
 from scripts.etl.models import PatientFeatures
 
 

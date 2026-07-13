@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from datetime import date
 import json
 import pickle
 import sys
+from datetime import date
 
 import pandas as pd
 
-from scripts.datasets.contracts import DL_DATASET_REQUIRED_COLUMNS, write_dl_bundle_manifest
+from scripts.datasets.contracts import (
+    DL_DATASET_REQUIRED_COLUMNS,
+    write_dl_bundle_manifest,
+)
 from serving.hana_history import validate_history_frame
 
 

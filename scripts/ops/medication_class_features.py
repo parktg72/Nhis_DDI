@@ -7,7 +7,6 @@ from typing import Mapping, Sequence
 
 import pandas as pd
 
-
 EFMDC_NULL_TOKEN = "__NULL_EFMDC__"
 EFMDC_UNK_TOKEN = "__UNK_EFMDC__"
 

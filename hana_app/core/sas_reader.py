@@ -317,7 +317,7 @@ class SASExtractor:
                 f"({len(use_cols)}개 컬럼, 인코딩={self.encoding})"
             )
 
-        from hana_app.core.memory_guard import get_guard, MemoryLimitExceeded
+        from hana_app.core.memory_guard import MemoryLimitExceeded, get_guard
         _guard = get_guard(guard)
 
         parts: list[pd.DataFrame] = []
@@ -1056,7 +1056,8 @@ class SASExtractor:
         ]
 
         # SAS 파일을 1회만 읽어 Parquet 캐시 저장 (N번 SAS 스캔 방지)
-        import tempfile, shutil
+        import shutil
+        import tempfile
         _cache_dir = Path(tempfile.mkdtemp(prefix="sas_cache_"))
         _ym_col_t30 = self.cols["t30"].get("yyyymm", "MDCARE_STRT_YYYYMM")
         _ym_col_t60 = self.cols["t60"].get("yyyymm", "MDCARE_STRT_YYYYMM")

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
 import gc
-from pathlib import Path
 import sys
-from types import SimpleNamespace
 import weakref
+from datetime import date
+from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 

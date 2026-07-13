@@ -2,17 +2,16 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
-
-import pytest
-from fastapi.testclient import TestClient
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Airflow Mock (미설치 환경 대응)
 # ─────────────────────────────────────────────────────────────────────────────
+import sys
+import types
 
-import sys, types
+import pytest
+from fastapi.testclient import TestClient
+
 
 def _ensure_airflow_mock():
     if "airflow" in sys.modules:
@@ -67,6 +66,7 @@ class TestPredictMetricsWiring:
         # predictor mock
         from datetime import date
         from unittest.mock import MagicMock, patch
+
         from serving.schemas import PredictResponse, RiskLevel
         mock_pred = MagicMock()
         mock_pred.predict.return_value = PredictResponse(
@@ -82,6 +82,7 @@ class TestPredictMetricsWiring:
         )
 
         import importlib
+
         import config.settings as s
         importlib.reload(s)
 
@@ -113,10 +114,10 @@ class TestPredictMetricsWiring:
 
     def test_predict_metrics_writer_failure_does_not_break_response(self, tmp_path, monkeypatch):
         """MetricsWriter.append() 예외 → 정상 응답 반환 검증."""
-        from unittest.mock import MagicMock, patch
-        from serving.schemas import PredictResponse, RiskLevel
-
         from datetime import date
+        from unittest.mock import MagicMock, patch
+
+        from serving.schemas import PredictResponse, RiskLevel
         mock_pred = MagicMock()
         mock_pred.predict.return_value = PredictResponse(
             patient_id="P001",
@@ -226,11 +227,13 @@ class TestDAGDriftAndAlerts:
     @pytest.fixture
     def setup_drift_env(self, tmp_path):
         """_detect_drift, _generate_alerts 테스트를 위한 환경 셋업."""
+        from datetime import datetime, timezone
+
         import numpy as np
         import pandas as pd
+
         from monitoring.drift_detector import DriftDetector
         from monitoring.metrics_writer import MetricsWriter
-        from datetime import datetime, timezone
 
         # drift_reference.pkl 생성
         ref_df = pd.DataFrame({
@@ -306,7 +309,6 @@ class TestDAGDriftAndAlerts:
 
         # 먼저 drift JSON을 수동 생성 (partition은 YYYYMMDD 포맷)
         import json
-        from pathlib import Path
         drift_json = env["tmp_path"] / f"drift_{partition}.json"
         drift_json.write_text(json.dumps({
             "partition": partition,

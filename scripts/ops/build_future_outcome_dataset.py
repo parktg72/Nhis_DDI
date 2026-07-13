@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime, timedelta
 import hashlib
 import json
-from pathlib import Path
 import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from time import perf_counter
 from typing import Mapping, Sequence
 
@@ -17,8 +17,11 @@ from scipy import sparse
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from scripts.ops.eligibility_loader import (
+    DEFAULT_DEMOGRAPHICS_FEATURE,
+    load_demographics,
+)
 from scripts.ops.full_cohort_history_loader import FullCohortHistoryLoader
-from scripts.ops.eligibility_loader import DEFAULT_DEMOGRAPHICS_FEATURE, load_demographics
 from scripts.ops.future_outcome_label import (
     FUTURE_MULTI_INSTITUTION_THRESHOLD,
     label_future_multi_institution_onset,

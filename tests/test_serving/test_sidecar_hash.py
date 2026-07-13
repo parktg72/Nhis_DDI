@@ -16,8 +16,6 @@ import hashlib
 import pickle
 from pathlib import Path
 
-import pytest
-
 
 class _FakeModel:
     def predict_proba(self, X):

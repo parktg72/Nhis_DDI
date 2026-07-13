@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
 import json
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -13,7 +13,9 @@ def _hist(rows: list[dict]) -> pd.DataFrame:
 
 
 def test_build_future_outcome_sparse_dataset_filters_to_evaluable_patients() -> None:
-    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
+    from scripts.ops.build_future_outcome_dataset import (
+        build_future_outcome_sparse_dataset,
+    )
 
     vocab = {"_unk": 0, "D_A": 1, "D_B": 2}
     patient_ids = ["P_pos", "P_neg", "P_cens", "P_persist"]
@@ -51,7 +53,9 @@ def test_build_future_outcome_sparse_dataset_filters_to_evaluable_patients() -> 
 
 
 def test_unknown_oct_drug_maps_to_unk_and_nov_drugs_do_not_enter_features() -> None:
-    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
+    from scripts.ops.build_future_outcome_dataset import (
+        build_future_outcome_sparse_dataset,
+    )
 
     vocab = {"_unk": 0, "D_A": 1}
     X, y, kept_patient_ids, metadata = build_future_outcome_sparse_dataset(
@@ -105,7 +109,9 @@ def test_write_future_outcome_dataset_outputs_artifacts(tmp_path) -> None:
 
 
 def test_add_institution_count_feature_appends_normalized_scalar() -> None:
-    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
+    from scripts.ops.build_future_outcome_dataset import (
+        build_future_outcome_sparse_dataset,
+    )
 
     X, y, kept_patient_ids, metadata = build_future_outcome_sparse_dataset(
         _hist([
@@ -136,7 +142,9 @@ def test_add_institution_count_feature_appends_normalized_scalar() -> None:
 
 
 def test_add_demographics_feature_appends_age_and_sex_scalars() -> None:
-    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
+    from scripts.ops.build_future_outcome_dataset import (
+        build_future_outcome_sparse_dataset,
+    )
 
     demographics = {
         "P1": (0.44, 1.0),
@@ -178,7 +186,9 @@ def test_add_demographics_feature_appends_age_and_sex_scalars() -> None:
 
 
 def test_add_demographics_feature_records_missing_defaults() -> None:
-    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
+    from scripts.ops.build_future_outcome_dataset import (
+        build_future_outcome_sparse_dataset,
+    )
 
     X, _, kept_patient_ids, metadata = build_future_outcome_sparse_dataset(
         _hist([
@@ -204,8 +214,10 @@ def test_add_demographics_feature_records_missing_defaults() -> None:
 
 
 def test_add_medication_class_feature_appends_class_multihot_after_institution() -> None:
+    from scripts.ops.build_future_outcome_dataset import (
+        build_future_outcome_sparse_dataset,
+    )
     from scripts.ops.medication_class_features import EFMDC_NULL_TOKEN, EFMDC_UNK_TOKEN
-    from scripts.ops.build_future_outcome_dataset import build_future_outcome_sparse_dataset
 
     class_vocab = {
         EFMDC_NULL_TOKEN: 0,

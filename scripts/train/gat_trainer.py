@@ -10,9 +10,10 @@ from typing import Any, Optional
 
 import numpy as np
 
+from scripts.features.graph_builder import GraphBuilder
+
 from .base_graph_trainer import BaseGraphTrainer
 from .gat_dataset import GATDataset
-from scripts.features.graph_builder import GraphBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,8 @@ class GATTrainer(BaseGraphTrainer):
         try:
             import torch
             import torch.nn as nn
-            from torch.optim import Adam
             from sklearn.metrics import roc_auc_score
+            from torch.optim import Adam
         except ImportError as e:
             raise ImportError(f"의존성 없음: {e}") from e
 
@@ -257,7 +258,7 @@ class GATTrainer(BaseGraphTrainer):
         if not self._trained:
             raise RuntimeError("fit_graph() 먼저 호출하세요.")
         try:
-            import torch
+            import torch  # noqa: F401 - optional dependency availability probe
         except ImportError as e:
             raise ImportError("torch 미설치") from e
 

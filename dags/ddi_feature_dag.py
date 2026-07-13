@@ -16,12 +16,11 @@ ETL 완료 후 ML 피처를 생성하고 정규화/선택까지 수행.
 """
 from __future__ import annotations
 
-import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.utils.dates import days_ago
 
@@ -39,12 +38,18 @@ DEFAULT_ARGS = {
 }
 
 import os as _os
+
 from config.settings import (
-    PROCESSED_DIR as PROC_DIR,
-    FEATURES_DIR,
     CYP_MATRIX_PATH as CYP_PATH,
+)
+from config.settings import (
+    FEATURES_DIR,
     MODEL_DIR,
 )
+from config.settings import (
+    PROCESSED_DIR as PROC_DIR,
+)
+
 NORMALIZER_PATH = _os.environ.get("DDI_NORMALIZER_PATH", str(MODEL_DIR / "normalizer.pkl"))
 SELECTOR_PATH   = _os.environ.get("DDI_SELECTOR_PATH",   str(MODEL_DIR / "selector.pkl"))
 
@@ -64,6 +69,7 @@ def _extract_cyp_features(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
+
     from scripts.features.cyp_features import CYPFeatureExtractor
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
@@ -88,6 +94,7 @@ def _extract_temporal_features(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
+
     from scripts.features.temporal_features import extract_temporal
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
@@ -136,10 +143,11 @@ def _create_labels(**context) -> None:
 
 def _normalize_features(**context) -> None:
     """RobustScaler 정규화 (fit 또는 transform)."""
+    import os
     import sys
     sys.path.insert(0, "/app")
-    import os
     import pandas as pd
+
     from scripts.features.normalizer import FeatureNormalizer
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
@@ -159,10 +167,11 @@ def _normalize_features(**context) -> None:
 
 def _select_features(**context) -> None:
     """분산/상관 기반 피처 선택 후 ML 피처 파일 저장."""
+    import os
     import sys
     sys.path.insert(0, "/app")
-    import os
     import pandas as pd
+
     from scripts.features.selector import FeatureSelector
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")

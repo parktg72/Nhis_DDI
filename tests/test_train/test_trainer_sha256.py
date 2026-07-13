@@ -1,7 +1,4 @@
 import hashlib
-import pickle
-from pathlib import Path
-import pytest
 
 
 def _make_trainer():

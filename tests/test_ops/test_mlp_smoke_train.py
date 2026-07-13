@@ -17,6 +17,7 @@ class _FakeProvider:
 
 def test_mlp_forward_shape() -> None:
     import torch
+
     from scripts.ops.mlp_smoke_train import MultiHotMLP
 
     model = MultiHotMLP(input_dim=10, hidden_dims=(8, 4))

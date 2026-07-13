@@ -93,7 +93,8 @@ def _ensure_airflow_mock():
 
 def test_cors_default_is_not_wildcard():
     """CORS_ORIGINS unset must not default to wildcard."""
-    import importlib, sys, os
+    import os
+    import sys
     env_backup = os.environ.pop("CORS_ORIGINS", None)
     try:
         if "serving.main" in sys.modules:
@@ -121,7 +122,7 @@ def test_reload_endpoint_uses_body_not_query(tmp_path):
 )
 def test_deploy_dag_sends_admin_key(monkeypatch, tmp_path):
     """_deploy_model must send X-Admin-Key header."""
-    import sys, os
+    import sys
     # 구버전 임시 경로 제거
     sys.path[:] = [p for p in sys.path if "/tmp/codex-review-fixes" not in p]
     _ensure_airflow_mock()
@@ -135,7 +136,8 @@ def test_deploy_dag_sends_admin_key(monkeypatch, tmp_path):
     monkeypatch.setenv("DDI_SERVING_URL", "http://localhost:8000")
     monkeypatch.setenv("MODEL_DIR", str(tmp_path))  # _deploy_model이 실제 디렉터리 생성
 
-    import hashlib, pickle as _pickle
+    import hashlib
+    import pickle as _pickle
     model_file = tmp_path / "model.pkl"
     _model_payload = _pickle.dumps({"trainer_class": "EnsembleTrainer", "weights": (0.5, 0.5)})
     model_file.write_bytes(_model_payload)

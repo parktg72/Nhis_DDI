@@ -15,16 +15,20 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hana_app.core.config import load_config, save_config, is_hana, is_sas
+from hana_app.core.config import is_hana, is_sas, load_config, save_config
 from hana_app.core.db import get_connection
-from hana_app.core.hana_etl import HANAExtractor
 from hana_app.core.etl_logger import append_etl_log
-from hana_app.core.sas_reader import SASExtractor
+from hana_app.core.hana_etl import HANAExtractor
 from hana_app.core.ml_runner import (
-    build_patient_features, build_patient_features_from_parquet,
+    _save_result,
+    build_patient_features,
+    build_patient_features_from_parquet,
     build_training_sequence,
-    features_to_dataframe, train_model, _save_result, merge_train_results,
+    features_to_dataframe,
+    merge_train_results,
+    train_model,
 )
+from hana_app.core.sas_reader import SASExtractor
 from hana_app.core.sparse_research import (
     DATASETS_ROOT,
     build_smoke_command,
@@ -273,7 +277,8 @@ def _ensure_demographics_from_raw(raw_dir: Path, log=None) -> str:
     Returns: "missing" | "in_place" | "copied" | "error:<msg>"
     """
     import shutil
-    from hana_app.core.ml_runner import DEMOGRAPHICS_PATH, AGE_MAP_PATH
+
+    from hana_app.core.ml_runner import AGE_MAP_PATH, DEMOGRAPHICS_PATH
 
     src = raw_dir / "eligibility_demographics.parquet"
     if not src.exists():
@@ -323,7 +328,9 @@ if data_mode == DATA_MODE_SAVED:
         # 이전 features_df 명시적 해제 (메모리 절약)
         if st.session_state.get("features_df") is not None:
             del st.session_state.features_df
-            import gc as _gc; _gc.collect()
+            import gc as _gc
+
+            _gc.collect()
         st.session_state.features_df = loaded_df
 
         st.success(
@@ -1204,6 +1211,7 @@ if run_btn:
         st.stop()
 
     import time as _time
+
     from hana_app.core.memory_guard import MemoryLimitExceeded
     _mem_guard = None
 
@@ -1256,7 +1264,9 @@ if run_btn:
         from hana_app.core.memory_guard import MemoryGuard, MemoryLimitExceeded
         from hana_app.core.ml_runner import (
             InsufficientDiskSpaceError,
-            load_features_from_parquet, _duckdb_available, _duck_con,
+            _duck_con,
+            _duckdb_available,
+            load_features_from_parquet,
         )
 
         _raw_paths = [Path(p) for p in (st.session_state.get("raw_selected_paths") or [])]
@@ -1448,7 +1458,8 @@ if run_btn:
                 st.stop()
             st.subheader("🩺 ICD-10 질환 필터 적용 중...")
             try:
-                from hana_app.core.hana_etl import _yyyymm_range as _ym_range, _shift_yyyymm as _shift_ym
+                from hana_app.core.hana_etl import _shift_yyyymm as _shift_ym
+                from hana_app.core.hana_etl import _yyyymm_range as _ym_range
                 _buf = max(1, (int(buffer_before_days) + 29) // 30)
                 _qstart = _shift_ym(f"{year_from}{month_from}", -_buf) if _buf else f"{year_from}{month_from}"
                 _bufA = max(1, (int(buffer_after_days) + 29) // 30) if int(buffer_after_days) > 0 else 0
@@ -1479,7 +1490,10 @@ if run_btn:
         if use_eligibility and use_pre_sampling:
             st.subheader("🔍 사전 층화 샘플링 중...")
             try:
-                from hana_app.core.ml_runner import stratify_and_sample_patients, save_demographics
+                from hana_app.core.ml_runner import (
+                    save_demographics,
+                    stratify_and_sample_patients,
+                )
                 c_elig = cfg.get("columns", {}).get("eligibility", {})
 
                 if _disease_pids is not None:
@@ -1780,7 +1794,11 @@ if run_btn:
                 st.stop()
 
             # DuckDB로 위험도 분포만 조회 (전체 로드 안 함)
-            from hana_app.core.ml_runner import load_features_from_parquet, _duckdb_available, _duck_con
+            from hana_app.core.ml_runner import (
+                _duck_con,
+                _duckdb_available,
+                load_features_from_parquet,
+            )
             _fp_list = ", ".join(f"'{Path(p).as_posix()}'" for p in _features_parquet_paths)
             if _duckdb_available():
                 with _duck_con(memory_limit_mb=max(256, memory_limit_mb // 4)) as _con:
@@ -1823,7 +1841,9 @@ if run_btn:
             # 이전 features_df 명시적 해제 (메모리 절약)
             if st.session_state.get("features_df") is not None:
                 del st.session_state.features_df
-                import gc as _gc; _gc.collect()
+                import gc as _gc
+
+                _gc.collect()
             st.session_state.features_df = features_df
             progress_bar.progress(0.60, text="피처 계산 완료")
 
@@ -1881,8 +1901,11 @@ if run_btn:
     # ── 3단계: 모델 학습 ─────────────────────────────────────────────────────
     if target == "hierarchical":
         # ── 계층 분류 전용 경로 ────────────────────────────────────────────
-        from hana_app.core.hierarchical_runner import train_hierarchical, predict_risk
-        from hana_app.core.ml_runner import load_features_from_parquet, _duckdb_available
+        from hana_app.core.hierarchical_runner import predict_risk, train_hierarchical
+        from hana_app.core.ml_runner import (
+            _duckdb_available,
+            load_features_from_parquet,
+        )
 
         _auto_compare_results: dict = {}
         _comparison_models = list(comparison_models_for_run)
@@ -2180,7 +2203,9 @@ if run_btn:
         # 모델 객체를 all_results에서 제거 (디스크에 이미 저장됨, 메모리 절약)
         for _res in all_results.values():
             _res.pop("model", None)
-        import gc as _gc; _gc.collect()
+        import gc as _gc
+
+        _gc.collect()
         st.session_state.last_result = list(all_results.values())[-1]
         st.session_state.train_results = all_results
         progress_bar.progress(1.0, text="학습 완료!")

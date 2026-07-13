@@ -232,7 +232,11 @@ def test_gnn_trains_and_predicts_in_minibatches(monkeypatch):
 
 
 def test_phase3_factory_passes_batch_size_params():
-    from hana_app.core.phase3_models import GNNWrapper, TemporalTransformerWrapper, build_phase3_model
+    from hana_app.core.phase3_models import (
+        GNNWrapper,
+        TemporalTransformerWrapper,
+        build_phase3_model,
+    )
 
     gnn = build_phase3_model("gnn", params={"batch_size": 123})
     transformer = build_phase3_model("temporal_transformer", params={"batch_size": 456})

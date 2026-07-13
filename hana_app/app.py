@@ -2,9 +2,10 @@
 NHIS 다재약물 DDI 위험도 분류 시스템
 SAP HANA 연동 웹 애플리케이션
 """
-import streamlit as st
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import streamlit as st
 
 # 프로젝트 루트 경로 설정
 ROOT = Path(__file__).parent.parent

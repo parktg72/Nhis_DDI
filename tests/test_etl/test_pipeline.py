@@ -6,21 +6,16 @@ ETL 파이프라인 통합 테스트
 """
 from __future__ import annotations
 
-import pytest
-import tempfile
-from pathlib import Path
-from datetime import date
-
 import pandas as pd
+import pytest
 
+from scripts.etl.pipeline import ETLPipeline
 from scripts.etl.sample_factory import (
+    make_edi_atc_map,
     make_t20_t30,
     make_t40,
     make_t50,
-    make_edi_atc_map,
 )
-from scripts.etl.pipeline import ETLPipeline
-from scripts.etl.models import PipelineResult
 
 
 @pytest.fixture
@@ -181,8 +176,9 @@ class TestPseudonymizer:
         assert len(result) == 64  # SHA-256 full hex (보안 강화: 16자리 truncation 제거)
 
     def test_pseudonymize_column(self):
-        from scripts.etl.pseudonymizer import pseudonymize_column
         import pandas as pd
+
+        from scripts.etl.pseudonymizer import pseudonymize_column
         s = pd.Series(["A", "B", "A", None])
         result = pseudonymize_column(s, salt="test")
         # A가 두 번 나왔으므로 동일 해시

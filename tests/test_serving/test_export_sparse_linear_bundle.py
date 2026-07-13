@@ -22,7 +22,6 @@ from scripts.datasets.export_sparse_linear_bundle import (
 from scripts.ops.multihot_encoder import encode_patient_history
 from serving.dl_predictor import DLModel
 
-
 VOCAB = {"_unk": 0, "A": 1, "B": 2, "C": 3}
 # 결정적 "학습" head — _unk/A/B/C 차원 가중치 + bias.
 WEIGHT = [0.0, 1.5, -2.0, 0.5]

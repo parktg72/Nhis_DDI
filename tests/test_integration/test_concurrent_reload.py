@@ -1,7 +1,8 @@
 """reload_model 중 동시 /health 요청 동시성 스모크 테스트."""
 import asyncio
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -10,9 +11,10 @@ async def test_concurrent_requests_during_reload():
     # serving.main 과 하위 라우터(serving.routers.health 등)를 패치 블록 밖에서
     # 먼저 임포트해야 한다.  패치 블록 안에서 처음 임포트하면 health.get_predictor 가
     # 패치된 mock 을 영구 캡처해 후속 테스트를 오염시킨다.
-    from serving.main import app  # noqa: 라우터 바인딩 확정
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
+
     import serving.predictor as _pred_mod
+    from serving.main import app  # noqa: F401
 
     original_predictor = _pred_mod._predictor
 

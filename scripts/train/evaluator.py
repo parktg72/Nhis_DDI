@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
@@ -76,8 +75,10 @@ class EvalResult:
 def _try_import_sklearn():
     try:
         from sklearn.metrics import (
-            roc_auc_score, average_precision_score,
-            precision_recall_curve, confusion_matrix,
+            average_precision_score,
+            confusion_matrix,
+            precision_recall_curve,
+            roc_auc_score,
         )
         return roc_auc_score, average_precision_score, precision_recall_curve, confusion_matrix
     except ImportError:

@@ -1,8 +1,8 @@
 """Drug ontology helpers for DrugMaster-backed DDI lookup."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import weakref
+from dataclasses import dataclass
 
 import pandas as pd
 

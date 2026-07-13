@@ -28,10 +28,8 @@ import pytest
 
 from hana_app.core.hana_etl import (
     HANAExtractor,
-    _normalize_yyyymmdd,
     _validate_df_columns,
 )
-
 
 # ─── helper 단위 ────────────────────────────────────────────────────────────
 

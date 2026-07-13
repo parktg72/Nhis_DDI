@@ -18,12 +18,16 @@ from typing import Optional
 import pandas as pd
 
 from .clinical_rules import (
-    collect_red_triggers, collect_yellow_triggers, collect_severe_immediate_triggers,
+    collect_red_triggers,
+    collect_severe_immediate_triggers,
+    collect_yellow_triggers,
 )
 from .drug_master import DrugMaster
-from .drug_ontology import DrugOntology, SEVERITY_ORDER, _lookup_cache, get_lookup
+from .drug_ontology import SEVERITY_ORDER, DrugOntology, _lookup_cache, get_lookup
 from .models import DrugOverlapPair, PatientFeatures, PrescriptionRecord
-from .overlap_calculator import calculate_overlaps_for_patient, get_concurrent_drug_count
+from .overlap_calculator import (
+    get_concurrent_drug_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +38,22 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 from rules.risk_drug_constants import (
-    HIGH_RISK_KEYWORDS as _HIGH_RISK_KEYWORDS,
-    HIGH_RISK_ATC_PREFIXES as _HIGH_RISK_ATC_PREFIXES,
-    RENAL_RISK_KEYWORDS as _RENAL_RISK_KEYWORDS,
-    RENAL_RISK_ATC_PREFIXES as _RENAL_RISK_ATC_PREFIXES,
-    HEPATIC_RISK_KEYWORDS as _HEPATIC_RISK_KEYWORDS,
     HEPATIC_RISK_ATC_PREFIXES as _HEPATIC_RISK_ATC_PREFIXES,
+)
+from rules.risk_drug_constants import (
+    HEPATIC_RISK_KEYWORDS as _HEPATIC_RISK_KEYWORDS,
+)
+from rules.risk_drug_constants import (
+    HIGH_RISK_ATC_PREFIXES as _HIGH_RISK_ATC_PREFIXES,
+)
+from rules.risk_drug_constants import (
+    HIGH_RISK_KEYWORDS as _HIGH_RISK_KEYWORDS,
+)
+from rules.risk_drug_constants import (
+    RENAL_RISK_ATC_PREFIXES as _RENAL_RISK_ATC_PREFIXES,
+)
+from rules.risk_drug_constants import (
+    RENAL_RISK_KEYWORDS as _RENAL_RISK_KEYWORDS,
 )
 
 

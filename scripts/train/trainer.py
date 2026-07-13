@@ -353,7 +353,7 @@ class EnsembleTrainer3Way(BaseTrainer):
     ) -> tuple:
         """Recall >= recall_threshold 제약 하에서 AUC 최대화 (SLSQP)."""
         from scipy.optimize import minimize
-        from sklearn.metrics import roc_auc_score, recall_score
+        from sklearn.metrics import recall_score, roc_auc_score
 
         p_xgb = self._xgb.predict_proba(X_calib)
         p_lgb = self._lgb.predict_proba(X_calib)

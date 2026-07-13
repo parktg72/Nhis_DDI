@@ -12,7 +12,6 @@ import os
 import pickle
 import sys
 from collections import defaultdict
-from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
@@ -37,8 +36,8 @@ from scripts.etl.models import (
     PatientFeatures,
     PrescriptionRecord,
 )
-from scripts.etl.prescription_aggregator import aggregate_patient_features
 from scripts.etl.overlap_calculator import calculate_overlaps_for_patient
+from scripts.etl.prescription_aggregator import aggregate_patient_features
 
 from .strata_utils import _DEFAULT_AGE_BINS, _DEFAULT_AGE_LABELS
 
@@ -399,9 +398,10 @@ def _duck_con(
     Python RAM을 보호합니다.
     tmp_dir=None 이면 자동 생성 후 종료 시 삭제.
     """
-    import duckdb
     import shutil
     import tempfile
+
+    import duckdb
 
     _auto_tmp = tmp_dir is None
     _tmp = Path(tmp_dir) if tmp_dir else Path(tempfile.mkdtemp(prefix="duck_tmp_"))
@@ -895,8 +895,8 @@ def _resolve_feat_tmp_base() -> Path:
     `HANA_FEAT_TMP` 우선 → 없으면 `HANA_TMP_DIR` → 없으면 설정 파일(`hana_config.json`)의 `hana_feat_tmp` 혹은 `hana_tmp_dir` → 없으면 Python `tempfile.gettempdir()` 순서로 결정한다.
     유효하지 않은 경로 지정 시 친절한 에러 메시지와 함께 대안 드라이브 목록을 출력한다.
     """
-    import string
     import shutil
+    import string
     import tempfile
 
     base = os.environ.get("HANA_FEAT_TMP", "").strip()
@@ -1046,6 +1046,7 @@ def build_patient_features_from_parquet(
     import shutil
     import tempfile
     from collections import defaultdict
+
     from hana_app.core.hana_etl import df_row_to_record
     from hana_app.core.memory_guard import get_guard
     _guard = get_guard(guard)
@@ -1347,6 +1348,7 @@ def _build_features_simple(
     """소량 데이터용 – 전체 로드 후 배치 처리. DuckDB 사용 시 디스크 스필."""
     import gc
     from collections import defaultdict
+
     from hana_app.core.hana_etl import df_row_to_record
 
     age_map = _load_age_map()
@@ -1716,16 +1718,17 @@ def train_model(
         "cv_scores": list[float],
     }
     """
-    from sklearn.model_selection import train_test_split, cross_val_score
     from sklearn.metrics import (
-        classification_report,
-        roc_auc_score,
         accuracy_score,
-        f1_score,
         average_precision_score,
+        classification_report,
         confusion_matrix,
+        f1_score,
+        roc_auc_score,
     )
+    from sklearn.model_selection import cross_val_score, train_test_split
     from sklearn.preprocessing import label_binarize
+
     from hana_app.core.memory_guard import get_guard
 
     # ── 입력 validation — UI 오입력 조기 차단 ──────────────────────

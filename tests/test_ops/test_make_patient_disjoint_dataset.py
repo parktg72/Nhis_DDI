@@ -76,6 +76,7 @@ def test_make_patient_disjoint_dataset_filters_overlap_and_records_distribution(
 
 def test_make_patient_disjoint_dataset_rejects_row_mismatch(tmp_path: Path) -> None:
     import pytest
+
     from scripts.ops.make_patient_disjoint_dataset import make_patient_disjoint_dataset
 
     source = tmp_path / "source"
@@ -91,6 +92,7 @@ def test_make_patient_disjoint_dataset_rejects_row_mismatch(tmp_path: Path) -> N
 
 def test_make_patient_disjoint_dataset_rejects_too_few_positive(tmp_path: Path) -> None:
     import pytest
+
     from scripts.ops.make_patient_disjoint_dataset import make_patient_disjoint_dataset
 
     source = tmp_path / "source"

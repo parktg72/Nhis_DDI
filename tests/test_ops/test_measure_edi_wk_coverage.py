@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.ops import measure_edi_wk_coverage as MC
 from scripts.etl.models import PrescriptionRecord
+from scripts.ops import measure_edi_wk_coverage as MC
 
 
 def test_rec_parses_iso_dates_and_wk():

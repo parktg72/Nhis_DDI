@@ -17,9 +17,7 @@ prometheus_client 미설치 환경에서도 import 가능 (lazy import).
 from __future__ import annotations
 
 import logging
-import time
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -29,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram, REGISTRY, push_to_gateway
+    from prometheus_client import REGISTRY, Counter, Gauge, Histogram, push_to_gateway
     _PROMETHEUS_AVAILABLE = True
 except ImportError:
     _PROMETHEUS_AVAILABLE = False

@@ -1,14 +1,16 @@
 """serving/middleware.py + schemas.py 미커버 엣지케이스 테스트."""
-import pytest
 from datetime import date
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from serving.middleware import RequestLoggingMiddleware
 from serving.schemas import (
-    DrugItem, PredictRequest, RiskLevel, Severity,
+    DrugItem,
+    PredictRequest,
+    RiskLevel,
 )
-
 
 # ─── 미들웨어 테스트 ──────────────────────────────────────────────────────────
 

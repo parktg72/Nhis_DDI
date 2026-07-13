@@ -11,11 +11,13 @@ import pandas as pd
 import pytest
 
 from serving.predictor import (
-    MLModel, HybridPredictor, RequestFeatureBuilder,
-    _run_safety_net, _run_duplicate_detector,
+    HybridPredictor,
+    MLModel,
+    RequestFeatureBuilder,
+    _run_duplicate_detector,
+    _run_safety_net,
 )
 from serving.schemas import DrugItem, PredictRequest, RiskLevel
-
 
 # ─── 헬퍼 ───────────────────────────────────────────────────────────────────
 

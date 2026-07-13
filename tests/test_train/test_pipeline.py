@@ -10,11 +10,9 @@ import numpy as np
 import pytest
 
 from scripts.train.dataset import TrainDataset, load_dataset_from_df
-from scripts.train.evaluator import EvalResult
 from scripts.train.hyperparams import TrainConfig
-from scripts.train.pipeline import TrainPipeline, TrainResult
+from scripts.train.pipeline import TrainPipeline
 from scripts.train.trainer import BaseTrainer, EnsembleTrainer, build_trainer
-
 
 # ─── 공통 픽스처 ──────────────────────────────────────────────────────────────
 
@@ -249,8 +247,8 @@ class TestTrainPipelineRun:
     def feature_base(self, tmp_path, rng):
         """tmp_path에 ml_features_202401.parquet + scaler.pkl + selector.pkl 생성."""
         import pandas as pd
-        from sklearn.preprocessing import StandardScaler
         from sklearn.feature_selection import SelectKBest, f_classif
+        from sklearn.preprocessing import StandardScaler
 
         base = tmp_path / "features"
         base.mkdir()

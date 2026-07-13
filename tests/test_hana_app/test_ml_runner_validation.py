@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hana_app.core.ml_runner import train_model, _build_misclassified_cases
+from hana_app.core.ml_runner import _build_misclassified_cases, train_model
 
 
 @pytest.mark.parametrize("bad_model", ["foo", "XGBoost", "", None])

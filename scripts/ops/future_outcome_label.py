@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-import json
 from pathlib import Path
-import sys
 from typing import Sequence
 
 import pandas as pd
@@ -15,7 +15,6 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.ops.multi_day_parquet_provider import MultiDayParquetHistoryProvider
-
 
 FUTURE_MULTI_INSTITUTION_THRESHOLD = 6
 

@@ -18,11 +18,11 @@ if str(ROOT) not in sys.path:
 
 from scripts.etl.models import PrescriptionRecord
 from scripts.etl.prescription_aggregator import (
-    _check_risk_drugs,
-    _fill_risk_drug_flags,
+    _HEPATIC_RISK_KEYWORDS,
     _HIGH_RISK_KEYWORDS,
     _RENAL_RISK_KEYWORDS,
-    _HEPATIC_RISK_KEYWORDS,
+    _check_risk_drugs,
+    _fill_risk_drug_flags,
 )
 
 

@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime
 import hashlib
 import json
 import os
-from pathlib import Path
 import sys
+from datetime import date, datetime
+from pathlib import Path
 from time import perf_counter
 from typing import Sequence
 
@@ -21,6 +21,8 @@ if __package__ in {None, ""}:
 from scripts.ops.full_cohort_history_loader import FullCohortHistoryLoader
 from scripts.ops.multi_institution_label import (
     MULTI_INSTITUTION_THRESHOLD,
+)
+from scripts.ops.multi_institution_label import (
     label_patient_histories as label_multi_institution_histories,
 )
 from scripts.ops.therapeutic_duplication_label import (

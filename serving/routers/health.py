@@ -16,6 +16,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
+
+from config import settings as _settings
 from scripts.datasets.contracts import (
     BundleArtifactEmptyError,
     BundleHashMismatchError,
@@ -23,7 +25,6 @@ from scripts.datasets.contracts import (
 )
 from serving.predictor import get_predictor
 from serving.schemas import HealthResponse, ModelInfoResponse
-from config import settings as _settings
 
 logger = logging.getLogger(__name__)
 

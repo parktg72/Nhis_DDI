@@ -16,32 +16,30 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from scripts.etl.models import PatientFeatures, PrescriptionRecord
 from scripts.etl.drug_ontology import SEVERITY_ORDER
+from scripts.etl.models import PatientFeatures, PrescriptionRecord
 from scripts.etl.prescription_aggregator import (
+    _HEPATIC_RISK_ATC_PREFIXES,
+    _HEPATIC_RISK_KEYWORDS,
+    _HIGH_RISK_ATC_PREFIXES,
+    _HIGH_RISK_KEYWORDS,
+    _RENAL_RISK_ATC_PREFIXES,
+    _RENAL_RISK_KEYWORDS,
+    _SEVERITY_ORDER,
     _assign_risk_level,
     _assign_yellow_subtype,
     _check_risk_drugs,
+    _ddi_lookup_cache,
     _fill_dup_features,
     _fill_risk_drug_flags,
     aggregate_patient_features,
-    _HIGH_RISK_KEYWORDS,
-    _RENAL_RISK_KEYWORDS,
-    _HEPATIC_RISK_KEYWORDS,
-    _HIGH_RISK_ATC_PREFIXES,
-    _RENAL_RISK_ATC_PREFIXES,
-    _HEPATIC_RISK_ATC_PREFIXES,
-    _SEVERITY_ORDER,
-    _ddi_lookup_cache,
     count_ddi_severities,
     ddi_pair_severities,
 )
-
 
 # ─── 헬퍼 ───────────────────────────────────────────────────────────────────
 

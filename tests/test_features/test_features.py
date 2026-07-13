@@ -1,23 +1,19 @@
 """
 scripts/features 단위/통합 테스트
 """
-import math
 import pickle
-import pytest
-import tempfile
 from datetime import date, timedelta
-from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
 
-from scripts.features.cyp_features import CYPFeatureExtractor, CYP_FEATURE_COLS
-from scripts.features.temporal_features import extract_temporal, TEMPORAL_FEATURE_COLS
-from scripts.features.normalizer import FeatureNormalizer
-from scripts.features.selector import FeatureSelector, PROTECTED_FEATURES
-from scripts.features.feature_engineer import FeatureEngineer, BINARY_LABEL_COL
 from scripts.etl.models import PrescriptionRecord
-
+from scripts.features.cyp_features import CYP_FEATURE_COLS, CYPFeatureExtractor
+from scripts.features.feature_engineer import BINARY_LABEL_COL, FeatureEngineer
+from scripts.features.normalizer import FeatureNormalizer
+from scripts.features.selector import FeatureSelector
+from scripts.features.temporal_features import TEMPORAL_FEATURE_COLS, extract_temporal
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 픽스처

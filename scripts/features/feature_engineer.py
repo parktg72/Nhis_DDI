@@ -20,7 +20,6 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -112,7 +111,6 @@ class FeatureEngineer:
 
         # ── Step 3: 시계열 피처 ──────────────────────────────────────────────
         if prescription_records:
-            from scripts.etl.overlap_calculator import PrescriptionRecord
             temp_df = extract_temporal_batch(prescription_records)
             df = df.merge(temp_df, on="patient_id", how="left")
             logger.info("  시계열 피처 추가: %d컬럼", len(temp_df.columns) - 1)

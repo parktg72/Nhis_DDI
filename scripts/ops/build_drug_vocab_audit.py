@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
-import json
 from pathlib import Path
 from typing import Sequence
 
 import pandas as pd
-
 
 DEFAULT_CUTOFFS = (1, 5, 10, 50, 100, 500, 1000)
 REQUIRED_COLUMNS = ("patient_id", "edi_code", "source")

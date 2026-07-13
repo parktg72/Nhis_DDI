@@ -5,7 +5,6 @@ from datetime import date
 import pandas as pd
 import pytest
 
-
 EXPECTED_COLUMNS = (
     "patient_id",
     "drug_code",

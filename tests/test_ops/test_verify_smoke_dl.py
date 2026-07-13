@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+
 def test_verify_smoke_dl_generates_bundle_reloads_and_checks_predict(tmp_path) -> None:
     from scripts.ops.validate_dl_bundle import VerificationReport
     from scripts.ops.verify_smoke_dl import run_verification

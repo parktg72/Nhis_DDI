@@ -460,7 +460,6 @@ def build_and_save(
 
 
 if __name__ == "__main__":
-    import sys
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     root = Path(__file__).parent.parent.parent
     build_and_save(

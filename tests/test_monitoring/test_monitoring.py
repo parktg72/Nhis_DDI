@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -28,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 class TestMetrics:
     def test_import_without_prometheus(self):
         """prometheus_client 없어도 import 가능."""
-        from monitoring.metrics import record_prediction, record_psi, record_batch
+        from monitoring.metrics import record_prediction
         assert callable(record_prediction)
 
     def test_record_prediction_increments(self):
@@ -501,7 +500,6 @@ class TestAlertRulesDisagree:
         return AlertManager(log_dir=str(tmp_path / "alerts"))
 
     def test_no_alert_below_warning_threshold(self, manager):
-        from monitoring.alert_rules import AlertType
         alerts = manager.evaluate_rule_ml_disagree(0.10, "2026-04-06")
         assert len(alerts) == 0
 

@@ -4,15 +4,14 @@ overlap_calculator 단위 테스트
 """
 from __future__ import annotations
 
-import pytest
 from datetime import date, timedelta
 
+from scripts.etl.models import PrescriptionRecord
 from scripts.etl.overlap_calculator import (
     _overlap_days,
     calculate_overlaps_for_patient,
     get_concurrent_drug_count,
 )
-from scripts.etl.models import PrescriptionRecord
 
 
 def make_rx(

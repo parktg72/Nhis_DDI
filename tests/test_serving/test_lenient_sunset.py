@@ -20,14 +20,11 @@ from __future__ import annotations
 
 from datetime import date
 
-import pytest
-
 from serving.predictor import (
     _FEATURE_SCHEMA_LENIENT_SUNSET_DEFAULT,
     _is_feature_schema_lenient_allowed,
     _validate_feature_schema,
 )
-
 
 # ─── _is_feature_schema_lenient_allowed 단위 ─────────────────────────────────
 

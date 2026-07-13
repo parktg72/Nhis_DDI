@@ -483,13 +483,13 @@ def train_hierarchical(
       {output_dir}/stage2_yellow.joblib
       {output_dir}/stage_meta.json  (임계값, feature_cols, 라벨 카운트, SHA-256)
     """
-    import json
     import hashlib
+    import json
     from collections import Counter
 
     import joblib
-    from xgboost import XGBClassifier
     from sklearn.model_selection import train_test_split
+    from xgboost import XGBClassifier
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -618,7 +618,8 @@ def train_hierarchical(
     label_counts = dict(Counter(labels_str))
 
     from scripts.etl.prescription_aggregator import (
-        DDI_FEATURE_SEMANTICS_VERSION, FEATURE_SEMANTICS_VERSION,
+        DDI_FEATURE_SEMANTICS_VERSION,
+        FEATURE_SEMANTICS_VERSION,
     )
     meta = {
         "clinical_standards_version": CLINICAL_STANDARDS_VERSION,
@@ -644,8 +645,9 @@ def train_hierarchical(
     # ── Stage 2 평가 지표 (in-sample, 학습셋 기준) ────────────────────────────
     # 실제 학습은 전체 X2/y2로 진행하므로 훈련 결과 불변.
     # 지표는 낙관적(in-sample)이지만 피처 중요도·클래스 분포 파악에 충분함.
-    from sklearn.metrics import f1_score as _f1, classification_report as _cr
+    from sklearn.metrics import classification_report as _cr
     from sklearn.metrics import confusion_matrix as _cm_sk
+    from sklearn.metrics import f1_score as _f1
 
     _fi_arr = m2.feature_importances_
     _feature_importance = sorted(

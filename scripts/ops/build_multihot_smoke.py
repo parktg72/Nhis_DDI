@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime
 import json
-from pathlib import Path
 import sys
+from datetime import date, datetime
+from pathlib import Path
 from typing import Sequence
 
 import pandas as pd

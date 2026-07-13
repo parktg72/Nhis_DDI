@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 
 from scripts.datasets.contracts import (
-    BundleHashMismatchError,
     DL_BUNDLE_REQUIRED_FILES,
+    BundleHashMismatchError,
     LookbackMismatchError,
     write_dl_bundle_manifest,
 )

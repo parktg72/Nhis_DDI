@@ -22,14 +22,12 @@ Rule-based Safety Net
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import yaml
-
 
 SEVERITY_RANK = {"Contraindicated": 0, "Major": 1, "Moderate": 2, "Minor": 3, "Unknown": 4}
 RISK_GRADE_RANK = {"Red": 0, "Yellow": 1, "Green": 2, "Normal": 3}

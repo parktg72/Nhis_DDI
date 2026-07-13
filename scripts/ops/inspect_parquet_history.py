@@ -12,7 +12,6 @@ from scripts.datasets.contracts import DL_DATASET_REQUIRED_COLUMNS
 from scripts.ops.parquet_history_provider import ParquetHistoryProvider
 from serving.hana_history import validate_history_frame
 
-
 REQUIRED_SOURCE_COLUMNS = ["patient_id", "edi_code", "start_date"]
 
 

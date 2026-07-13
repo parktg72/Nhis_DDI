@@ -4,9 +4,10 @@ import os
 import pickle
 import sys
 import tempfile
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 def _has_symlink_privilege() -> bool:
@@ -578,7 +579,6 @@ def test_compensating_rollback_failure_included_in_error(tmp_path):
 
 def test_versioned_dir_name_is_unique_nanoseconds(tmp_path):
     """두 번 연속 배포해도 .v_<ts_ns> 이름이 충돌하지 않음 (나노초 해상도)."""
-    import time as _time
 
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -618,8 +618,8 @@ def test_versioned_dir_name_is_unique_nanoseconds(tmp_path):
 
 def test_atomic_symlink_update_unique_tmp_name(tmp_path):
     """_atomic_symlink_update tmp 심링크 이름이 PID 포함 unique 이름 사용."""
+
     from dags.ddi_train_dag import _atomic_symlink_update
-    import os as _os
 
     target_dir = tmp_path / ".v_1"
     target_dir.mkdir()

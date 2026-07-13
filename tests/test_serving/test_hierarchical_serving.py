@@ -21,7 +21,6 @@ from serving.predictor import (
 )
 from serving.schemas import DrugItem, PredictRequest, RiskLevel
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 픽스처
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,6 +177,7 @@ def test_hierarchical_no_alert(req_normal):
 def test_hierarchical_predictor_load_real_artifact(tmp_path):
     """train_hierarchical 이 저장한 실제 아티팩트로 HierarchicalPredictor.load() 검증."""
     import pandas as pd
+
     from hana_app.core.hierarchical_runner import train_hierarchical
 
     rng = np.random.default_rng(42)
@@ -216,7 +216,9 @@ def test_hierarchical_predictor_load_real_artifact(tmp_path):
 def test_hierarchical_predictor_sha_mismatch_rejects(tmp_path):
     """stage_meta.json 의 stage1_sha256 변조 시 로드 거부."""
     import json
+
     import pandas as pd
+
     from hana_app.core.hierarchical_runner import train_hierarchical
 
     rng = np.random.default_rng(42)
@@ -255,6 +257,7 @@ def test_hierarchical_predictor_sha_mismatch_rejects(tmp_path):
 def _train_7class_bundle(tmp_path, seed=42):
     """7-class 계층 번들을 tmp_path 에 학습·저장 (가드 테스트 픽스처)."""
     import pandas as pd
+
     from hana_app.core.hierarchical_runner import train_hierarchical
     rng = np.random.default_rng(seed)
     n = 500
@@ -358,6 +361,7 @@ def test_hierarchical_http_roundtrip_serializes_new_fields():
     """POST /predict → 응답 JSON 에 신규 필드(yellow_subtype, stage2_probs, red_suspect, action)
     직렬화 형식이 올바른지 (dict → JSON object, bool → true/false) 검증."""
     from fastapi.testclient import TestClient
+
     import serving.predictor as pred_module
     from serving.main import app
 

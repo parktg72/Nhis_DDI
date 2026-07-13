@@ -19,13 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-
 from .dataset import TrainDataset, load_dataset
-from .evaluator import EvalResult, evaluate_all_splits
+from .evaluator import EvalResult
 from .experiment import ExperimentTracker
 from .hyperparams import TrainConfig
-from .trainer import BaseTrainer, build_trainer
+from .trainer import build_trainer
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +145,9 @@ class TrainPipeline:
             selector_abs = Path(self.config.feature_base).resolve() / "selector.pkl"
 
             # feature contract metadata
-            from scripts.etl.prescription_aggregator import DDI_FEATURE_SEMANTICS_VERSION
+            from scripts.etl.prescription_aggregator import (
+                DDI_FEATURE_SEMANTICS_VERSION,
+            )
             trainer._extra_meta = {
                 "artifact_version": 2,
                 "feature_names": list(dataset.feature_names),
@@ -194,8 +194,8 @@ class TrainPipeline:
             train_df: 학습 분할 DataFrame
             drift_reference_path: 저장 경로 오버라이드 (테스트용; None이면 settings.DRIFT_REFERENCE_PATH 사용)
         """
-        from monitoring.drift_detector import DriftDetector
         from config import settings as _s
+        from monitoring.drift_detector import DriftDetector
 
         path = Path(drift_reference_path) if drift_reference_path is not None else _s.DRIFT_REFERENCE_PATH
         exclude_cols = {"label", "patient_id", "split"}
@@ -213,7 +213,7 @@ class TrainPipeline:
     def _run_gat_training(self, trainer, dataset) -> None:
         """ensemble_gat: GAT 서브모델 훈련 + 가중치 최적화."""
         import pandas as pd
-        from scripts.features.graph_builder import GraphBuilder
+
         from scripts.train.gat_dataset import GATDataset
 
         if not self.config.prescription_data_path:
@@ -291,7 +291,7 @@ class TrainPipeline:
             logger.warning("Optuna 미설치. 기본 하이퍼파라미터 사용.")
             return
 
-        from .hyperparams import xgb_search_space, lgb_search_space
+        from .hyperparams import lgb_search_space, xgb_search_space
 
         def objective(trial):
             if self.config.model_type == "lightgbm":

@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from datetime import date
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -149,6 +149,7 @@ def test_yellow_subtype_written_to_parquet(tmp_path):
     None → NaN 변환은 pandas 의 기본 동작. 다운스트림 비교는 pd.isna() 사용 필요.
     """
     import pandas as pd
+
     from scripts.etl.feature_writer import features_to_df
 
     f1 = _make(patient_id="P001", ddi_major=1)

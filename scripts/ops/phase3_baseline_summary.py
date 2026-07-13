@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import json
-from pathlib import Path
 import platform
-import sys
+from datetime import datetime
+from pathlib import Path
 from typing import Sequence
-
 
 DEFAULT_LINEAR_REPORT = Path("data/datasets/multi_inst_t6_temporal_20241031_to_20241130_patient_disjoint/sparse_training_smoke_report.json")
 DEFAULT_XGBOOST_REPORT = Path("data/datasets/multi_inst_t6_temporal_xgboost50_20241031_to_20241130_patient_disjoint/sparse_training_smoke_report.json")

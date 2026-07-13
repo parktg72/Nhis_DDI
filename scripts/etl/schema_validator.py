@@ -16,10 +16,8 @@ from typing import Optional
 import pandas as pd
 
 from .models import (
-    T20_SCHEMA, T30_SCHEMA, T40_SCHEMA, T60_SCHEMA, YOYANG_SCHEMA,
     ValidationResult,
 )
-
 
 _DATE8_RE  = re.compile(r"^\d{8}$")   # YYYYMMDD
 _DATE6_RE  = re.compile(r"^\d{6}$")   # YYYYMM

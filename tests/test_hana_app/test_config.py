@@ -3,9 +3,7 @@ import importlib
 import json
 from pathlib import Path
 
-import pytest
-
-from hana_app.core.config import DEFAULT_CONFIG, load_config, save_config
+from hana_app.core.config import DEFAULT_CONFIG
 
 
 class TestValidatedFlag:

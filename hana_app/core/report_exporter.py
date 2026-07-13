@@ -31,8 +31,8 @@ except ImportError:
 # ── python-docx ──────────────────────────────────────────────────────────────
 try:
     from docx import Document
-    from docx.shared import Inches, Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches
     DOCX_AVAILABLE = True
 except ImportError:
     DOCX_AVAILABLE = False
@@ -40,7 +40,11 @@ except ImportError:
 try:
     from scripts.etl.clinical_rules import (
         collect_red_triggers as _collect_red,
+    )
+    from scripts.etl.clinical_rules import (
         collect_severe_immediate_triggers as _collect_severe,
+    )
+    from scripts.etl.clinical_rules import (
         collect_yellow_triggers as _collect_yellow,
     )
     _CLINICAL_RULES_AVAILABLE = True
@@ -52,6 +56,8 @@ _summarize_actions = None
 try:
     from hana_app.core.yellow_subtype_view import (
         summarize_actions as _summarize_actions,
+    )
+    from hana_app.core.yellow_subtype_view import (
         summarize_yellow_subtypes as _summarize_yellow_subtypes,
     )
     _YELLOW_VIEW_AVAILABLE = True

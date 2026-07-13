@@ -13,8 +13,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 PAGE_PATH = glob.glob(str(ROOT / "hana_app" / "pages" / "4_*.py"))[0]
 
@@ -60,8 +58,9 @@ def test_hierarchical_result_does_not_crash_page4():
 
 def test_saved_result_shown_when_no_session_result():
     """현재 세션 결과가 없고 저장된 결과만 있을 때 빈 화면으로 막히지 않는다."""
-    from hana_app.core.ml_runner import RESULTS_DIR
     from streamlit.testing.v1 import AppTest
+
+    from hana_app.core.ml_runner import RESULTS_DIR
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     rp = RESULTS_DIR / "result_zz_page4test.json"

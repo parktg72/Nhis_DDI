@@ -15,24 +15,34 @@ from pathlib import Path
 import yaml
 
 from rules.risk_drug_constants import (
-    HIGH_RISK_KEYWORDS,
-    HIGH_RISK_ATC_PREFIXES,
-    RENAL_RISK_KEYWORDS,
-    RENAL_RISK_ATC_PREFIXES,
-    HEPATIC_RISK_KEYWORDS,
     HEPATIC_RISK_ATC_PREFIXES,
+    HEPATIC_RISK_KEYWORDS,
+    HIGH_RISK_ATC_PREFIXES,
+    HIGH_RISK_KEYWORDS,
+    RENAL_RISK_ATC_PREFIXES,
+    RENAL_RISK_KEYWORDS,
 )
 
 
 def test_etl_imports_from_single_source():
     """ETL prescription_aggregator 가 단일 출처에서 import 받는지."""
     from scripts.etl.prescription_aggregator import (
-        _HIGH_RISK_KEYWORDS as etl_high_kw,
-        _HIGH_RISK_ATC_PREFIXES as etl_high_atc,
-        _RENAL_RISK_KEYWORDS as etl_renal_kw,
-        _RENAL_RISK_ATC_PREFIXES as etl_renal_atc,
-        _HEPATIC_RISK_KEYWORDS as etl_hep_kw,
         _HEPATIC_RISK_ATC_PREFIXES as etl_hep_atc,
+    )
+    from scripts.etl.prescription_aggregator import (
+        _HEPATIC_RISK_KEYWORDS as etl_hep_kw,
+    )
+    from scripts.etl.prescription_aggregator import (
+        _HIGH_RISK_ATC_PREFIXES as etl_high_atc,
+    )
+    from scripts.etl.prescription_aggregator import (
+        _HIGH_RISK_KEYWORDS as etl_high_kw,
+    )
+    from scripts.etl.prescription_aggregator import (
+        _RENAL_RISK_ATC_PREFIXES as etl_renal_atc,
+    )
+    from scripts.etl.prescription_aggregator import (
+        _RENAL_RISK_KEYWORDS as etl_renal_kw,
     )
     assert etl_high_kw is HIGH_RISK_KEYWORDS, (
         "ETL HIGH keywords 가 단일 출처와 객체 동일성 깨짐 — drift 가능"
@@ -47,12 +57,22 @@ def test_etl_imports_from_single_source():
 def test_serving_imports_from_single_source():
     """serving predictor 가 단일 출처에서 import 받는지."""
     from serving.predictor import (
-        _HIGH_RISK_KEYWORDS as srv_high_kw,
-        _HIGH_RISK_ATC_PREFIXES as srv_high_atc,
-        _RENAL_RISK_KEYWORDS as srv_renal_kw,
-        _RENAL_RISK_ATC_PREFIXES as srv_renal_atc,
-        _HEPATIC_RISK_KEYWORDS as srv_hep_kw,
         _HEPATIC_RISK_ATC_PREFIXES as srv_hep_atc,
+    )
+    from serving.predictor import (
+        _HEPATIC_RISK_KEYWORDS as srv_hep_kw,
+    )
+    from serving.predictor import (
+        _HIGH_RISK_ATC_PREFIXES as srv_high_atc,
+    )
+    from serving.predictor import (
+        _HIGH_RISK_KEYWORDS as srv_high_kw,
+    )
+    from serving.predictor import (
+        _RENAL_RISK_ATC_PREFIXES as srv_renal_atc,
+    )
+    from serving.predictor import (
+        _RENAL_RISK_KEYWORDS as srv_renal_kw,
     )
     assert srv_high_kw is HIGH_RISK_KEYWORDS, (
         "serving HIGH keywords 가 단일 출처와 객체 동일성 깨짐 — drift 가능"
@@ -95,8 +115,9 @@ def test_safety_net_uses_single_source():
     yaml 1차 자료 동기로 정정. 회귀 시 본 테스트가 hardcoded fallback 또는 부분 list
     재출현을 잡는다.
     """
-    from rules.safety_net import SafetyNet
     import inspect
+
+    from rules.safety_net import SafetyNet
     src = inspect.getsource(SafetyNet._has_high_risk_drug)
     # 1) HIGH_RISK_KEYWORDS 를 import 해서 사용해야 함
     assert "HIGH_RISK_KEYWORDS" in src, (

@@ -1,7 +1,5 @@
 """hana_app/core/page_guards.py 단위 테스트."""
-import pytest
 from hana_app.core.page_guards import check_hana_validated, get_validation_error
-
 
 BASE_CFG = {
     "data_source": "hana",

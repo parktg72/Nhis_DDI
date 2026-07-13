@@ -2,18 +2,25 @@
 serving/ 단위/통합 테스트
 FastAPI TestClient로 실제 HTTP 요청 테스트
 """
-import pytest
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
-from serving.schemas import (
-    DDIAlert, DrugItem, PredictRequest, PredictResponse,
-    RiskLevel, Severity, INTERVENTION_MAP,
+from serving.predictor import (
+    HybridPredictor,
+    RequestFeatureBuilder,
+    _check_triple_whammy,
+    _count_qt_drugs,
 )
-from serving.predictor import HybridPredictor, RequestFeatureBuilder, _check_triple_whammy, _count_qt_drugs
-
+from serving.schemas import (
+    INTERVENTION_MAP,
+    DrugItem,
+    PredictRequest,
+    RiskLevel,
+    Severity,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 공통 픽스처
@@ -76,8 +83,8 @@ def mock_predictor():
 @pytest.fixture
 def app_client(mock_predictor):
     """FastAPI TestClient with mocked predictor."""
-    from serving.main import app
     import serving.predictor as pred_module
+    from serving.main import app
     pred_module._predictor = mock_predictor
 
     with TestClient(app, raise_server_exceptions=False) as client:

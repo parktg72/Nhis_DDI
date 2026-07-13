@@ -151,7 +151,7 @@ class ETLPipeline:
         # ── Step 2: 가명처리 (옵션) ──────────────────────────────────────────
         if self.pseudonymize_input:
             logger.info("[Step 2] 가명처리")
-            from .pseudonymizer import pseudonymize_dataframe, PSEUDO_COLUMNS
+            from .pseudonymizer import PSEUDO_COLUMNS, pseudonymize_dataframe
             t20 = pseudonymize_dataframe(t20, PSEUDO_COLUMNS.get("T20", []))
             t30 = pseudonymize_dataframe(t30, PSEUDO_COLUMNS.get("T30", []))
             if t40 is not None:

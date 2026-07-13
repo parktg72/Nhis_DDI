@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import json
-import sys
 import os
-from datetime import datetime, timedelta, timezone
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 

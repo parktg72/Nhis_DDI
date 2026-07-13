@@ -1,8 +1,8 @@
 """GAT 구성요소 유닛 테스트."""
 import importlib
-import pytest
-import numpy as np
+
 import pandas as pd
+import pytest
 
 _torch_available = importlib.util.find_spec("torch") is not None
 _pyg_available = importlib.util.find_spec("torch_geometric") is not None
@@ -102,6 +102,7 @@ class TestGraphBuilder:
     def test_isolated_node_warning(self, caplog):
         """고립 노드 비율 > 10% → WARNING 로그."""
         import logging
+
         from scripts.features.graph_builder import GraphBuilder
         # D1 단독 처방 → 고립 노드
         df = pd.DataFrame({
@@ -147,6 +148,7 @@ class TestGraphBuilder:
     def test_mean_degree_warning(self, caplog):
         """평균 노드 차수 < 5 → WARNING 로그."""
         import logging
+
         from scripts.features.graph_builder import GraphBuilder
         # 2명이 각 2종 약물 처방 → mean_degree 낮음
         df = pd.DataFrame({
@@ -175,7 +177,6 @@ class TestGATModel:
         return x, edge_index
 
     def test_forward_output_shape(self, small_graph):
-        import torch
         from scripts.train.gat_model import GATModel
         x, edge_index = small_graph
         model = GATModel(feature_dim=3, hidden_dim=8, heads=2, out_dim=4)
@@ -184,6 +185,7 @@ class TestGATModel:
 
     def test_score_pairs_range(self, small_graph):
         import torch
+
         from scripts.train.gat_model import GATModel
         x, edge_index = small_graph
         model = GATModel(feature_dim=3, hidden_dim=8, heads=2, out_dim=4)
@@ -202,6 +204,7 @@ class TestGATModel:
 
     def test_deterministic_with_seed(self, small_graph):
         import torch
+
         from scripts.train.gat_model import GATModel
         x, edge_index = small_graph
         torch.manual_seed(42)
@@ -220,8 +223,8 @@ class TestBaseGraphTrainer:
     def test_fit_rejects_wrong_type(self):
         """fit(non-GATDataset) → TypeError."""
         import numpy as np
+
         from scripts.train.base_graph_trainer import BaseGraphTrainer
-        from scripts.train.gat_dataset import GATDataset
 
         class ConcreteGraph(BaseGraphTrainer):
             def fit_graph(self, dataset):
@@ -240,6 +243,7 @@ class TestBaseGraphTrainer:
         """fit(GATDataset) → fit_graph() 호출, _trained=True."""
         import numpy as np
         import pandas as pd
+
         from scripts.train.base_graph_trainer import BaseGraphTrainer
         from scripts.train.gat_dataset import GATDataset
 
@@ -360,9 +364,9 @@ class TestGATTrainer:
 class TestBuildTrainer:
     def test_build_gat_trainer(self, tmp_path):
         """build_trainer(config) model_type='gat' → GATTrainer 반환."""
+        from scripts.train.gat_trainer import GATTrainer
         from scripts.train.hyperparams import TrainConfig
         from scripts.train.trainer import build_trainer
-        from scripts.train.gat_trainer import GATTrainer
 
         config = TrainConfig(model_type="gat", model_dir=str(tmp_path))
         trainer = build_trainer(config)
@@ -378,7 +382,7 @@ class TestBuildTrainer:
     def test_build_ensemble_gat_trainer(self, tmp_path):
         """build_trainer(config) model_type='ensemble_gat' → EnsembleTrainer3Way 반환."""
         from scripts.train.hyperparams import TrainConfig
-        from scripts.train.trainer import build_trainer, EnsembleTrainer3Way
+        from scripts.train.trainer import EnsembleTrainer3Way, build_trainer
 
         config = TrainConfig(model_type="ensemble_gat", model_dir=str(tmp_path))
         trainer = build_trainer(config)

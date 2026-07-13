@@ -7,7 +7,6 @@ from typing import Sequence
 
 import pandas as pd
 
-
 DEFAULT_DEMOGRAPHICS_FEATURE = (0.0, 0.5)
 REQUIRED_DEMOGRAPHICS_COLUMNS = {"patient_id", "byear", "age", "sex_type"}
 

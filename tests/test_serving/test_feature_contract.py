@@ -1,7 +1,7 @@
-import hashlib, pickle
-from pathlib import Path
+import hashlib
+import pickle
+
 import numpy as np
-import pytest
 
 
 class _FakeModel:
@@ -53,7 +53,7 @@ def test_mlmodel_loads_feature_names(tmp_path):
 def test_builder_aligns_to_feature_names(tmp_path):
     """Builder must reorder features to match training order."""
     from serving.predictor import RequestFeatureBuilder
-    from serving.schemas import PredictRequest, DrugItem
+    from serving.schemas import DrugItem, PredictRequest
 
     req = PredictRequest(
         patient_id="p1",
@@ -86,7 +86,7 @@ def test_builder_aligns_to_training_default_feature_cols():
     """RequestFeatureBuilder must compute and order every default training feature."""
     from hana_app.core.ml_runner import FEATURE_COLS
     from serving.predictor import RequestFeatureBuilder
-    from serving.schemas import PredictRequest, DrugItem
+    from serving.schemas import DrugItem, PredictRequest
 
     req = PredictRequest(
         patient_id="p1",

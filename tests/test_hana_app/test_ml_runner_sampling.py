@@ -16,7 +16,6 @@ if str(ROOT) not in sys.path:
 
 from hana_app.core.ml_runner import stratified_sample_from_parquet
 
-
 N_YELLOW = 500
 N_GREEN = 5
 TOTAL_ROWS = N_YELLOW + N_GREEN

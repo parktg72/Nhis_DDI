@@ -15,11 +15,11 @@ DDI ETL DAG
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,9 +35,10 @@ DEFAULT_ARGS = {
     "retry_delay": timedelta(minutes=10),
 }
 
-from config.settings import RAW_DATA_DIR as RAW_DIR, PROCESSED_DIR as PROC_DIR, DRUG_INDEX_PARQUET as DRUG_INDEX
-from config.settings import DDI_MATRIX_PATH, DDI_DUP_GROUPS_PATH, DDI_DRUG_MASTER_PATH
-
+from config.settings import DDI_DRUG_MASTER_PATH, DDI_DUP_GROUPS_PATH, DDI_MATRIX_PATH
+from config.settings import DRUG_INDEX_PARQUET as DRUG_INDEX
+from config.settings import PROCESSED_DIR as PROC_DIR
+from config.settings import RAW_DATA_DIR as RAW_DIR
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 태스크 함수
@@ -69,6 +70,7 @@ def _validate_schemas(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
+
     from scripts.etl.schema_validator import validate_all
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
@@ -93,6 +95,7 @@ def _pseudonymize(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
+
     from scripts.etl.pseudonymizer import pseudonymize_dataframe
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
@@ -107,6 +110,7 @@ def _standardize_codes(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
+
     from scripts.etl.code_standardizer import CodeStandardizer
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
@@ -127,6 +131,7 @@ def _quality_check(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
+
     from scripts.etl.quality_checker import check_all
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
@@ -151,6 +156,7 @@ def _calculate_overlaps(**context) -> None:
     import sys
     sys.path.insert(0, "/app")
     import pandas as pd
+
     from scripts.etl.overlap_calculator import calculate_overlaps_batch
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
@@ -170,8 +176,10 @@ def _aggregate_features(**context) -> None:
     """PatientFeatures 집계."""
     import sys
     sys.path.insert(0, "/app")
-    import pandas as pd
     from pathlib import Path
+
+    import pandas as pd
+
     from scripts.etl.drug_master import DrugMaster
     from scripts.etl.feature_writer import write_features
     from scripts.etl.prescription_aggregator import aggregate_batch
@@ -223,10 +231,12 @@ def _write_features(**context) -> None:
     """피처 데이터 저장 및 파이프라인 로그 기록."""
     import sys
     sys.path.insert(0, "/app")
-    import pandas as pd
     from pathlib import Path
-    from scripts.etl.models import PipelineResult
+
+    import pandas as pd
+
     from scripts.etl.feature_writer import write_pipeline_log
+    from scripts.etl.models import PipelineResult
 
     partition = context["ti"].xcom_pull(key="partition", task_ids="get_partition")
     staging_path = context["ti"].xcom_pull(

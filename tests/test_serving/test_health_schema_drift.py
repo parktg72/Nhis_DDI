@@ -52,8 +52,8 @@ def _make_pred(*, ml_loaded: bool, schema_drift: list[str]) -> HybridPredictor:
 @pytest.fixture
 def app_client_factory():
     """factory — 각 테스트가 자체 pred 를 주입해 TestClient 사용."""
-    from serving.main import app
     import serving.predictor as pred_module
+    from serving.main import app
 
     def _build(pred: HybridPredictor) -> TestClient:
         client = TestClient(app, raise_server_exceptions=False)

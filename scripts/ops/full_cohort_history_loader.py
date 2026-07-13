@@ -9,7 +9,6 @@ from typing import Iterator, Sequence
 import pandas as pd
 import pyarrow.parquet as pq
 
-
 REQUIRED_COLUMNS = (
     "patient_id",
     "edi_code",

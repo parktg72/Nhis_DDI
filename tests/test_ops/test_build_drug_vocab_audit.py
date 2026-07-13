@@ -103,7 +103,10 @@ def test_source_split_counts(tmp_path) -> None:
 
 
 def test_output_json_required_keys(tmp_path) -> None:
-    from scripts.ops.build_drug_vocab_audit import build_vocab_audit, write_audit_outputs
+    from scripts.ops.build_drug_vocab_audit import (
+        build_vocab_audit,
+        write_audit_outputs,
+    )
 
     _write_records(tmp_path / "records_20241001.parquet", [_row("P1", "D1", "T30")])
 

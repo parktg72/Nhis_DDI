@@ -2,7 +2,6 @@
 페이지 4: 학습 결과 분석 – 피처 중요도 / ROC / 혼동행렬 / 위험도 분포
 """
 import datetime as dt
-import json
 import sys
 from pathlib import Path
 
@@ -17,16 +16,16 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hana_app.core.ml_runner import list_saved_results, load_model, RISK_LABEL_MAP
-from hana_app.core.config import load_config, is_hana
+from hana_app.core.config import is_hana, load_config
+from hana_app.core.ml_runner import RISK_LABEL_MAP, list_saved_results
 from hana_app.core.page_guards import check_hana_validated, get_validation_error
-from hana_app.core.yellow_subtype_view import render_yellow_subtype_section
 from hana_app.core.report_exporter import (
-    build_csv_bytes,
-    build_docx_bytes,
     DOCX_AVAILABLE,
     _comparison_results,
+    build_csv_bytes,
+    build_docx_bytes,
 )
+from hana_app.core.yellow_subtype_view import render_yellow_subtype_section
 
 st.set_page_config(page_title="결과 분석", page_icon="📊", layout="wide")
 st.title("📊 학습 결과 분석")

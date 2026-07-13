@@ -3,22 +3,23 @@ scripts/train 단위/통합 테스트
 xgboost/lightgbm/sklearn 없이 numpy mock으로 실행 가능
 """
 import pickle
-import pytest
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from scripts.train.dataset import TrainDataset, load_dataset_from_df, RISK_ORDER
+from scripts.train.dataset import TrainDataset, load_dataset_from_df
 from scripts.train.evaluator import (
-    compute_metrics, find_optimal_threshold, evaluate_all_splits,
-    EvalResult, _numpy_auc_roc,
+    EvalResult,
+    _numpy_auc_roc,
+    compute_metrics,
+    evaluate_all_splits,
+    find_optimal_threshold,
 )
-from scripts.train.hyperparams import TrainConfig, XGB_DEFAULT, LGB_DEFAULT
 from scripts.train.experiment import ExperimentTracker
+from scripts.train.hyperparams import XGB_DEFAULT, TrainConfig
 from scripts.train.pipeline import TrainResult
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 공통 픽스처

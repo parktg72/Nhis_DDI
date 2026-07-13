@@ -17,10 +17,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.ops import retrain_hierarchical as rh
 from hana_app.core.hierarchical_runner import STAGE2_LABELS
 from scripts.etl.models import PatientFeatures
-from scripts.etl.prescription_aggregator import _assign_risk_level, _assign_yellow_subtype
+from scripts.etl.prescription_aggregator import (
+    _assign_risk_level,
+    _assign_yellow_subtype,
+)
+from scripts.ops import retrain_hierarchical as rh
 
 
 def _feat(idx: int, **kw) -> PatientFeatures:
@@ -66,6 +69,7 @@ def test_retrain_produces_7class_bundle_from_parquet_paths(tmp_path, monkeypatch
     스크립트의 pd.read_parquet 분기(실 풀런 경로)를 행사한다.
     """
     import pandas as pd
+
     from hana_app.core.ml_runner import _patient_features_to_row
 
     cohort = _synthetic_cohort()

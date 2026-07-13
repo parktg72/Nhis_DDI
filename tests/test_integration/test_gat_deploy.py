@@ -2,20 +2,18 @@
 """GAT 배포 체인 통합 테스트."""
 import hashlib
 import json
-import pickle
+
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 torch = pytest.importorskip("torch", reason="PyTorch 미설치")
 pytest.importorskip("torch_geometric", reason="PyG 미설치")
 
 import numpy as np
 import pandas as pd
+
+from scripts.features.graph_builder import GraphBuilder
 from scripts.train.gat_dataset import GATDataset
 from scripts.train.gat_trainer import GATTrainer
-from scripts.features.graph_builder import GraphBuilder
-
 
 # ── 공통 픽스처 ──────────────────────────────────────────────────────────────
 

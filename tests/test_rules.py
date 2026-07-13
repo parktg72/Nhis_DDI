@@ -21,9 +21,8 @@ import yaml
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from rules.safety_net import SafetyNet, RiskAssessment
 from rules.duplicate_detector import DuplicateDetector
-
+from rules.safety_net import SafetyNet
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -354,6 +353,7 @@ class TestHasHighRiskDrugYamlAlignment:
     def test_newly_aligned_drug_detected(self, safety_net, high_risk_drug):
         """yaml 정의된 약물이 _has_high_risk_drug 에서 인식되는지."""
         from rules.safety_net import RiskAssessment
+
         result = RiskAssessment(risk_grade="Normal")
         result.input_drugs = [high_risk_drug]
         assert safety_net._has_high_risk_drug(result), (
@@ -369,6 +369,7 @@ class TestHasHighRiskDrugYamlAlignment:
     def test_legacy_drug_still_detected(self, safety_net, legacy_drug):
         """기존 인식 약물 회귀 방지."""
         from rules.safety_net import RiskAssessment
+
         result = RiskAssessment(risk_grade="Normal")
         result.input_drugs = [legacy_drug]
         assert safety_net._has_high_risk_drug(result), (

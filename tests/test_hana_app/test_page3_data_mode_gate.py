@@ -17,11 +17,8 @@ HANA 테이블 검증 게이트(`st.stop()`)가 데이터 모드 라디오보다
 """
 import glob
 import json
-import os
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PAGE_PATH = glob.glob(str(ROOT / "hana_app" / "pages" / "3_*.py"))[0]

@@ -16,21 +16,20 @@
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
+import sys
 from datetime import date
 from pathlib import Path
-import sys
 
 import pandas as pd
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import hana_app.core.ml_runner as M
 from scripts.etl.code_standardizer import CodeStandardizer
 from scripts.etl.models import PrescriptionRecord
 from scripts.etl.overlap_calculator import calculate_overlaps_for_patient
 from scripts.etl.prescription_aggregator import count_ddi_severities
-import hana_app.core.ml_runner as M
 
 EDIWK_MAP = "data/processed/edi_to_wk.parquet"
 

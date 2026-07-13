@@ -16,7 +16,6 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 try:
     from lxml import etree

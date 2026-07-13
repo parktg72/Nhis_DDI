@@ -48,6 +48,7 @@ def test_sparse_linear_smoke_trains_and_reports_metrics() -> None:
 
 def test_run_sparse_training_smoke_loads_dataset(tmp_path) -> None:
     import json
+
     from scripts.ops.sparse_training_smoke import run_sparse_training_smoke
 
     X = sparse.eye(10, 6, dtype=np.float32, format="csr")
@@ -78,6 +79,7 @@ def test_run_sparse_training_smoke_loads_dataset(tmp_path) -> None:
 
 def test_run_sparse_temporal_training_smoke_uses_explicit_val_dataset(tmp_path) -> None:
     import json
+
     from scripts.ops.sparse_training_smoke import run_sparse_temporal_training_smoke
 
     train_dir = tmp_path / "train"
@@ -195,6 +197,7 @@ def test_xgboost_temporal_smoke_can_save_model(tmp_path) -> None:
 def test_run_sparse_temporal_training_smoke_routes_xgboost(tmp_path) -> None:
     pytest.importorskip("xgboost")
     import json
+
     from scripts.ops.sparse_training_smoke import run_sparse_temporal_training_smoke
 
     train_dir = tmp_path / "train"

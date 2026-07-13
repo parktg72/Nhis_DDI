@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -145,7 +144,7 @@ class TestADRLabeler:
         assert result.label == 0
 
     def test_confidence_high_with_atc(self):
-        from labeling.adr_labeler import ADRLabeler, CONFIDENCE_HIGH
+        from labeling.adr_labeler import CONFIDENCE_HIGH, ADRLabeler
         labeler = ADRLabeler()
         result = labeler.label(
             patient_id="P008",
@@ -155,7 +154,7 @@ class TestADRLabeler:
         assert result.confidence == CONFIDENCE_HIGH
 
     def test_confidence_medium_without_atc(self):
-        from labeling.adr_labeler import ADRLabeler, CONFIDENCE_MEDIUM
+        from labeling.adr_labeler import CONFIDENCE_MEDIUM, ADRLabeler
         labeler = ADRLabeler()
         result = labeler.label(
             patient_id="P009",
@@ -186,8 +185,8 @@ class TestADRLabeler:
         assert result.adr_score > 0
 
     def test_label_batch(self, features_df, diagnosis_df):
+
         from labeling.adr_labeler import ADRLabeler
-        import ast
 
         labeler = ADRLabeler()
         # diagnosis_df를 features_df 형식으로 변환
@@ -216,7 +215,7 @@ class TestStratifiedSampler:
         assert len(sample) <= 100
 
     def test_risk_level_distribution_balanced(self, features_df):
-        from labeling.sample_extractor import StratifiedSampler, RISK_LEVEL_RATIOS
+        from labeling.sample_extractor import RISK_LEVEL_RATIOS, StratifiedSampler
         sampler = StratifiedSampler(n_total=100)
         sample = sampler.extract(features_df)
         dist = sample["risk_level"].value_counts(normalize=True)

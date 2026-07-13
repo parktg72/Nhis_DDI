@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import pytest
 
 
 def test_stratified_split_has_red_in_all_splits():
@@ -31,10 +30,12 @@ def test_psi_counts_overflow():
 
 def test_all_reasons_no_duplicate():
     """dup_reasons must not appear twice in risk_reasons."""
-    from unittest.mock import patch, MagicMock
-    import threading, time
+    import threading
+    import time
+    from unittest.mock import MagicMock, patch
+
     from serving.predictor import HybridPredictor
-    from serving.schemas import RiskLevel, PredictRequest, DrugItem
+    from serving.schemas import DrugItem, PredictRequest, RiskLevel
 
     pred = HybridPredictor.__new__(HybridPredictor)
     pred._ml_lock = threading.RLock()

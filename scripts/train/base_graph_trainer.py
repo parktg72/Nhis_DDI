@@ -6,8 +6,8 @@ from typing import Optional
 
 import numpy as np
 
-from .trainer import BaseTrainer
 from .gat_dataset import GATDataset
+from .trainer import BaseTrainer
 
 
 class BaseGraphTrainer(BaseTrainer):

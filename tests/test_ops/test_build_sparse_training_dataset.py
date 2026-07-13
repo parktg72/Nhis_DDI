@@ -4,7 +4,6 @@ from datetime import date
 
 import pandas as pd
 
-
 VOCAB = {"_unk": 0, "D1": 1, "D2": 2, "D3": 3}
 
 
@@ -156,6 +155,7 @@ def test_build_sparse_dataset_rejects_bad_vocab() -> None:
 
 def test_build_sparse_dataset_from_raw_keeps_reference_day_patient_cohort(tmp_path) -> None:
     import json
+
     import numpy as np
     from scipy import sparse
 

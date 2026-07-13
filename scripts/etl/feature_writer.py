@@ -12,14 +12,12 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict
-from datetime import date
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-from .models import DrugOverlapPair, PatientFeatures, PipelineResult
+from .models import PatientFeatures, PipelineResult
 
 logger = logging.getLogger(__name__)
 

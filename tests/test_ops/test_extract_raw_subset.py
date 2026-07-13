@@ -12,9 +12,9 @@ from scripts.ops.extract_raw_subset import (
     QueryError,
     discover_raw_parquets,
     extract_subset,
+    load_condition,
     normalize_cli_path,
     parse_date_range,
-    load_condition,
 )
 
 

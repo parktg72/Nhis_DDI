@@ -21,22 +21,21 @@ DDI Model Training DAG
 """
 from __future__ import annotations
 
-import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import BranchPythonOperator, PythonOperator
 from airflow.utils.dates import days_ago
 
 from config.settings import (
+    AUC_THRESHOLD,
     FEATURES_DIR,
     MODEL_DIR,
-    TRAIN_WEEKS,
     MODEL_TYPE,
     OPTUNA_TRIALS,
     RECALL_THRESHOLD,
-    AUC_THRESHOLD,
+    TRAIN_WEEKS,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -58,11 +57,12 @@ DEFAULT_ARGS = {
 
 def _load_features(**context) -> None:
     """최근 N주 ML 피처 파일 합산 로드."""
+    import os
     import sys
     sys.path.insert(0, "/app")
-    import os
-    import pandas as pd
     from datetime import timedelta
+
+    import pandas as pd
 
     execution_date = context["execution_date"]
     partitions = [
@@ -98,9 +98,9 @@ def _run_training(**context) -> None:
       PRESCRIPTION_DATA_PATH : 처방 Parquet 경로 (train split)
       DDI_DATA_PATH          : DDI 지식베이스 Parquet/CSV 경로
     """
+    import os
     import sys
     sys.path.insert(0, "/app")
-    import os
     from scripts.train.pipeline import run_training
 
     result = run_training(
@@ -218,17 +218,19 @@ def _deploy_model(**context) -> None:
       Phase 3: 기존 current→versioned_dir 파일 backup/ 에 보존
       Phase 4: tmp_dir → versioned_dir rename + current 심링크 원자적 교체
     """
+    import os
     import sys
     sys.path.insert(0, "/app")
-    import os
-    import time
-    import tempfile
-    import logging
-    import shutil
     import hashlib
+    import logging
     import pickle
-    import requests
+    import shutil
+    import tempfile
+    import time
     from pathlib import Path
+
+    import requests
+
     from config import settings as _s
 
     # H2: 사전 검증 (파일시스템 변경 전) — 실패 시 prod_dir 불변

@@ -12,15 +12,20 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hana_app.core.config import (
-    DATA_SOURCE_HANA, DATA_SOURCE_SAS,
+    DATA_SOURCE_HANA,
+    DATA_SOURCE_SAS,
     DEFAULT_TABLE_COLS,
     _keyring_available,
-    get_password, is_hana, is_sas,
-    load_config, save_config, set_password,
+    get_password,
+    is_hana,
+    is_sas,
+    load_config,
+    save_config,
+    set_password,
 )
 from hana_app.core.db import get_connection
+from hana_app.core.sas_reader import get_sas_columns, guess_table_type, scan_sas_files
 from hana_app.core.table_validator import check_column_mapping, validate_all_identifiers
-from hana_app.core.sas_reader import scan_sas_files, guess_table_type, get_sas_columns
 
 st.set_page_config(page_title="데이터 소스 설정", page_icon="🔌", layout="wide")
 st.title("🔌 데이터 소스 설정")

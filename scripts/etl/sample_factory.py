@@ -17,7 +17,6 @@ from typing import Optional
 
 import pandas as pd
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 약물 풀 (Top 10 DDI 시나리오 포함)
 # 형식: (mcare_div_cd, wk_compn_cd, efmdc_clsf_no, atc_code, drug_name, class)

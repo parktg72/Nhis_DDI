@@ -31,12 +31,18 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from .schemas import (
-    DDIAlert, DLPredictionResult, DrugItem, PredictRequest, PredictResponse,
-    RiskLevel, Severity, INTERVENTION_MAP,
-)
 from .dl_predictor import DLModel
 from .hana_history import HANAHistoryProvider
+from .schemas import (
+    INTERVENTION_MAP,
+    DDIAlert,
+    DLPredictionResult,
+    DrugItem,
+    PredictRequest,
+    PredictResponse,
+    RiskLevel,
+    Severity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,14 +147,23 @@ def _validate_feature_schema(
 # 위험 약물 판정 상수 — 단일 출처: rules/risk_drug_constants.py
 # (Codex 2026-05-06 ISSUE-3 단일화. 기준: drug_rules.yaml :123 high_risk_drugs).
 from rules.risk_drug_constants import (
-    HIGH_RISK_KEYWORDS as _HIGH_RISK_KEYWORDS,
-    HIGH_RISK_ATC_PREFIXES as _HIGH_RISK_ATC_PREFIXES,
-    RENAL_RISK_KEYWORDS as _RENAL_RISK_KEYWORDS,
-    RENAL_RISK_ATC_PREFIXES as _RENAL_RISK_ATC_PREFIXES,
-    HEPATIC_RISK_KEYWORDS as _HEPATIC_RISK_KEYWORDS,
     HEPATIC_RISK_ATC_PREFIXES as _HEPATIC_RISK_ATC_PREFIXES,
 )
-
+from rules.risk_drug_constants import (
+    HEPATIC_RISK_KEYWORDS as _HEPATIC_RISK_KEYWORDS,
+)
+from rules.risk_drug_constants import (
+    HIGH_RISK_ATC_PREFIXES as _HIGH_RISK_ATC_PREFIXES,
+)
+from rules.risk_drug_constants import (
+    HIGH_RISK_KEYWORDS as _HIGH_RISK_KEYWORDS,
+)
+from rules.risk_drug_constants import (
+    RENAL_RISK_ATC_PREFIXES as _RENAL_RISK_ATC_PREFIXES,
+)
+from rules.risk_drug_constants import (
+    RENAL_RISK_KEYWORDS as _RENAL_RISK_KEYWORDS,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 규칙 기반 Safety Net 브릿지
@@ -172,8 +187,10 @@ def _detect_risk_flags(drugs: list[DrugItem]) -> tuple[bool, bool]:
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent))
         from scripts.etl.prescription_aggregator import (
-            _RENAL_RISK_KEYWORDS, _RENAL_RISK_ATC_PREFIXES,
-            _HEPATIC_RISK_KEYWORDS, _HEPATIC_RISK_ATC_PREFIXES,
+            _HEPATIC_RISK_ATC_PREFIXES,
+            _HEPATIC_RISK_KEYWORDS,
+            _RENAL_RISK_ATC_PREFIXES,
+            _RENAL_RISK_KEYWORDS,
         )
         renal_prefixes = tuple(_RENAL_RISK_ATC_PREFIXES)
         hepatic_prefixes = tuple(_HEPATIC_RISK_ATC_PREFIXES)
@@ -663,6 +680,7 @@ class HierarchicalPredictor:
             return False
         try:
             import json
+
             import joblib
             self._meta = json.loads(meta_path.read_text())
             self._thresholds = self._meta["thresholds"]
@@ -914,7 +932,7 @@ class RequestFeatureBuilder:
         drug_master = self._drug_master()
         if self._std is None or drug_master is None:
             return None
-        from scripts.etl.models import PrescriptionRecord, PatientFeatures
+        from scripts.etl.models import PatientFeatures, PrescriptionRecord
         from scripts.etl.overlap_calculator import get_concurrent_drug_count
         from scripts.etl.prescription_aggregator import _fill_dup_features
 
@@ -962,8 +980,11 @@ class RequestFeatureBuilder:
         if self._std is None or drug_master is None:
             return None
         from scripts.etl.prescription_aggregator import (
-            detect_triple_whammy, detect_risk_drug,
-            _HIGH_RISK_KEYWORDS, _RENAL_RISK_KEYWORDS, _HEPATIC_RISK_KEYWORDS,
+            _HEPATIC_RISK_KEYWORDS,
+            _HIGH_RISK_KEYWORDS,
+            _RENAL_RISK_KEYWORDS,
+            detect_risk_drug,
+            detect_triple_whammy,
         )
         ddi = self._count_ddi(drugs, ref)
         cdup = self._count_dup_features(drugs, ref) or {}
@@ -1088,7 +1109,10 @@ class RequestFeatureBuilder:
         # 기존 atc/name 경로 — 실 edi 요청은 ~0 으로 구 번들(=0)과 정합 유지(skew 방지 게이팅).
         _rf_dm = self._drug_master() if rule_features_active else None
         if _rf_dm is not None and self._std is not None:
-            from scripts.etl.prescription_aggregator import detect_triple_whammy, detect_risk_drug
+            from scripts.etl.prescription_aggregator import (
+                detect_risk_drug,
+                detect_triple_whammy,
+            )
             _wks = [w for w in (self._std.get_wk(d.edi_code) for d in drugs) if w]
             feat["has_high_risk_drug"]    = float(detect_risk_drug(_wks, _rf_dm, _HIGH_RISK_KEYWORDS))
             feat["has_renal_risk_drug"]   = float(detect_risk_drug(_wks, _rf_dm, _RENAL_RISK_KEYWORDS))

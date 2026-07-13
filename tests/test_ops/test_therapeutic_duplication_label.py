@@ -67,7 +67,9 @@ def test_multiple_duplicate_classes_counted() -> None:
 
 
 def test_label_respects_min_duplicate_classes_threshold() -> None:
-    from scripts.ops.therapeutic_duplication_label import assign_therapeutic_duplication_label
+    from scripts.ops.therapeutic_duplication_label import (
+        assign_therapeutic_duplication_label,
+    )
 
     history = _history([
         {"efmdc_clsf_no": "114", "drug_code": "D1"},
@@ -115,7 +117,9 @@ class _FakeProvider:
 
 
 def test_run_audit_report_has_required_metrics() -> None:
-    from scripts.ops.therapeutic_duplication_label import run_therapeutic_duplication_audit
+    from scripts.ops.therapeutic_duplication_label import (
+        run_therapeutic_duplication_audit,
+    )
 
     report = run_therapeutic_duplication_audit(
         provider=_FakeProvider(),
@@ -137,7 +141,9 @@ def test_run_audit_report_has_required_metrics() -> None:
 
 
 def test_threshold_sensitivity_recommends_highest_threshold_in_target_range() -> None:
-    from scripts.ops.therapeutic_duplication_label import run_threshold_sensitivity_audit
+    from scripts.ops.therapeutic_duplication_label import (
+        run_threshold_sensitivity_audit,
+    )
 
     report = run_threshold_sensitivity_audit(
         provider=_FakeProvider(),

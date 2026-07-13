@@ -7,7 +7,6 @@ render_yellow_subtype_section() 자체는 Streamlit 컨텍스트가 필요해서
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from hana_app.core.hierarchical_runner import ACTION_BY_LABEL
 from hana_app.core.yellow_subtype_view import (
@@ -17,7 +16,6 @@ from hana_app.core.yellow_subtype_view import (
     summarize_actions,
     summarize_yellow_subtypes,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # summarize_yellow_subtypes

@@ -7,10 +7,6 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import MagicMock
-
-import pytest
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Airflow Mock (미설치 환경 대응)
@@ -101,8 +97,8 @@ def test_run_training_calls_with_partition_str(monkeypatch):
         captured["partition"] = partition
         captured["kwargs"] = kwargs
         # Return a minimal TrainResult
-        from scripts.train.pipeline import TrainResult
         from scripts.train.evaluator import EvalResult
+        from scripts.train.pipeline import TrainResult
         r = TrainResult(partition=partition, model_type="xgboost")
         r.model_path = "/tmp/model.pkl"
         r.eval_results = {"val": EvalResult("val", recall=0.95, auc_roc=0.90)}

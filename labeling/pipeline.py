@@ -31,8 +31,8 @@ from typing import Optional
 import pandas as pd
 
 from labeling.adr_labeler import ADRLabeler, LabelResult
+from labeling.golden_validator import GoldenValidationReport, GoldenValidator
 from labeling.sample_extractor import StratifiedSampler, add_age_group
-from labeling.golden_validator import GoldenValidator, GoldenValidationReport
 
 logger = logging.getLogger(__name__)
 

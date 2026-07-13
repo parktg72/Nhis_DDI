@@ -12,7 +12,6 @@ from scripts.datasets.contracts import (
     write_dl_bundle_manifest,
 )
 
-
 DEFAULT_SCHEMA_VERSION = "dl.v1"
 DEFAULT_RUN_ID = "smoke-dl"
 # 운영 vocab(scripts/ops/build_drug_vocab)은 "_unk" 을 index 0 에 둔다. smoke 번들도

@@ -4,7 +4,6 @@ from datetime import date
 
 import pandas as pd
 
-
 VOCAB = {"_unk": 0, "D1": 1, "D2": 2, "12345": 3}
 
 

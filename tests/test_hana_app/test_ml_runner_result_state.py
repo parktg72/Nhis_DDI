@@ -5,7 +5,11 @@ import json
 import pandas as pd
 
 from hana_app.core import ml_runner
-from hana_app.core.ml_runner import _save_result, build_training_sequence, merge_train_results
+from hana_app.core.ml_runner import (
+    _save_result,
+    build_training_sequence,
+    merge_train_results,
+)
 
 
 def _result(model_name: str, f1: float = 0.8) -> dict:

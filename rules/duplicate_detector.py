@@ -31,7 +31,6 @@ from typing import Optional
 import pandas as pd
 import yaml
 
-
 DEFAULT_RULES_PATH = Path(__file__).parent.parent / "config" / "drug_rules.yaml"
 DEFAULT_EFCY_DUP_PATH = Path(__file__).parent.parent / "data" / "processed" / "efcy_duplicate_groups.parquet"
 

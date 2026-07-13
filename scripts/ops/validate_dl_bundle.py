@@ -9,7 +9,6 @@ from typing import Sequence
 
 from scripts.datasets.contracts import validate_dl_bundle_manifest
 
-
 SUPPORTED_ARCHITECTURES = {"linear", "gat", "gcn"}
 
 

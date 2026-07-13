@@ -21,7 +21,7 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hana_app.core.config import load_config, save_config, is_hana
+from hana_app.core.config import is_hana, load_config, save_config
 from hana_app.core.db import get_connection
 
 st.set_page_config(page_title="분석 DB 관리", page_icon="🗄️", layout="wide")

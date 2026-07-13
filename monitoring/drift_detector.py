@@ -19,7 +19,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -180,7 +180,6 @@ class DriftDetector:
 
     def fit(self, df) -> "DriftDetector":
         """기준 분포 학습."""
-        import pandas as pd
         for col in df.columns:
             arr = df[col].dropna().values
             if len(arr) == 0:

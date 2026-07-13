@@ -14,7 +14,6 @@ import os
 
 import pandas as pd
 
-
 _SALT: str = os.environ.get("ETL_PSEUDO_SALT", "")
 
 

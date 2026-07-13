@@ -3,13 +3,11 @@
 Windows-specific 부분(CREATE_NO_WINDOW, 배치 스크립트)은 단위 테스트 불가.
 헬스체크/로그 경로/포트 감지 등 플랫폼 독립 로직만 검증한다.
 """
-import os
 import socket
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from unittest import mock
 
 import pytest
 

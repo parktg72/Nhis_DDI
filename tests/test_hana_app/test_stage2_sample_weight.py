@@ -13,8 +13,8 @@ if str(ROOT) not in sys.path:
 
 from hana_app.core.hierarchical_runner import (
     STAGE2_LABELS,
-    encode_stage2_labels,
     _stage2_sample_weight,
+    encode_stage2_labels,
 )
 
 

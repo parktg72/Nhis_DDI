@@ -5,7 +5,6 @@ import pytest
 
 from hana_app.core.hana_etl import HANAExtractor
 
-
 _T20_COLS = {
     "bill_no": "CMN_KEY",
     "patient_id": "INDI_DSCM_NO",

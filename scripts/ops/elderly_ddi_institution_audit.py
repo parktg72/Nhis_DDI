@@ -6,16 +6,15 @@ Raw Parquet inputs.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-import re
 from typing import Iterable, Sequence
 
 import pandas as pd
 
 from scripts.etl.models import DrugOverlapPair, PrescriptionRecord
 from scripts.etl.prescription_aggregator import ddi_pair_severities
-
 
 DEFAULT_DISEASE_CODE_COLUMNS = (
     "sick_code",
