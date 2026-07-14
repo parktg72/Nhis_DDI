@@ -1,47 +1,13 @@
-# ❄️ 멀티 에이전트 협업 가이드라인: 메시지 전송 보류 원칙
+# Sequential external-worker dispatch
 
-본 문서는 **AGY, Claude, Codex** 본부 및 하위 에이전트 간의 안전하고 효율적인 협업을 보장하기 위한 **메시지 전송 보류 원칙 (Message Transmission Deferral Rule)**에 대한 통합 가이드라인입니다.
+Codex LO may have only one outbound Claude Code or AGY request in flight.
 
----
+## Rules
 
-## 📌 배경 및 목적
+1. Send a self-contained brief to one worker.
+2. Until that worker reports completion or idle, queue all follow-up and other-worker messages locally.
+3. After completion, Codex LO validates the result before sending the next request.
+4. Workers never communicate with each other or the user and never spawn another worker.
+5. Do not poll consuming bridge queues. Use the adapter process completion and result envelope.
 
-여러 에이전트가 병렬적으로 코드를 빌드하고 검증하는 환경에서, **작업 중에 실시간 메시지가 수신되면 다음과 같은 부작용**이 발생할 위험이 매우 높습니다.
-1. **맥락 훼손 (Context Interruption):** 에이전트가 연산이나 분석 도중에 다른 메시지를 수신하면 프롬프트 컨텍스트가 흐트러져 비정상 종료가 일어날 수 있음.
-2. **환각 (Hallucination):** 미완성된 중간 상태에서 수신된 요청으로 인해 오작동하거나 엉뚱한 설계를 제시할 수 있음.
-
-따라서 에이전트 간의 모든 메시지는 **완전한 동기화 및 순차적 진행**을 원칙으로 합니다.
-
----
-
-## 🛡️ 핵심 규칙 (Message Deferral Protocol)
-
-### 1. 상태 판단 및 전송 시점 결정
-에이전트가 다른 에이전트에게 통신을 시도하기 전, 반드시 대상 에이전트의 상태를 평가해야 합니다.
-
-- **전송 가능 상태 (대기 상태):**
-  - 상대 에이전트로부터 **"작업 완료" 알림** 또는 **`<channel>` 리마인더 응답**을 수신한 직후.
-  - 이 시점에만 새로운 피드백이나 지시 사항을 담아 메시지를 발송할 수 있습니다.
-  
-- **보류 상태 (작업 중):**
-  - 이전 메시지를 보낸 후 아직 상대방의 완료 응답이 도달하지 않았거나, 백그라운드 태스크가 진행 중인 경우.
-  - **행동 요령:** 메시지를 즉시 전송하지 않고, **에이전트 로컬 메모리(보류 큐/메모)에 기록한 뒤 대기**합니다. 작업 완료 통보를 받은 뒤 순차적으로 큐의 메시지를 발송합니다.
-
----
-
-## 🚫 금지 조항
-
-> [!CAUTION]
-> **브릿지 API 직접 폴링 금지**
-> 소비형 큐로 동작하는 브릿지 `/api/pending-for-codex` curl 등의 API를 직접 폴링하거나 중복 조회하는 행위는 엄격히 금지됩니다. 반드시 정식 알림 수신 또는 완료 메시지 이벤트를 기반으로 구동해야 합니다.
-
----
-
-## 🔄 파이프라인 상의 Human-in-the-loop 체크포인트
-
-> 적용 범위: 아래 2개 체크포인트는 full `hq_agents` 파이프라인에서만 적용한다. Lean 운영 모드에서는 Hermes LO 재량으로 생략하거나 더 가벼운 승인 게이트로 대체할 수 있다.
-
-돌발 행동을 방지하기 위해 다음 **두 가지 중점 검문소**에서는 자동으로 사용자에게 승인을 요청해야 합니다.
-
-1. **설계 확정 후 (2단계 완료):** `claude_architect`가 변수 정의서 및 설계를 끝낸 후, 사용자에게 *"이 설계서대로 코덱스에 전달하여 고속 구현을 시작할까요?"* 승인 요청.
-2. **코드 리뷰 완료 후 (4단계 완료):** `claude_review_refactor`가 최종 검수를 완료한 후, 사용자에게 *"코드 무결성 검증을 통과했습니다. 배포를 진행할까요?"* 승인 요청.
+Every worker result must include exact files changed, commands/tests run, validation status, risks, and one recommended next step.

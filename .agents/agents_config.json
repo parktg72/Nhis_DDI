@@ -1,180 +1,105 @@
 {
   "project": "MODE_11_hana",
-  "version": "1.3.0",
-  "_note": "설계상의 개념적 본부/서브에이전트를 실제 하니스 핸들러에 매핑한다. handler 필드가 실제 호출 경로다. local = 에이전트 정의 (.claude/agents/*.md, Agent 툴), mcp = hermes-multi-cli-agents 브릿지 (ask_*_hq), main = 메인 Claude 세션 자체. local_workers(antigravity/codex/hermes-worker/opencode-worker)는 MODE_11_hana 가드레일(HANA 스키마 추측 금지·학습↔서빙 schema parity·Research Freeze·py312/BAT CRLF)을 반영한 프로젝트 스코프 정의를 .claude/agents/ 에 두며, 이는 동명 글로벌 ~/.claude/agents/*.md 보다 우선 적용된다. bridge_agents(agy/claude/codex-bridge)는 글로벌 정의를 그대로 사용한다. OpenCode HQ / opencode-worker는 ask_opencode_hq MCP 채널이 없으므로 direct CLI /home/ptg/.opencode/bin/opencode run 을 사용하는 dev-only additive worker로만 등록한다.",
+  "version": "2.0.0",
   "operating_model": {
-    "_decided": "2026-06-03 (사용자 확정)",
-    "default": "lean",
-    "lean": {
-      "summary": "기본 운영 모드. OpenCode LO가 총괄 오케스트레이터이자 사용자 유일 소통 창구로서 orient→설계→구현→검증→기록을 수행하고, advisor를 plan·마무리 2회 호출한다. Critical 변경(라벨 정의·학습/서빙 스키마·HANA 쿼리·freeze/gate 정책)은 bridge_agents를 통해 cross-family 검증한다.",
-      "default_path": "OpenCode LO + advisor(plan/finish) + (critical cross-family via bridge_agents)"
-    },
-    "summon_when_needed": {
-      "summary": "아래 hq_agents 의 무거운 4본부 시퀀스(AGY→Claude→Codex→Claude→AGY→OpenCode LO)는 폐기가 아니라 '필요시 소집' 자원으로 보존한다. 전체 의례를 기본값으로 강제하지 않는다.",
-      "triggers": [
-        "환경·DevOps·offline wheel·BAT·HANA Raw 확보 리스크 분석 필요 → agy-bridge / antigravity-worker 소집",
-        "독립 설계·논리 review·second opinion(same-family) 필요 → claude-bridge 소집",
-        "병렬 구현·대량 리팩터 → codex-worker 소집; true cross-family 구현·기술 검증 → codex-bridge 소집 (OpenCode LO 모드의 logic/schema/freeze 검증은 claude-bridge/agy-bridge 우선)",
-        "provider-agnostic read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·구현 계획 second opinion 필요 → opencode-worker 소집 (dev-only, additive-only, critical cross-family gate 미충족)",
-        "런타임 에러 RCA·대용량 로그 요약 → OpenCode LO 처리 (hermes-worker는 추가 지시까지 suspended)"
-      ]
-    },
-    "naming_caution": "용어 충돌 주의: OpenCode LO가 총괄 오케스트레이터다. 로컬 에이전트 'hermes-worker'(haiku, read-only)는 추가 지시까지 suspended 상태이며 LO가 아니다."
+    "default": "codex_lo",
+    "summary": "Codex sole LO; Claude Code/AGY sequential read-only external workers; strict read-only bridges fail closed unless Codex LO/user-approved runtime permission allows adapter execution."
   },
   "lo_configuration": {
-    "lo_agent": "OpenCode",
-    "dispatch_rules": [
-      "OpenCode LO interprets the user request and project situation, then assigns tasks to the appropriate HQ/worker.",
-      "OpenCode LO receives results from subagents/workers, verifies them, and reports back to the user.",
-      "Cross-family critical work uses bridge_agents (claude-bridge, codex-bridge, agy-bridge).",
-      "OpenCode HQ / opencode-worker remains dev-only and additive-only."
+    "lo_agent": "Codex",
+    "responsibilities": [
+      "user communication",
+      "decomposition and sequencing",
+      "implementation",
+      "worker dispatch",
+      "evidence verification",
+      "conflict resolution",
+      "final reporting"
     ],
-    "suspended_agents": ["hermes-worker", "Hermes LO"]
+    "max_outbound_external_worker_requests": 1,
+    "max_subagent_depth": 1,
+    "outbound_request_enforcement": "Enforced by Codex LO dispatch and sequential policy; this is not a global adapter lock."
+  },
+  "runtime_approval_boundary": {
+    "bridge_sandbox": "strict read-only",
+    "external_adapter_execution": "Requires Codex LO/user-approved runtime permission; execution is not guaranteed inside the strict read-only bridge sandbox.",
+    "fail_closed": "If the runtime cannot execute the adapter, the bridge must not self-escalate, prompt or contact the user, or weaken its sandbox; it returns BLOCK to Codex LO with the exact attempted command and runtime evidence.",
+    "observed_probe": "A local Codex strict :read-only probe blocked mktemp /tmp as expected; parent approval/runtime permission is therefore a prerequisite for live adapter dispatch."
+  },
+  "external_workers": [
+    "Claude Code",
+    "AGY"
+  ],
+  "advisor": {
+    "provider": "Claude Code",
+    "mechanism": "Claude Code built-in advisor",
+    "model_alias": "fable",
+    "resolved_model": "claude-fable-5",
+    "default_gates": [
+      "plan",
+      "finish"
+    ],
+    "fresh_session_per_call": true,
+    "max_calls_per_session": 1
   },
   "actual_handlers": {
-    "local_workers": {
-      "antigravity-worker": { "model": "claude-haiku-4-5-20251001", "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"], "role": "DevOps·인프라·배포" },
-      "codex-worker": { "model": "claude-haiku-4-5-20251001", "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"], "role": "코드 구현·리팩터·유닛테스트" },
-      "hermes-worker": { "model": "claude-haiku-4-5-20251001", "tools": ["Read", "Bash", "Glob", "Grep"], "role": "로그 분석·디버깅·컨텍스트 요약", "note": "Suspended until further instruction." },
-      "opencode-worker": { "model": "claude-sonnet-4-6", "tools": ["Read", "Grep", "Glob", "Bash"], "channel": "direct_cli:/home/ptg/.opencode/bin/opencode run", "default_sandbox": "read-only", "dev_only": true, "cross_family_gate": "additive-only; does NOT satisfy the critical cross-family requirement", "role": "OpenCode CLI read-only 리뷰·리팩터 대안·UI/UX 아이디어·계획 second opinion" }
+    "claude": {
+      "bridge": ".codex/agents/claude-bridge.toml",
+      "adapter": ".agents/adapters/call_external_agent.sh claude",
+      "default_access": "read-only",
+      "role": "requirements/architecture/operational definitions/logical QA/final QA"
     },
-    "mcp_bridge": {
-      "server": "hermes-multi-cli-agents",
-      "transport": "stdio (wsl Ubuntu-24.04 → /home/ptg/codex-claude-bridge/hermes-mcp-wrapper.sh)",
-      "channels": ["ask_agy_hq", "ask_claude_hq", "ask_codex_hq"],
-      "repo_cd": "/mnt/c/model/mode_11_hana",
-      "purpose": "cross-family 교차검증 (Anthropic ↔ OpenAI ↔ Gemini). Critical 작업(라벨 정의·학습/서빙 스키마·HANA 쿼리) 필수. OpenCode는 이 MCP server에 ask_opencode_hq로 연결되지 않는다."
+    "claude-advisor": {
+      "bridge": ".codex/agents/claude-bridge.toml",
+      "adapter": ".agents/adapters/call_external_agent.sh claude-advisor",
+      "default_access": "read-only",
+      "role": "one-shot built-in Fable advisor review in fresh Claude session"
     },
-    "bridge_agents": {
-      "_note": "OpenCode LO가 외부 CLI를 자기 컨텍스트 오염 없이 위임/검수하도록 하는 브릿지 서브에이전트. 우선순위는 repo-local .claude/agents/*-bridge.md이며, 동일 정의가 전역 ~/.claude/agents에 있으면 fallback으로 사용할 수 있다. 로컬 *-worker(haiku, 자체 실행)와 달리 MCP 채널로 외부 엔진 호출.",
-      "codex-bridge": { "model": "claude-sonnet-4-6", "channel": "mcp:ask_codex_hq", "tools": ["Read", "Grep", "Glob", "ToolSearch", "mcp__hermes-multi-cli-agents__ask_codex_hq"], "default_sandbox": "read-only", "role": "Claude↔Codex 구현·테스트·리뷰 위임 후 검수" },
-      "agy-bridge": { "model": "claude-sonnet-4-6", "channel": "mcp:ask_agy_hq", "tools": ["Read", "Grep", "Glob", "ToolSearch", "mcp__hermes-multi-cli-agents__ask_agy_hq"], "role": "Claude↔AGY 리서치·리스크·second opinion 위임 후 교차검증" },
-      "claude-bridge": { "model": "claude-sonnet-4-6", "channel": "mcp:ask_claude_hq", "tools": ["Read", "Grep", "Glob", "ToolSearch", "mcp__hermes-multi-cli-agents__ask_claude_hq"], "default_allowed_tools": "Read,Grep,Glob", "role": "Claude↔Claude(독립 인스턴스) 설계·리뷰·second opinion 위임 후 검수 (same-family, 메인 컨텍스트 분리)" }
+    "agy": {
+      "bridge": ".codex/agents/agy-bridge.toml",
+      "adapter": ".agents/adapters/call_external_agent.sh agy",
+      "default_access": "read-only sandbox/plan",
+      "role": "environment/deployment/Python 3.12/BAT/disk/operational risk"
     }
   },
-  "hq_agents": {
-    "AGY": {
-      "name": "Antigravity-Gemini HQ",
-      "description": "환경·DevOps·리스크·외부 조사 본부. 총괄 조율 및 사용자 소통 창구는 AGY가 아니라 OpenCode LO다. AGY는 구현·최종 스펙 담당이 아니며, 미확인 HANA schema는 blocker로 OpenCode LO에 반환한다.",
-      "primary_channel": "mcp:ask_agy_hq",
-      "subagents": {
-        "agy_intake": { "role": "AGY 내부 작업 조율(환경·리스크·리서치 질의 정리·결과 취합). 프로젝트 전체 오케스트레이션 아님 — 그것은 OpenCode LO 담당.", "handler": "local:agy-bridge → mcp:ask_agy_hq" },
-        "agy_env_devops": { "role": "인프라·배포 스크립트·py312 휠 관리", "handler": "local:antigravity-worker" },
-        "agy_research_doc": { "role": "외부 의약 사전 리서치·문서화", "handler": "local:agy-bridge → mcp:ask_agy_hq" }
-      }
-    },
-    "Claude": {
-      "name": "Claude HQ",
-      "description": "아키텍처 설계 및 소스 코드 교차 검증 (QA)",
-      "primary_channel": "mcp:ask_claude_hq",
-      "subagents": {
-        "claude_architect": { "role": "모듈/스키마/변수 정의서 설계", "handler": "main (메인 Claude), 교차검증 시 mcp:ask_claude_hq" },
-        "claude_review_refactor": { "role": "코드 검수·리팩터", "handler": "skill:/code-review, /simplify · 교차검증 mcp:ask_claude_hq" },
-        "claude_security_inspector": { "role": "종속성·API 보안 정적 분석", "handler": "skill:/security-review · 교차검증 mcp:ask_claude_hq" }
-      }
-    },
-    "Codex": {
-      "name": "Codex HQ",
-      "description": "초고속 코드 및 알고리즘, 테스트 코드 구현",
-      "primary_channel": "mcp:ask_codex_hq",
-      "subagents": {
-        "codex_logic_builder": { "role": "비즈니스 로직·ETL·피처 파이프라인 구현", "handler": "local:codex-bridge → mcp:ask_codex_hq (외부 Codex 엔진), 경량은 local:codex-worker" },
-        "codex_tdd": { "role": "pytest 테스트·Mock 생성", "handler": "local:codex-bridge → mcp:ask_codex_hq (외부 Codex 엔진), 경량은 local:codex-worker" }
-      }
-    },
-    "OpenCode": {
-      "name": "OpenCode HQ",
-      "description": "provider-agnostic 외부 코딩 에이전트 보조 레인. Read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·구현 계획 second opinion. OpenCode LO와 별개이며 critical 게이트(Claude/AGY/Codex)를 대체하지 않고 Windows production 의존성도 아니다. dev-only, additive-only.",
-      "primary_channel": "local:opencode-worker -> direct_cli:/home/ptg/.opencode/bin/opencode run",
-      "subagents": {
-        "opencode_review": { "role": "read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·구현 계획 second opinion", "handler": "local:opencode-worker -> direct_cli:/home/ptg/.opencode/bin/opencode run --dir /mnt/c/model/mode_11_hana --format json" },
-        "opencode_bounded_impl": { "role": "OpenCode LO가 명시 승인한 작고 격리된 구현/리팩터만 수행. 기본값 아님. Protected path/HARD_STOP은 즉시 중단.", "handler": "local:opencode-worker -> direct_cli:/home/ptg/.opencode/bin/opencode run (OpenCode LO-approved isolated scope only)" }
-      }
-    }
+  "critical_review": {
+    "topics": [
+      "label definitions",
+      "train-serving schema",
+      "HANA query logic",
+      "freeze or gate policy"
+    ],
+    "required_families": [
+      "OpenAI via Codex LO",
+      "Anthropic via Claude Code"
+    ]
   },
-  "context_management": {
-    "hermes": { "role": "추가 지시까지 suspended: 런타임 로그·디버깅·컨텍스트 요약 및 본부 간 전달", "suspended": true, "handler": "local:hermes-worker" }
+  "hard_gates": {
+    "final_dataset": "Final dataset is fixed: 2024-07..12 Raw, 184 daily records_YYYYMMDD.parquet files plus 500k eligibility; no 2025-01 acquisition.",
+    "hana_schema": "HANA schema/table/column names must never be guessed; use confirmed sources only.",
+    "environment": "Windows production is closed-network; Python 3.12 dev/prod parity is required.",
+    "shared_constants": "_PID_BATCH_T30 and strata_utils._DEFAULT_AGE_BINS must not be redefined.",
+    "python_runtime": "Python 3.12 only",
+    "bat_files": "BAT files must preserve CRLF and include chcp 65001; AGY sign-off is required.",
+    "feature_temp_preflight": "Temp destination priority: HANA_FEAT_TMP -> HANA_TMP_DIR -> hana_config.json -> system temp; require 10GB+ free space.",
+    "train_serving_parity": "RequestFeatureBuilder feature names and order must match training exactly; serving changes require a training schema diff, tests/test_serving, tests/test_features, /reload, and sample payload sanity checks.",
+    "protected_paths": [
+      "packages_win/py312/",
+      "mlruns/",
+      "**/*.parquet",
+      "out/"
+    ],
+    "protected_path_policy": "Protected paths may not be modified, deleted, or committed without explicit user approval.",
+    "research_track": "RESEARCH_TRACK_FROZEN; no Nov->Dec tuning, ablation, feature, or hyperparameter work; Gate 5A, Gate 5B, and 2025-01 are retired."
   },
-  "dataset_gates": {
-    "final_raw_dataset": "2024-07..12, 184 daily records_YYYYMMDD.parquet files + 500k eligibility",
-    "canceled": ["Gate 5A", "Gate 5B", "2025-01 acquisition", "Dec->Jan unlock"],
-    "research_track": "RESEARCH_TRACK_FROZEN indefinitely; Nov->Dec frozen holdout cannot be used for tuning, ablation, feature, or hyperparameter work",
-    "allowed": "freeze-safe work only: same-window extraction/audit, inference packaging, locked-eval reporting, docs, validators"
-  },
-  "severity_taxonomy": {
-    "WARN": "Continue only for read-only or reversible work; include the risk in the agent report.",
-    "BLOCK": "Pause the current step and route the blocker to OpenCode LO before proceeding.",
-    "HARD_STOP": "Abort downstream action and require explicit human approval through OpenCode LO."
-  },
-  "automatic_intervention_triggers": [
-    {
-      "name": "python_312_runtime_lock",
-      "condition": "Active python/pytest runtime is not Python 3.12, or Python 3.11 is being used as active runtime rather than legacy backup context.",
-      "severity": "BLOCK",
-      "owner": "AGY / OpenCode LO",
-      "action": "Stop the step and request .venv Python 3.12 activation or recreation."
-    },
-    {
-      "name": "bat_crlf_chcp_gate",
-      "condition": "Any .bat file is added or edited.",
-      "severity": "BLOCK",
-      "owner": "AGY / antigravity-worker",
-      "action": "Verify CRLF line endings and chcp 65001; Codex cannot finalize BAT changes without AGY sign-off."
-    },
-    {
-      "name": "windows_wheelhouse_lock",
-      "condition": "Any write/delete to packages_win/py312/ or Python 3.12 offline wheel/constraint files.",
-      "severity": "HARD_STOP",
-      "owner": "AGY / OpenCode LO",
-      "action": "Abort unless the user explicitly approved this protected-path change."
-    },
-    {
-      "name": "hana_feature_temp_preflight",
-      "condition": "ETL, feature build, or training task may copy raw parquet through DuckDB temp partitions.",
-      "severity": "BLOCK",
-      "owner": "AGY / antigravity-worker",
-      "action": "Check HANA_FEAT_TMP/HANA_TMP_DIR/hana_config/system temp destination and require 10GB+ free space before dispatch."
-    },
-    {
-      "name": "protected_artifact_lock",
-      "condition": "Any write/delete/commit involving mlruns/, generated parquet, or out/ artifacts.",
-      "severity": "HARD_STOP",
-      "owner": "OpenCode LO",
-      "action": "Abort and request explicit user approval before touching artifacts."
-    },
-    {
-      "name": "research_freeze_lock",
-      "condition": "Task requests Nov->Dec/future-onset holdout tuning, ablation, feature, or hyperparameter work, or treats Gate 5A/Gate 5B/2025-01 as active unlocks.",
-      "severity": "HARD_STOP",
-      "owner": "All agents",
-      "action": "Abort, cite RESEARCH_TRACK_FROZEN, and offer only freeze-safe alternatives.",
-      "patterns": ["Nov->Dec", "Nov→Dec", "future_mi_t6", "octnov", "holdout tuning", "Gate 5A", "Gate 5B", "Jan 2025 holdout", "2025-01 unseen", "hyperparameter search on holdout", "ablation on Dec"]
-    }
-  ],
-  "protected_paths": [
-    "packages_win/py312/",
-    "mlruns/",
-    "data/Raw/*.parquet",
-    "**/*.parquet",
-    "out/"
-  ],
   "validation_commands": {
-    "json": "python3 -m json.tool .agents/agents_config.json >/dev/null",
-    "agent_surface": "find .agents .claude/agents -maxdepth 2 -type f -print | sort",
-    "gate_search": "grep -RInE 'RESEARCH_TRACK_FROZEN|Gate 5A|Gate 5B|2025-01|RequestFeatureBuilder|chcp 65001|packages_win/py312|mlruns|parquet|out/' CLAUDE.md AGENTS.md .agents .claude/agents",
-    "cli_flags": "command -v codex agy hermes claude && test -f /home/ptg/codex-claude-bridge/hermes-mcp-wrapper.sh && test -x /home/ptg/.opencode/bin/opencode && /home/ptg/.opencode/bin/opencode --version",
-    "opencode_smoke": "/home/ptg/.opencode/bin/opencode run 'Respond with exactly: OPENCODE_SMOKE_OK' --dir /mnt/c/model/mode_11_hana --format json",
-    "trigger_search": "grep -RInE 'automatic_intervention|WARN|BLOCK|HARD_STOP|HANA_FEAT_TMP|RESEARCH_TRACK_FROZEN|Python 3\\.11|py311|chcp 65001|CRLF' AGENTS.md CLAUDE.md .agents .claude/agents"
-  },
-  "communication_rules": {
-    "message_transmission_deferral": {
-      "rule_name": "메시지 전송 보류 원칙",
-      "description": "다른 에이전트가 작업 중일 경우 메시지 전송을 보류하고 완료 후 전송함. 작업 흐름 단절 및 Hallucination 방지 목적.",
-      "deferral_check_triggers": [
-        "리마인더 응답 수신 직후 = 대기 상태 (전송 가능)",
-        "이전 메시지 미응답 지속 = 작업 중 상태 (보류 큐에 기록 후 대기)"
-      ],
-      "prohibited": "브릿지 소비형 큐(/api/pending-for-codex 등) 직접 폴링 금지. 정식 알림/완료 이벤트 기반으로만 구동."
-    }
+    "python_version": "/mnt/c/model/mode_11_hana/.venv_wsl/bin/python --version",
+    "toml_json_parse": "/mnt/c/model/mode_11_hana/.venv_wsl/bin/python -c \"import json, pathlib, tomllib; json.load(open('.agents/agents_config.json', encoding='utf-8')); [tomllib.loads(pathlib.Path(path).read_text(encoding='utf-8')) for path in ('.codex/config.toml', '.codex/agents/claude-bridge.toml', '.codex/agents/agy-bridge.toml')]\"",
+    "adapter_bash_syntax": "bash -n .agents/adapters/call_external_agent.sh",
+    "orchestration_tests": "/mnt/c/model/mode_11_hana/.venv_wsl/bin/python -m pytest tests/test_agents/test_codex_lo_orchestration.py -v",
+    "active_policy_search": "if rg -n -i 'open[c]ode|Hermes L[O]|Claude L[O]' AGENTS.md CLAUDE.md .claude/settings.json .agents .codex .claude/agents; then exit 1; else status=$?; if [ \"$status\" -eq 1 ]; then exit 0; fi; exit \"$status\"; fi",
+    "protected_diff": "set -o pipefail\npathspecs=(packages_win/py312/ mlruns/ out/ ':(glob)*.parquet' ':(glob)**/*.parquet' ':(glob)*.bat' ':(glob)**/*.bat')\ncollect_changes() {\n  git diff --name-only HEAD -- \"${pathspecs[@]}\" || return $?\n  git ls-files --others --exclude-standard -- \"${pathspecs[@]}\" || return $?\n  if git show-ref --verify --quiet refs/heads/main; then\n    git diff --name-only main...HEAD -- \"${pathspecs[@]}\" || return $?\n  else\n    status=$?\n    if [ \"$status\" -ne 1 ]; then return \"$status\"; fi\n  fi\n}\nchanges=\"$(collect_changes | sort -u)\" || exit $?\nif [ -n \"$changes\" ]; then\n  printf '%s\\n' \"$changes\"\n  exit 1\nfi\nexit 0",
+    "protected_snapshot": "/mnt/c/model/mode_11_hana/.venv_wsl/bin/python .agents/adapters/protected_artifact_guard.py snapshot --root . --state \"${TMPDIR:-/tmp}/mode11-protected-baseline.json\"",
+    "protected_verify": "/mnt/c/model/mode_11_hana/.venv_wsl/bin/python .agents/adapters/protected_artifact_guard.py verify --root . --state \"${TMPDIR:-/tmp}/mode11-protected-baseline.json\""
   }
 }

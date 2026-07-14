@@ -1,0 +1,16 @@
+[features]
+multi_agent = true
+
+[agents]
+max_depth = 1
+interrupt_message = true
+
+[agents.claude-bridge]
+description = "Delegate bounded requirements, architecture, logical QA, or Fable advisor work to Claude Code."
+config_file = "./agents/claude-bridge.toml"
+nickname_candidates = ["ClaudeBridge"]
+
+[agents.agy-bridge]
+description = "Delegate bounded environment, deployment, Python 3.12, BAT, disk, and risk checks to AGY."
+config_file = "./agents/agy-bridge.toml"
+nickname_candidates = ["AgyBridge"]

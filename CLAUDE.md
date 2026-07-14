@@ -72,22 +72,22 @@ serving 변경 시: 학습 feature schema diff → `tests/test_serving` + `tests
 hierarchical 타겟 옵션 통합 (commit `fc9bd8c`), `predict_risk` → `features_df` 채우기 완료.
 UI 변경 시 PyWebView 데스크톱 모드에서 **실제 클릭 검증**.
 
-## 다중 AI 협업 (전역 + 본 레포 우선순위)
+## 다중 AI 협업
 
-- **Critical** (라벨 정의·학습/서빙 스키마·HANA 쿼리) → cross-family 필수 (Anthropic ↔ OpenAI).
-- 일상 구현 (UI·작은 리팩터) → Sonnet 단독 가능.
-- **OpenCode** (dev-only 보조): read-only 코드 리뷰·리팩터 대안·UI/UX 아이디어·계획 second opinion. Direct CLI `opencode run`으로만 사용하며, additive only라 critical cross-family gate를 충족하지 않고 Windows 폐쇄망 production dependency가 될 수 없다.
-  - 모델: `opencode-go` provider 우선 (기본 `opencode-go/qwen3.7-max`). go 한도 소진(429/quota) 시 zen provider 폴백 `--model opencode/glm-5` (수동 재시도 — `opencode run` one-shot은 자동 폴백 미작동).
-- **L0 결정**: 이 프로젝트(MODE_11_hana)에서는 OpenCode가 LO이며, 별도 지시가 있을 때까지 Hermes는 사용하지 않는다. L0가 과제 성격에 따라 codex/opencode/agy 역할·모델을 배정한다 (전역 `~/.claude/CLAUDE.md` 위임 라우팅 참조).
-- **file-as-memory 오케스트레이션**: `.multiagent/` (gitignored — 생성물, `configure-multiagent` 로 재설치). 승인 게이트·재진입 프로토콜·worker 라우팅 정본은 `.multiagent/_shared/orchestrator-rules.md` + `.multiagent/CLAUDE.md`. 이 규칙은 **`cd .multiagent && claude`** 세션에만 자동 적용되므로, 루트 세션에서 태스크 파이프라인을 돌릴 땐 해당 파일을 직접 읽는다. 워커 정의(`.claude/agents/*.md`)와 본부 매핑(`.agents/agents_config.json`)이 프로젝트 가드레일 정본이며 스캐폴드가 이를 재생성하지 않는다.
-- `/advisor` 는 plan + 마무리 두 번이 기본.
+- **Codex LO**: 유일한 L0/LO. 사용자 소통, 작업 분해, 구현, worker 라우팅, 승인, 통합, 검증, 충돌 해결, 최종 보고를 담당한다.
+- **Claude Code subagent**: 요구사항·아키텍처·운영 정의·label/schema/freeze 논리 검토·최종 QA를 read-only로 반환한다.
+- **Fable 5 advisor**: Claude Code 내장 advisor다. `advisorModel: "fable"`을 사용하며 plan/finish 검토는 각각 새 Claude 세션에서 정확히 한 번 호출한다.
+- 공유 `.claude/settings.json`은 Fable 선택만 포함하고, machine-local permissions는 ignored `.claude/settings.local.json`에만 두며 commit하지 않는다.
+- **AGY subagent**: Python 3.12, Windows 폐쇄망 배포, BAT CRLF/`chcp 65001`, offline dependency, feature-build temp disk, 보호 경로와 리스크 게이트를 read-only로 점검한다.
+- 실행 정본은 `AGENTS.md`, `.codex/config.toml`, `.codex/agents/*.toml`, `.agents/agents_config.json`, `.agents/adapters/call_external_agent.sh`, `.claude/settings.json`다.
+- `.multiagent/`는 gitignored 레거시 생성물이며 현재 실행 정본이 아니다.
+- Critical 변경(라벨 정의·학습/서빙 스키마·HANA 쿼리·freeze/gate 정책)은 Codex와 Claude의 cross-family review가 필요하다.
 
-### ⚠️ 메시지 전송 보류 원칙 (Message Transmission Deferral Rule)
-- **절대 원칙**: 다른 에이전트가 백그라운드 작업이나 연산을 수행하고 있을 때 메시지를 즉시 전송하지 말고 보류할 것.
-- **이유**: 작업 수행 중에 실시간 메시지가 끼어들면 동작 흐름이 단절되거나 Hallucination 및 비정상 정지가 일어날 위험이 높음.
-- **대기/상태 판단**:
-  - 상대 에이전트로부터 "작업 완료" 혹은 `<channel>` 리마인더 응답을 받은 직후가 "대기 상태"이므로 이때 송신 가능.
-  - 미응답이 지속 중일 때는 "작업 진행 중"으로 간주하고, 보낼 메시지를 임시 보류 큐(메모)에 기록한 뒤 대기.
+### 메시지 전송 보류 원칙
+
+- Codex LO는 외부 worker 요청을 한 번에 하나만 보낸다.
+- Claude 또는 AGY 응답이 완료/idle 상태가 되기 전에는 다음 outbound 요청을 보류한다.
+- worker는 다른 worker를 호출하거나 사용자에게 직접 메시지하지 않는다.
 
 ### ❄️ Future-onset Research Freeze (동결 2026-05-26 / Jan 2025 트리거 취소 2026-06-02)
 - **상태**: `RESEARCH_TRACK_FROZEN` (해제 트리거 없음 — 무기한 보류/parked)

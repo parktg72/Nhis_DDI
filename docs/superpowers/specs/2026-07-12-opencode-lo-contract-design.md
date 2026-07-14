@@ -1,4 +1,6 @@
 # OpenCode 최종 LO 계약 기반 아키텍처 설계
+> [!IMPORTANT]
+> **Superseded on 2026-07-14.** OpenCode is no longer an active agent, worker, fallback, or LO in MODE_11_hana. The current orchestration design is `docs/superpowers/specs/2026-07-14-codex-lo-multiagent-design.md`, with Codex as the sole LO and Claude Code/AGY as the only external subagents. The remainder of this file is retained only as historical decision provenance and is not an executable policy.
 
 **작성일:** 2026-07-12
 **상태:** 사용자 승인됨 (사용자가 문서를 검토하고 승인함)

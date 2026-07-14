@@ -108,13 +108,20 @@ hana_app/results/
 # Repo-local agent orchestration surface (versioned by request)
 !.agents/
 .agents/*
+!.agents/adapters/
+.agents/adapters/*
+!.agents/adapters/call_external_agent.sh
+!.agents/adapters/protected_artifact_guard.py
 !.agents/agents_config.json
 !.agents/*_hq.md
 !.agents/message_deferral_guide.md
 !.claude/
 .claude/*
+!.claude/settings.json
+.claude/settings.local.json
 !.claude/agents/
-!.claude/agents/*.md
+.claude/agents/*
+!.claude/agents/.gitkeep
 
 # MultiAgent orchestration scaffold — 생성물. 재설치:
 # python3 ~/.claude/plugins/cache/multi-agent-starter/*/*/skills/configure-multiagent/generator/init.py \

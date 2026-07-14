@@ -2,7 +2,7 @@
 
 **Status:** Frozen. This document codifies current behavior. It changes nothing.
 **Plan:** `docs/superpowers/plans/2026-07-12-phase2-contract-spec-and-characterization.md` Wave 1 Task 1
-**Authority:** `docs/superpowers/specs/2026-07-12-opencode-lo-contract-design.md` (the approved design spec, hereafter "the Spec"), Sections 6 and 7.5
+**Authority:** This frozen document is authoritative for the recorded profile contracts based on its cited source snapshot and Phase 0A/0B baseline evidence. `docs/superpowers/specs/2026-07-12-opencode-lo-contract-design.md` is cited upstream historical provenance only.
 **Baseline evidence:** `docs/superpowers/reports/contract-baseline/` (Phase 0A profile contract map, Phase 0A feature dispersion table, Phase 0A bundle metadata record, Phase 0B dependency graph, Phase 0B baseline report)
 **Source snapshot:** commit `3d8d64e` (`3d8d64e78601a3ff56dc38034a9da62853e6b656`), with `serving/`, `hana_app/`, and `scripts/` unmodified in the working tree.
 **Policy baseline:** `RESEARCH_TRACK_FROZEN` (`AGENTS.md`, `CLAUDE.md`). No frozen holdout (Nov to Dec) was read, and no protected artifact (`packages_win/py312/`, `mlruns/`, generated `.parquet`, `out/`) was opened for this document.
@@ -560,9 +560,9 @@ The `rulefeat.v1` comment-versus-implementation discrepancy (Section 2.5) and th
 Two upstream documents describe these contracts and are both partly stale:
 
 - **The plan draft:** `docs/superpowers/plans/2026-07-12-phase2-contract-spec-and-characterization.md`, Wave 1 Task 1 Step 1, the fenced draft of this document (plan lines 62 to 214).
-- **The approved design (the Spec):** `docs/superpowers/specs/2026-07-12-opencode-lo-contract-design.md`, Sections 6.3.1 to 6.3.4 and 6.4.
+- **The historical design source:** `docs/superpowers/specs/2026-07-12-opencode-lo-contract-design.md`, Sections 6.3.1 to 6.3.4 and 6.4.
 
-Neither is being edited here. **This section is the override record:** where either upstream text disagrees with source at `3d8d64e`, the statements below govern, and this document, not the upstream text, is what Phase 2B characterizes. The Spec remains the authority for scope, governance, and constraints; it is not authoritative on runtime behavior it predates. Phase 0A/0B baseline reports corroborate each row.
+Neither upstream source is being edited here. **This section is the override record:** where either upstream text disagrees with source at `3d8d64e`, the statements below govern, and this document, not the upstream text, is what Phase 2B characterizes. This profile contract together with current `AGENTS.md` and `CLAUDE.md` governs the recorded contract and safety scope; references to the old design are historical comparison only. Phase 0A/0B baseline reports corroborate each row.
 
 Read the "Stale statement" column as: what the cited upstream text says or implies. Read "Source at `3d8d64e`" as: what the code does.
 
