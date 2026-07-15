@@ -166,15 +166,19 @@ class TestTrainDataset:
                 )
 
     def test_sex_type_metadata_not_in_generic_train_features(self):
-        df = pd.DataFrame({
+        baseline_df = pd.DataFrame({
             "patient_id": [f"P{i:04d}" for i in range(20)],
             "risk_level": ["Red"] * 10 + ["Normal"] * 10,
-            "sex_type": [1, 2] * 10,
             "drug_count": [float(i) for i in range(20)],
+            "sex_male": [float(i % 2) for i in range(20)],
         })
-        ds = load_dataset_from_df(df, random_state=42)
+        report_metadata_df = baseline_df.assign(sex_type=["1", "2"] * 10)
 
-        assert "sex_type" not in ds.feature_names
+        baseline = load_dataset_from_df(baseline_df, random_state=42)
+        with_sex_type = load_dataset_from_df(report_metadata_df, random_state=42)
+
+        assert with_sex_type.feature_names == baseline.feature_names
+        assert "sex_type" not in with_sex_type.feature_names
 
 
 # ─────────────────────────────────────────────────────────────────────────────

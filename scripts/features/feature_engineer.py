@@ -25,7 +25,7 @@ import pandas as pd
 
 from .cyp_features import CYPFeatureExtractor
 from .normalizer import FeatureNormalizer
-from .selector import FeatureSelector
+from .selector import FeatureSelector, ensure_sex_type_metadata
 from .temporal_features import extract_temporal_batch
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ class FeatureEngineer:
 
         # ── Step 5: sex 인코딩 ─────────────────────────────────────────────
         if "sex" in df.columns:
+            df = ensure_sex_type_metadata(df)
             df["sex_male"] = (df["sex"] == "M").astype(float)
             df = df.drop(columns=["sex"])
 

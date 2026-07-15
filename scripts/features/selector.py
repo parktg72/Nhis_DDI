@@ -38,11 +38,20 @@ PROTECTED_FEATURES = {
 # 피처 선택에서 제외할 메타 컬럼
 META_COLS = {
     "patient_id", "window_start", "window_end",
-    "risk_level", "risk_reasons", "age", "sex",
+    "risk_level", "risk_reasons", "age", "sex_type",
     "yellow_subtype",
 }
 
-EXCLUDED_COLS = META_COLS | {"sex_type"}
+EXCLUDED_COLS = META_COLS | {"sex"}
+
+
+def ensure_sex_type_metadata(df: pd.DataFrame) -> pd.DataFrame:
+    """Copy raw generic sex to report metadata without changing its value."""
+    if "sex_type" in df.columns or "sex" not in df.columns:
+        return df
+    out = df.copy()
+    out["sex_type"] = out["sex"]
+    return out
 
 
 class FeatureSelector:
@@ -121,6 +130,7 @@ class FeatureSelector:
         if not self._fitted:
             raise RuntimeError("fit() 먼저 호출하세요.")
 
+        df = ensure_sex_type_metadata(df)
         meta = [c for c in META_COLS if c in df.columns]
         selected_in_df = [c for c in self._selected if c in df.columns]
         return df[meta + selected_in_df]

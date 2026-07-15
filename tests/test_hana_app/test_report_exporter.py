@@ -357,6 +357,41 @@ def test_docx_analysis_subject_deduplicates_demographics_by_patient_id():
 
 
 @pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
+def test_generic_feature_pipeline_preserves_raw_sex_type_for_docx(tmp_path):
+    """Generic features carry raw sex codes into report demographics."""
+    from docx import Document
+
+    from scripts.features.feature_engineer import FeatureEngineer
+
+    feature_base = tmp_path / "generic_features"
+    feature_base.mkdir()
+    pd.DataFrame({
+        "patient_id": ["P1", "P2", "P3"],
+        "risk_level": ["Green", "Green", "Green"],
+        "risk_reasons": ["", "", ""],
+        "age": [70.0, 72.0, 74.0],
+        "drug_count": [6.0, 7.0, 8.0],
+        "sex": pd.Series(["1", "2", "9"], dtype="string"),
+    }).to_parquet(feature_base / "patient_features_202401.parquet", index=False)
+
+    output = FeatureEngineer(
+        cyp_extractor=None,
+        feature_base=feature_base,
+        fit_mode=True,
+    ).run("202401")
+    output["sex_male"] = [0.0, 1.0, 1.0]
+
+    assert list(output["sex_type"]) == ["1", "2", "9"]
+    report = build_docx_bytes({"model_name": "generic", "metrics": {}}, output)
+    rows = _docx_table_rows_after_heading(Document(io.BytesIO(report)), "7. 분석 대상 정보")
+    values = {row[0]: row[1] for row in rows[1:]}
+
+    assert values["성별 — 남"] == "1명 (33.3%)"
+    assert values["성별 — 여"] == "1명 (33.3%)"
+    assert values["성별 — 미상"] == "1명 (33.3%)"
+
+
+@pytest.mark.skipif(not DOCX_AVAILABLE, reason="python-docx not installed")
 def test_docx_analysis_subject_reports_raw_sex_type_two_as_female():
     """sex_type raw code 2 is female after string normalization."""
     from docx import Document

@@ -416,6 +416,40 @@ class TestFeatureDag:
         result = mod._get_partition(**ctx)
         assert result == "20260315"
 
+    def test_select_features_promotes_raw_sex_to_sex_type(self, tmp_path, monkeypatch):
+        import pandas as pd
+
+        from scripts.features.selector import FeatureSelector
+
+        mod = _import_dag("ddi_feature_dag")
+        partition = "20260319"
+        processed_dir = tmp_path / "processed"
+        features_dir = tmp_path / "features"
+        selector_path = tmp_path / "selector.pkl"
+        processed_dir.mkdir()
+        pd.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "risk_level": ["Red", "Normal", "Yellow"],
+            "sex": ["1", "2", "9"],
+            "drug_count": [1.0, 2.0, 3.0],
+        }).to_parquet(
+            processed_dir / f"patient_features_norm_{partition}.parquet",
+            index=False,
+        )
+        monkeypatch.setattr(mod, "PROC_DIR", str(processed_dir))
+        monkeypatch.setattr(mod, "FEATURES_DIR", str(features_dir))
+        monkeypatch.setattr(mod, "SELECTOR_PATH", str(selector_path))
+
+        ti = MagicMock()
+        ti.xcom_pull.return_value = partition
+        mod._select_features(ti=ti)
+
+        out = pd.read_parquet(features_dir / f"ml_features_{partition}.parquet")
+        selector = FeatureSelector.load(selector_path)
+        assert list(out["sex_type"]) == ["1", "2", "9"]
+        assert "sex" not in out.columns
+        assert "sex_type" not in selector.selected_features
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Train DAG 테스트

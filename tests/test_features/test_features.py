@@ -342,7 +342,7 @@ class TestFeatureSelector:
         assert "patient_id" in out.columns
         assert "risk_level" in out.columns
 
-    def test_sex_type_metadata_is_excluded(self):
+    def test_sex_type_metadata_is_preserved_but_not_selected(self):
         df = pd.DataFrame({
             "patient_id": ["P1", "P2", "P3", "P4"],
             "sex_type": [1, 2, 1, 9],
@@ -352,13 +352,40 @@ class TestFeatureSelector:
         out = sel.fit_transform(df)
 
         assert "sex_type" not in sel.selected_features
-        assert "sex_type" not in out.columns
+        assert list(out["sex_type"]) == [1, 2, 1, 9]
+
+    def test_raw_sex_is_promoted_to_report_metadata(self):
+        df = pd.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "sex": ["1", "2", "9"],
+            "drug_count": [1.0, 2.0, 3.0],
+        })
+        sel = FeatureSelector()
+        out = sel.fit_transform(df)
+
+        assert list(out["sex_type"]) == ["1", "2", "9"]
+        assert "sex" not in out.columns
+        assert "sex_type" not in sel.selected_features
+
+    def test_existing_sex_type_wins_over_raw_sex(self):
+        df = pd.DataFrame({
+            "patient_id": ["P1", "P2"],
+            "sex": ["1", "2"],
+            "sex_type": ["reported-1", "reported-2"],
+            "drug_count": [1.0, 2.0],
+        })
+        sel = FeatureSelector()
+        out = sel.fit_transform(df)
+
+        assert list(out["sex_type"]) == ["reported-1", "reported-2"]
+        assert "sex" not in out.columns
+        assert "sex_type" not in sel.selected_features
 
     def test_load_filters_legacy_sex_type_selected_feature(self, tmp_path):
         path = tmp_path / "legacy_selector.pkl"
         with open(path, "wb") as f:
             pickle.dump({
-                "selected": ["sex_type", "drug_count", "ddi_major"],
+                "selected": ["sex", "sex_type", "drug_count", "ddi_major"],
                 "removed_variance": ["const_col"],
                 "removed_corr": ["drug_count_dup"],
                 "variance_threshold": 0.01,
@@ -368,14 +395,18 @@ class TestFeatureSelector:
 
         sel = FeatureSelector.load(path)
         out = sel.transform(pd.DataFrame({
-            "patient_id": ["P1", "P2"],
-            "sex_type": [1, 2],
-            "drug_count": [3.0, 4.0],
-            "ddi_major": [0.0, 1.0],
+            "patient_id": ["P1", "P2", "P3"],
+            "sex": [1, 2, 9],
+            "drug_count": [3.0, 4.0, 5.0],
+            "ddi_major": [0.0, 1.0, 2.0],
         }))
 
         assert sel.selected_features == ["drug_count", "ddi_major"]
-        assert list(out.columns) == ["patient_id", "drug_count", "ddi_major"]
+        assert "patient_id" in out.columns
+        assert list(out["sex_type"]) == [1, 2, 9]
+        assert {"sex", "sex_type"}.isdisjoint(sel.selected_features)
+        assert "sex" not in out.columns
+        assert {"drug_count", "ddi_major"}.issubset(out.columns)
         assert sel._removed_variance == ["const_col"]
         assert sel._removed_corr == ["drug_count_dup"]
         assert sel.variance_threshold == 0.01
@@ -474,12 +505,42 @@ class TestFeatureEngineer:
         assert "ddi_major" in result.columns
 
     def test_sex_encoded(self, etl_feature_parquet):
-        """sex 컬럼이 sex_male(0/1)로 인코딩."""
+        """Legacy M/F sex values encode exactly to sex_male 1/0."""
+        path = etl_feature_parquet / "patient_features_202401.parquet"
+        source = pd.read_parquet(path).set_index("patient_id")["sex"].sort_index()
+        assert set(source.unique()) <= {"M", "F"}
+
         eng = FeatureEngineer(
             cyp_extractor=None,
             feature_base=etl_feature_parquet,
             fit_mode=True,
         )
         result = eng.run("202401")
+
         assert "sex" not in result.columns
         assert "sex_male" in result.columns
+        actual = result.set_index("patient_id")["sex_male"].sort_index()
+        expected = (source == "M").astype(float)
+        pd.testing.assert_series_equal(actual, expected, check_names=False)
+
+    def test_raw_sex_type_is_preserved_for_reports(self, etl_feature_parquet):
+        """Raw generic sex codes remain report metadata, not model features."""
+        path = etl_feature_parquet / "patient_features_202401.parquet"
+        source = pd.read_parquet(path)
+        raw_values = (["1", "2", "9", pd.NA] * ((len(source) + 3) // 4))[:len(source)]
+        raw_sex = pd.Series(raw_values, index=source.index, dtype="string")
+        source["sex"] = raw_sex
+        source.to_parquet(path, index=False)
+
+        eng = FeatureEngineer(
+            cyp_extractor=None,
+            feature_base=etl_feature_parquet,
+            fit_mode=True,
+        )
+        result = eng.run("202401")
+
+        expected = raw_sex.astype("string").fillna("<NA>").reset_index(drop=True)
+        actual = result["sex_type"].astype("string").fillna("<NA>").reset_index(drop=True)
+        pd.testing.assert_series_equal(actual, expected, check_names=False)
+        assert "sex" not in result.columns
+        assert "sex_type" not in eng.selector.selected_features
