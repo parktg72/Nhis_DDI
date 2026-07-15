@@ -68,6 +68,11 @@ class TestSunsetHelper:
                 f"invalid env date={invalid!r} → 안전 차단 예상"
             )
 
+    def test_noncanonical_env_date_blocks_lenient(self, monkeypatch):
+        """zero padding 없는 env date → invalid 로 간주해 안전 차단."""
+        monkeypatch.setenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", "2027-1-1")
+        assert _is_feature_schema_lenient_allowed(today=date(2026, 1, 1)) is False
+
     def test_empty_env_uses_default(self, monkeypatch):
         """env 빈 문자열 → default deadline 사용."""
         monkeypatch.setenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", "")

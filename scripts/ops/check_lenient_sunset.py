@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
 
 
 def _read_sunset_default_from_source() -> date | None:
@@ -60,6 +60,9 @@ class SunsetReport:
     sunset_date: date | None
     today: date
     warning: bool
+    warning_reason: Literal[
+        "invalid_override", "authoritative_date_unavailable", "sunset_reached"
+    ] | None
 
     @property
     def ok(self) -> bool:
@@ -77,6 +80,8 @@ def check_sunset(today: date | None = None) -> SunsetReport:
         from datetime import datetime
         try:
             sunset = datetime.strptime(raw_sunset, "%Y-%m-%d").date()
+            if sunset.isoformat() != raw_sunset:
+                raise ValueError
         except ValueError:
             # Invalid env date: safe side, block lenient (per Codex 2026-05-07 #6)
             sunset = _read_sunset_default_from_source()
@@ -88,6 +93,7 @@ def check_sunset(today: date | None = None) -> SunsetReport:
                 sunset_date=sunset,
                 today=today,
                 warning=warning,
+                warning_reason="invalid_override" if lenient_env else None,
             )
     else:
         sunset = _read_sunset_default_from_source()
@@ -98,6 +104,9 @@ def check_sunset(today: date | None = None) -> SunsetReport:
             sunset_date=None,
             today=today,
             warning=lenient_env,
+            warning_reason=(
+                "authoritative_date_unavailable" if lenient_env else None
+            ),
         )
     lenient_active = lenient_env and today < sunset
     warning = lenient_env and today >= sunset
@@ -107,6 +116,7 @@ def check_sunset(today: date | None = None) -> SunsetReport:
         sunset_date=sunset,
         today=today,
         warning=warning,
+        warning_reason="sunset_reached" if warning else None,
     )
 
 
@@ -121,15 +131,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     build_parser().parse_args(argv)
     report = check_sunset()
     if report.warning:
-        if report.sunset_date is None:
+        if report.warning_reason == "invalid_override":
+            raw_sunset = os.environ.get(
+                "FEATURE_SCHEMA_LENIENT_SUNSET_DATE", ""
+            ).strip()
+            print(
+                f"WARNING: FEATURE_SCHEMA_LENIENT_SUNSET_DATE='{raw_sunset}' "
+                "is invalid; expected YYYY-MM-DD. Lenient is blocked."
+            )
+        elif report.warning_reason == "authoritative_date_unavailable":
             print(
                 "WARNING: FEATURE_SCHEMA_LENIENT=1 is set but the authoritative "
                 "sunset date is unavailable. Lenient is blocked."
             )
         else:
+            sunset_phrase = (
+                "has been reached"
+                if report.today == report.sunset_date
+                else "has passed"
+            )
             print(
                 f"WARNING: FEATURE_SCHEMA_LENIENT=1 is set but sunset date "
-                f"{report.sunset_date} has passed (today={report.today}). "
+                f"{report.sunset_date} {sunset_phrase} (today={report.today}). "
                 f"Lenient is blocked. Align train/serve schema and unset the env var."
             )
     else:

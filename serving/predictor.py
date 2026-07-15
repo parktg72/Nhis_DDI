@@ -85,6 +85,8 @@ def _is_feature_schema_lenient_allowed(today: "Optional[date]" = None) -> bool:
     if raw:
         try:
             sunset = datetime.strptime(raw, "%Y-%m-%d").date()
+            if sunset.isoformat() != raw:
+                raise ValueError
         except ValueError:
             logger.warning(
                 "FEATURE_SCHEMA_LENIENT_SUNSET_DATE 형식 오류 — 안전 측으로 lenient "

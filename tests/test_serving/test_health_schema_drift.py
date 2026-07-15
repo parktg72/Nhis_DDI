@@ -183,6 +183,28 @@ def test_lenient_env_within_sunset_allowed(app_client_factory, monkeypatch):
     assert body["feature_schema_lenient_sunset_date"] == "2099-12-31"
 
 
+def test_noncanonical_lenient_sunset_health_degraded(
+    app_client_factory, monkeypatch
+):
+    """noncanonical sunset 은 raw 로 노출하되 lenient 효력은 안전 차단."""
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT", "1")
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", "2099-1-1")
+    pred = _make_pred(ml_loaded=True, schema_drift=[])
+    client = app_client_factory(pred)
+    try:
+        body = client.get("/health").json()
+    finally:
+        client.__exit__(None, None, None)
+
+    assert body["feature_schema_lenient_sunset_date"] == "2099-1-1"
+    assert body["feature_schema_lenient_allowed"] is False
+    assert body["status"] == "degraded"
+    assert any(
+        "lenient_blocked_by_sunset" in reason
+        for reason in body["degraded_reasons"]
+    )
+
+
 def test_default_sunset_date_exposed(app_client_factory, monkeypatch):
     """env 미설정 시 코드 default sunset 노출 (운영자가 default 인지)."""
     monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
