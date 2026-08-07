@@ -209,8 +209,13 @@ class CodeStandardizer:
                 if name:
                     name_list.append(name)
 
-        if atc_list:
-            return ",".join(atc_list), name_list[0] if name_list else None
+        # ATC 유무로 반환 전체를 게이팅하지 않는다. 성분은 해소됐는데 그 인덱스
+        # 엔트리에 ATC 가 없는 경우가 실제로 존재하며(실측: 하루치 고유 EDI 15,017개
+        # 중 429건, 예: aspirin/DB D000452), 종전에는 확보된 약물명까지 함께 버려졌다.
+        # 약물명은 이름 기반 Safety Net 규칙의 유일한 입력이므로 이 폐기는 곧 무발화다.
+        if atc_list or name_list:
+            return (",".join(atc_list) if atc_list else None,
+                    name_list[0] if name_list else None)
 
         return None, None
 

@@ -209,6 +209,7 @@ def test_resolve_codes_preserves_explicitly_supplied_values(standardizer):
 
 _REAL_EDI_WARFARIN = "645600390"   # wk 249103ATB → Warfarin
 _REAL_EDI_NAPROXEN = "053500020"   # wk 199501ATB → Naproxen
+_REAL_EDI_ASPIRIN  = "054801360"   # wk 111001ATE → Aspirin (인덱스 엔트리에 ATC 없음)
 
 
 @pytest.fixture(scope="module")
@@ -346,4 +347,31 @@ def test_missing_lookup_wk_is_logged_not_silent(caplog):
     assert drugs[0].drug_name is None, "픽스처 전제가 깨졌다 — 이름이 해소되면 안 된다"
     assert any("lookup_wk" in r.message for r in caplog.records), (
         f"lookup_wk 부재가 로그로 드러나지 않았다 — records={[r.message for r in caplog.records]}"
+    )
+
+
+def test_real_warfarin_aspirin_pair_fires_top01(real_predictor):
+    """실 Warfarin + 실 Aspirin 처방에서 TOP01 이 발화해야 한다.
+
+    `054801360` 은 성분 `aspirin`(DDI ID `D000452`)으로 해소되지만 그 인덱스
+    엔트리에는 ATC 코드가 없다. `lookup_wk` 가 `if atc_list:` 로 반환을 게이팅하면
+    확보된 약물명까지 함께 버려져, 78세 환자의 와파린+아스피린 병용이 `NORMAL` 로
+    응답된다. 실측상 이 형태의 손실은 하루치 고유 EDI 15,017개 중 429건이다.
+    """
+    req = PredictRequest(
+        patient_id="P-WARF-ASA",
+        patient_age=78,
+        drugs=[
+            DrugItem(edi_code=_REAL_EDI_WARFARIN, total_days=30, start_date=date(2024, 7, 1)),
+            DrugItem(edi_code=_REAL_EDI_ASPIRIN, total_days=14, start_date=date(2024, 7, 1)),
+        ],
+    )
+
+    res = real_predictor.predict(req)
+
+    assert [d.drug_name for d in req.drugs] == ["Warfarin", "Aspirin"], (
+        f"ATC 없는 엔트리의 약물명이 폐기됐다 — {[d.drug_name for d in req.drugs]}"
+    )
+    assert any("TOP01" in r for r in res.risk_reasons), (
+        f"와파린+아스피린 병용에서 TOP01 미발화 — risk_reasons={res.risk_reasons}"
     )
