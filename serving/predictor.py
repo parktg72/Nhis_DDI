@@ -183,8 +183,46 @@ def _drugs_to_dup_input(drugs: list[DrugItem]) -> list[dict]:
     ]
 
 
-def _detect_risk_flags(drugs: list[DrugItem]) -> tuple[bool, bool]:
-    """약물 목록에서 신기능/간기능 저하 위험 플래그 계산."""
+# edi→wk 로 유도한 ATC **집합**까지 보고 신/간기능 플래그를 계산할지 여부.
+# 기본 **비활성**이다 — 실측상 이 경로를 켜면 고령 다제약물 적격군(75세 이상·5종 이상)의
+# 즉각 개입 대상이 27.0% → 37.5% 로 늘어난다. 안전 방향이지만 약사 직접연락 용량에
+# 직결되므로 운영 승인 없이 전량 켜지 않는다.
+RISK_FLAG_ATC_ENV = "SERVING_RISK_FLAG_ATC_CANDIDATES"
+
+# EDI→약물명 해소를 SafetyNet 호출(Step 1) **이전**에 수행할지 여부. 기본 **비활성**.
+#
+# 이 플래그가 두 플래그 중 큰 쪽이다. 실측(적격군 75세 이상·5종 이상 표본 150명, 배포 번들
+# 적재, 최종 등급 기준):
+#   둘 다 off            → Red 2명   (main 과 동등)
+#   이 플래그만 on       → Red 56명
+#   + RISK_FLAG_ATC 도 on → Red 70명
+# 즉 즉각 개입(약사 직접연락) 대상이 28배가 된다. 안전 방향의 변화이지만 약사 인력 용량에
+# 직결되므로 병합만으로 켜지지 않게 한다. 두 플래그는 서로 독립이며, 이 플래그가 꺼져 있으면
+# ATC 플래그를 켜도 효과가 없다(해소된 약물명이 없으므로).
+#
+# 끈 상태에서도 `build()` 는 종전대로 Step 3 에서 해소한다 — ML 피처 산출 경로는 그대로다.
+EDI_NAME_RESOLUTION_ENV = "SERVING_ENABLE_EDI_NAME_RESOLUTION"
+
+
+def _risk_flag_atc_enabled() -> bool:
+    return os.environ.get(RISK_FLAG_ATC_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _edi_name_resolution_enabled() -> bool:
+    return os.environ.get(EDI_NAME_RESOLUTION_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _risk_flags_from(
+    drugs: list[DrugItem],
+    atc_provider=None,
+) -> tuple[bool, bool]:
+    """신/간기능 위험 플래그 **단일 구현**.
+
+    `atc_provider` 가 주어지면 약물당 추가 ATC 코드 집합을 얻어 접두 매칭에 포함한다.
+    주어지지 않으면 요청에 실린 스칼라 `atc_code` 만 본다 — 이것이 종전 동작이다.
+    두 호출 경로(`_detect_risk_flags`, `RequestFeatureBuilder.risk_flags`)가 같은 함수를
+    쓰게 해서, 호출 방식에 따라 판정이 갈리는 이중 기준을 만들지 않는다.
+    """
     try:
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -197,28 +235,44 @@ def _detect_risk_flags(drugs: list[DrugItem]) -> tuple[bool, bool]:
         renal_prefixes = tuple(_RENAL_RISK_ATC_PREFIXES)
         hepatic_prefixes = tuple(_HEPATIC_RISK_ATC_PREFIXES)
 
-        has_renal = any(
-            any(kw in (d.drug_name or "").lower() for kw in _RENAL_RISK_KEYWORDS)
-            or bool(d.atc_code and d.atc_code.startswith(renal_prefixes))
-            for d in drugs
-        )
-        has_hepatic = any(
-            any(kw in (d.drug_name or "").lower() for kw in _HEPATIC_RISK_KEYWORDS)
-            or bool(d.atc_code and d.atc_code.startswith(hepatic_prefixes))
-            for d in drugs
-        )
+        has_renal = has_hepatic = False
+        for d in drugs:
+            name = (d.drug_name or "").lower()
+            codes: set[str] = set()
+            if d.atc_code:
+                codes.add(d.atc_code)
+            if atc_provider is not None:
+                codes |= atc_provider(d)
+            if not has_renal and (
+                any(kw in name for kw in _RENAL_RISK_KEYWORDS)
+                or any(c.startswith(renal_prefixes) for c in codes)
+            ):
+                has_renal = True
+            if not has_hepatic and (
+                any(kw in name for kw in _HEPATIC_RISK_KEYWORDS)
+                or any(c.startswith(hepatic_prefixes) for c in codes)
+            ):
+                has_hepatic = True
+            if has_renal and has_hepatic:
+                break
         return has_renal, has_hepatic
     except Exception:
         # fail-safe 반환은 유지하되 침묵 금지 — 플래그 전멸 시 SafetyNet의
         # 고령+다약제+신장/간 Red 조건이 영원히 못 걸리는 silent degradation
-        logger.error("_detect_risk_flags 실패 — renal/hepatic 플래그 비활성화", exc_info=True)
+        logger.error("위험 플래그 계산 실패 — renal/hepatic 플래그 비활성화", exc_info=True)
         return False, False
+
+
+def _detect_risk_flags(drugs: list[DrugItem]) -> tuple[bool, bool]:
+    """약물 목록에서 신기능/간기능 저하 위험 플래그 계산 (스칼라 `atc_code` 만)."""
+    return _risk_flags_from(drugs)
 
 
 def _run_safety_net(
     drugs: list[DrugItem],
     patient_age: Optional[int] = None,
     sn_instance=None,
+    risk_flags: Optional[tuple[bool, bool]] = None,
 ) -> tuple[RiskLevel, list[str], list[DDIAlert]]:
     """
     rules/safety_net.py 실행 → (등급, 이유 목록, DDI 알림 목록).
@@ -237,7 +291,11 @@ def _run_safety_net(
         else:
             sn = sn_instance
 
-        has_renal, has_hepatic = _detect_risk_flags(drugs)
+        # 호출자가 계산해 넘긴 플래그를 우선한다. `RequestFeatureBuilder.risk_flags`
+        # 는 edi→wk 로 유도한 ATC 집합까지 보므로 EDI-only 요청에서 더 정확하다.
+        has_renal, has_hepatic = (
+            risk_flags if risk_flags is not None else _detect_risk_flags(drugs)
+        )
 
         # SafetyNet.assess는 list[str] (약물명 목록)을 기대
         drug_names = [d.drug_name or d.edi_code for d in drugs]
@@ -1069,6 +1127,14 @@ class RequestFeatureBuilder:
 
             if d.drug_name:
                 continue
+            # edi→wk 이름 폴백은 `EDI_NAME_RESOLUTION_ENV` 안에 있다. `build()` 는
+            # `predict()` 와 무관하게 이 메서드를 호출하므로, 폴백이 플래그 밖에 있으면
+            # 플래그를 꺼도 legacy(비 rulefeat.v1) 번들의 `has_*_risk_drug` 피처가
+            # 0 → 비영으로 바뀐다. 그 피처들은 모델 입력이고 `has_hepatic_risk_drug` 는
+            # 배포 모델 Stage1 importance 2위다. 폴백을 플래그 안에 두어야 기본값이
+            # main 과 같아진다.
+            if not _edi_name_resolution_enabled():
+                continue
             # `lookup_wk` 는 선택적 계약이다. 이 빌더에 주입되는 표준화기는 역사적으로
             # get_wk/get_efmdc/lookup_edi/drug_master 만 요구받았으므로, 없는 구현을
             # 강제하지 않고 폴백만 건너뛴다. 다만 침묵하지는 않는다 — 이 조합은 실 EDI
@@ -1091,6 +1157,49 @@ class RequestFeatureBuilder:
                 _, wk_name = lookup_wk(wk)
                 if wk_name:
                     d.drug_name = wk_name
+
+    def atc_candidates(self, drug) -> set[str]:
+        """이 약물이 가질 수 있는 ATC 코드 **집합**.
+
+        요청에 실린 `atc_code` 와 edi→wk 경로에서 유도되는 코드를 합친다.
+        `lookup_wk` 의 ATC 는 복합제에서 `|`·`,` 로 결합되어 있으므로 분해해서 담는다.
+        스칼라 `d.atc_code` 에 결합 문자열을 쓰는 대신 이 메서드를 두는 이유는,
+        소비처가 `startswith` 로 파싱하기 때문에 결합 문자열을 넣으면 첫 원소에만
+        우연히 매칭되는 조용한 오작동이 되기 때문이다(실측: 신기능 위험약 548건 중
+        344건만 매칭 = 63%).
+        """
+        out: set[str] = set()
+        if drug.atc_code:
+            out.add(drug.atc_code)
+        if self._std is None:
+            return out
+        lookup_wk = getattr(self._std, "lookup_wk", None)
+        if lookup_wk is None:
+            return out
+        wk = self._std.get_wk(drug.edi_code)
+        if not wk:
+            return out
+        atc, _ = lookup_wk(wk)
+        if atc:
+            for part in str(atc).replace(",", "|").split("|"):
+                part = part.strip()
+                if part:
+                    out.add(part)
+        return out
+
+    def risk_flags(self, drugs: list) -> tuple[bool, bool]:
+        """신/간기능 저하 위험약 보유 여부.
+
+        `RISK_FLAG_ATC_ENV` 가 켜져 있을 때만 `atc_candidates()` 의 edi→wk 유래 ATC
+        집합을 추가로 본다. 꺼져 있으면 `_detect_risk_flags` 와 **동일한 함수·동일한
+        입력**을 쓰므로 결과가 같다(동등성 테스트로 고정).
+
+        반환값은 Rule Safety Net 의 등급 규칙
+        (`age >= 75 and drug_count >= 5 and (renal or hepatic)` → Red)에 직접 들어가며
+        모델 입력이 아니므로 재학습 없이 효과가 있다. 그만큼 운영 영향이 즉시 나타난다.
+        """
+        provider = self.atc_candidates if _risk_flag_atc_enabled() else None
+        return _risk_flags_from(drugs, provider)
 
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None,
               rule_features_active: bool = False) -> tuple[np.ndarray, dict]:
@@ -1449,10 +1558,18 @@ class HybridPredictor:
         # 기반으로 매칭하므로 반드시 이들보다 먼저 수행해야 한다. 종전에는 해소가
         # Step 3(build) 에서 일어나 EDI 만 실린 요청 — 실 청구 파이프라인의 기본형 —
         # 에서 Top-10 규칙·QT 판정·고위험약 판정이 전량 무발화했다.
-        self._builder.resolve_codes(req.drugs)
+        #
+        # 기본 **비활성**이다. 켜면 적격군 기준 즉각 개입 대상이 28배가 되므로(위
+        # `EDI_NAME_RESOLUTION_ENV` 주석) 활성화는 운영 용량 결정이다. 꺼져 있으면
+        # 해소는 Step 3(build) 에서만 일어나 종전 동작과 같다.
+        if _edi_name_resolution_enabled():
+            self._builder.resolve_codes(req.drugs)
 
         # Step 1: Rule Safety Net
-        rule_level, rule_reasons, ddi_alerts = _run_safety_net(req.drugs, patient_age=req.patient_age, sn_instance=self._safety_net)
+        rule_level, rule_reasons, ddi_alerts = _run_safety_net(
+            req.drugs, patient_age=req.patient_age, sn_instance=self._safety_net,
+            risk_flags=self._builder.risk_flags(req.drugs),
+        )
 
         # Step 2: 중복약물 탐지
         dup_count, dup_reasons = _run_duplicate_detector(req.drugs, dd_instance=self._dup_detector)

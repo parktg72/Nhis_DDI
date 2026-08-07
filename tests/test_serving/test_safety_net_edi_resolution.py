@@ -26,8 +26,14 @@ if str(ROOT) not in sys.path:
 
 from rules.safety_net import SafetyNet
 from scripts.etl.code_standardizer import CodeStandardizer
-from serving.predictor import HybridPredictor, RequestFeatureBuilder
-from serving.schemas import DrugItem, PredictRequest
+from serving.predictor import (
+    EDI_NAME_RESOLUTION_ENV,
+    RISK_FLAG_ATC_ENV,
+    HybridPredictor,
+    RequestFeatureBuilder,
+    _detect_risk_flags,
+)
+from serving.schemas import DrugItem, PredictRequest, RiskLevel
 
 # 테스트 전용 EDI 코드 → 실제 성분명. TOP01(항응고제 + NSAIDs) 구성.
 _EDI_WARFARIN = "900000001"
@@ -62,8 +68,13 @@ def standardizer(tmp_path):
 
 
 @pytest.fixture
-def predictor(standardizer, tmp_path):
-    """ML/계층 미적재 + 실제 SafetyNet(Top-10 규칙만) HybridPredictor."""
+def predictor(standardizer, tmp_path, monkeypatch):
+    """ML/계층 미적재 + 실제 SafetyNet(Top-10 규칙만) HybridPredictor.
+
+    EDI 이름 해소는 기본 비활성이므로 기능을 보는 테스트에서는 켜 준다.
+    기본값 동작은 별도 테스트가 검증한다.
+    """
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
     pred = HybridPredictor.__new__(HybridPredictor)
     pred._start_time = 0.0
     pred._ml = MagicMock()
@@ -221,7 +232,8 @@ def real_standardizer():
 
 
 @pytest.fixture
-def real_predictor(real_standardizer, tmp_path):
+def real_predictor(real_standardizer, tmp_path, monkeypatch):
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
     pred = HybridPredictor.__new__(HybridPredictor)
     pred._start_time = 0.0
     pred._ml = MagicMock()
@@ -264,13 +276,14 @@ def test_real_edi_codes_resolve_via_wk_bridge_and_fire(real_predictor):
     )
 
 
-def test_wk_fallback_does_not_write_joined_atc(real_standardizer):
+def test_wk_fallback_does_not_write_joined_atc(real_standardizer, monkeypatch):
     """wk 폴백은 약물명만 채우고 `atc_code` 는 오염시키지 않아야 한다.
 
     `lookup_wk` 의 ATC 는 복합제에서 `|`·`,` 로 결합된 문자열이고, 소비처
     (`_detect_risk_flags`, `_build_ddi_alerts`)는 `startswith` 로 파싱하므로
     결합 문자열이 들어가면 첫 원소에만 우연히 매칭되는 조용한 오작동이 된다.
     """
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
     builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=real_standardizer)
     drugs = [DrugItem(edi_code=_REAL_EDI_WARFARIN, total_days=30, start_date=date(2024, 7, 1))]
 
@@ -283,7 +296,7 @@ def test_wk_fallback_does_not_write_joined_atc(real_standardizer):
     )
 
 
-def test_active_duplicate_detector_never_lowers_grade_on_edi_only(standardizer, tmp_path):
+def test_active_duplicate_detector_never_lowers_grade_on_edi_only(standardizer, tmp_path, monkeypatch):
     """중복탐지를 실제로 켠 EDI-only 요청에서 등급이 내려가지 않아야 한다.
 
     Step 0 해소로 중복탐지(Step 2)도 처음으로 해소된 ATC 를 받게 되었다. 이 경로는
@@ -291,6 +304,7 @@ def test_active_duplicate_detector_never_lowers_grade_on_edi_only(standardizer, 
     불변식은 단방향 상향(`RiskLevel.max`)이므로, 탐지기를 켜는 것이 등급을 낮추면
     안 된다.
     """
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
     from rules.duplicate_detector import DuplicateDetector
 
     def _build(dup_detector):
@@ -323,13 +337,15 @@ def test_active_duplicate_detector_never_lowers_grade_on_edi_only(standardizer, 
     )
 
 
-def test_missing_lookup_wk_is_logged_not_silent(caplog):
+def test_missing_lookup_wk_is_logged_not_silent(caplog, monkeypatch):
     """`lookup_wk` 없는 표준화기에서 해소를 건너뛸 때 조용히 넘어가면 안 된다.
 
     이 조합은 실 EDI 에 대해 약물명 해소율을 0% 로 되돌리고, 그 상태에서도 API 는
     정상 응답을 낸다. 경보가 사라졌다는 신호가 어디에도 남지 않으면 운영에서
     무경보와 무위험을 구별할 수 없다.
     """
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+
     class _NoLookupWk:
         """역사적 계약만 구현한 표준화기 — `lookup_wk` 없음."""
         def lookup_edi(self, edi):
@@ -375,3 +391,291 @@ def test_real_warfarin_aspirin_pair_fires_top01(real_predictor):
     assert any("TOP01" in r for r in res.risk_reasons), (
         f"와파린+아스피린 병용에서 TOP01 미발화 — risk_reasons={res.risk_reasons}"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 신/간기능 위험 플래그 — 이름 키워드로는 잡히지 않고 ATC 로만 잡히는 약물이 있다.
+# `_RENAL_RISK_KEYWORDS` 는 대표 NSAID 만 담고 있어 aceclofenac·loxoprofen·
+# polmacoxib 같은 실제 처방 NSAID 를 놓친다. ATC 접두 `M01A` 는 이들을 포함한다.
+# 실측: 하루치 고유 EDI 15,017개 중 신기능 위험약이 이름만으로 340건, ATC 까지
+# 보면 548건(+293).
+# ─────────────────────────────────────────────────────────────────────────────
+
+_REAL_EDI_ACECLOFENAC = "052400690"   # wk 100901ATB → Aceclofenac, ATC M01AB16
+# filler 는 신·간기능 신호가 이름·ATC 어느 쪽으로도 없는 약물만 쓴다.
+# (naproxen 같은 키워드 약물을 섞으면 테스트가 엉뚱한 이유로 통과한다)
+_REAL_EDI_FILLER = ["050400040", "051500021", "051500101", "051500121"]
+
+
+def test_risk_flags_detect_nsaid_by_atc_when_name_keyword_misses(real_standardizer, monkeypatch):
+    """플래그를 켜면 이름 키워드에 없는 NSAID 도 ATC 접두로 신기능 위험을 인지한다."""
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=real_standardizer)
+    drugs = [DrugItem(edi_code=_REAL_EDI_ACECLOFENAC, total_days=14,
+                      start_date=date(2024, 7, 1))]
+    builder.resolve_codes(drugs)
+
+    assert drugs[0].drug_name == "Aceclofenac", f"픽스처 전제 붕괴 — {drugs[0].drug_name}"
+    assert not any(k in "aceclofenac" for k in ("ibuprofen", "naproxen", "diclofenac")), (
+        "이 약물이 키워드 목록에 들어왔다면 테스트 전제가 무의미해진다"
+    )
+
+    has_renal, _ = builder.risk_flags(drugs)
+
+    assert has_renal is True, "ATC M01AB16(NSAID)을 신기능 위험으로 인지하지 못했다"
+
+
+def test_elderly_polypharmacy_with_atc_only_nsaid_is_red(real_predictor, monkeypatch):
+    """78세·5종·ATC로만 식별되는 NSAID → SafetyNet 고령+장기기능 Red 조건이 걸려야 한다.
+
+    `_determine_risk_grade` 는 `age >= 75 and drug_count >= 5 and (renal or hepatic)`
+    를 Red 로 판정한다. 플래그가 약물명 키워드로만 계산되면 이 조건이 실 청구
+    NSAID 처방에서 성립하지 않는다.
+    """
+    monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
+    drugs = [DrugItem(edi_code=_REAL_EDI_ACECLOFENAC, total_days=14,
+                      start_date=date(2024, 7, 1))]
+    drugs += [DrugItem(edi_code=e, total_days=30, start_date=date(2024, 7, 1))
+              for e in _REAL_EDI_FILLER]
+
+    res = real_predictor.predict(
+        PredictRequest(patient_id="P-ELDERLY-NSAID", patient_age=78, drugs=drugs)
+    )
+
+    assert res.risk_level == RiskLevel.RED, (
+        f"고령 다제약물 + NSAID 가 Red 로 승격되지 않았다 — {res.risk_level}, "
+        f"reasons={res.risk_reasons}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ATC 집합 경로는 기본 비활성이다. 이 경로를 켜면 고령 다제약물 환자의 즉각 개입
+# 대상이 실측 27.0% → 37.5%(적격군 기준)로 늘어나므로, 운영 승인 없이 전량 켜지
+# 않는다. 플래그가 꺼진 상태에서는 종전 `_detect_risk_flags` 와 결과가 같아야 한다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_atc_candidate_path_is_disabled_by_default(real_predictor, monkeypatch):
+    """플래그 미설정 시 ATC 집합 경로가 꺼져 있어 등급이 상향되지 않는다."""
+    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+    drugs = [DrugItem(edi_code=_REAL_EDI_ACECLOFENAC, total_days=14,
+                      start_date=date(2024, 7, 1))]
+    drugs += [DrugItem(edi_code=e, total_days=30, start_date=date(2024, 7, 1))
+              for e in _REAL_EDI_FILLER]
+
+    res = real_predictor.predict(
+        PredictRequest(patient_id="P-DEFAULT-OFF", patient_age=78, drugs=drugs)
+    )
+
+    assert res.risk_level != RiskLevel.RED, (
+        f"기본값에서 ATC 경로가 켜져 있다 — {res.risk_level}"
+    )
+
+
+def test_risk_flags_matches_legacy_path_when_flag_off(real_standardizer, monkeypatch):
+    """플래그가 꺼지면 주입 경로와 폴백 `_detect_risk_flags` 의 결과가 같아야 한다.
+
+    두 경로가 서로 다른 ATC 의미를 갖는 채로 공존하면, 같은 요청이 호출 방식에
+    따라 다른 신·간 위험 판정을 받는다.
+    """
+    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=real_standardizer)
+
+    for edis in ([_REAL_EDI_ACECLOFENAC], _REAL_EDI_FILLER,
+                 [_REAL_EDI_WARFARIN, _REAL_EDI_ASPIRIN, _REAL_EDI_ACECLOFENAC]):
+        drugs = [DrugItem(edi_code=e, total_days=14, start_date=date(2024, 7, 1))
+                 for e in edis]
+        builder.resolve_codes(drugs)
+        assert builder.risk_flags(drugs) == _detect_risk_flags(drugs), (
+            f"플래그 off 에서 두 경로가 갈렸다 — edis={edis}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP 라우트 경유 — 지금까지의 검증은 전부 `predict()` 수준이었다. `/predict` 와
+# `/predict/batch` 가 같은 경로를 지나는지는 제출자 진술이었을 뿐 증거가 없었다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def http_client(real_standardizer, tmp_path, monkeypatch):
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    """실제 FastAPI 앱에 EDI 해소가 가능한 예측기를 꽂은 TestClient."""
+    from fastapi.testclient import TestClient
+    import serving.predictor as pred_module
+    from serving.main import app
+
+    pred = HybridPredictor.__new__(HybridPredictor)
+    pred._start_time = 0.0
+    pred._ml = MagicMock()
+    pred._ml.loaded = False
+    pred._ml_lock = threading.Lock()
+    pred._hier_lock = threading.RLock()
+    pred._hierarchical = None
+    pred._ddi_matrix = None
+    pred._cyp = None
+    pred._std = real_standardizer
+    pred._builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=real_standardizer)
+    pred._safety_net = SafetyNet(
+        ddi_matrix_path=tmp_path / "absent_ddi.parquet",
+        drug_index_path=tmp_path / "absent_index.parquet",
+    )
+    pred._dup_detector = None
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        pred_module._predictor = pred
+        yield client
+
+
+def _http_body(patient_id: str, edis: list[str]) -> dict:
+    return {
+        "patient_id": patient_id,
+        "patient_age": 72,
+        "drugs": [{"edi_code": e, "total_days": 14, "start_date": "2024-07-01"} for e in edis],
+    }
+
+
+def test_http_predict_route_fires_top10_on_edi_only_payload(http_client):
+    """`POST /predict` 에 EDI 만 담아 보내도 TOP01 이 발화해야 한다."""
+    r = http_client.post("/predict", json=_http_body("P-HTTP", [_REAL_EDI_WARFARIN, _REAL_EDI_ASPIRIN]))
+
+    assert r.status_code == 200, r.text
+    reasons = r.json()["risk_reasons"]
+    assert any("TOP01" in x for x in reasons), f"HTTP 경로에서 TOP01 미발화 — {reasons}"
+
+
+def test_http_batch_route_shares_the_same_resolution_path(http_client):
+    """`POST /predict/batch` 도 같은 해소 경로를 지나야 한다."""
+    body = {"requests": [_http_body("P-B1", [_REAL_EDI_WARFARIN, _REAL_EDI_ASPIRIN])]}
+    r = http_client.post("/predict/batch", json=body)
+
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert len(results) == 1
+    assert any("TOP01" in x for x in results[0]["risk_reasons"]), (
+        f"배치 경로에서 TOP01 미발화 — {results[0]['risk_reasons']}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 두 플래그는 서로 독립이며 **둘 다 기본 비활성**이다. 실측 기준(적격군 150명 표본,
+# 배포 번들 적재, 최종 등급):
+#   둘 다 off  → Red 2명   (main 과 동등)
+#   이름 해소만 on → Red 56명
+#   둘 다 on   → Red 70명
+# 가장 큰 상향이 이름 해소 쪽에 있으므로 그것을 통제하지 않는 플래그는 안전장치가 아니다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def predictor_no_flags(standardizer, tmp_path, monkeypatch):
+    """플래그를 전부 끈 예측기 — 기본 배포 상태."""
+    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+    pred = HybridPredictor.__new__(HybridPredictor)
+    pred._start_time = 0.0
+    pred._ml = MagicMock()
+    pred._ml.loaded = False
+    pred._ml_lock = threading.Lock()
+    pred._hier_lock = threading.RLock()
+    pred._hierarchical = None
+    pred._ddi_matrix = None
+    pred._cyp = None
+    pred._std = standardizer
+    pred._builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=standardizer)
+    pred._safety_net = SafetyNet(
+        ddi_matrix_path=tmp_path / "absent_ddi.parquet",
+        drug_index_path=tmp_path / "absent_index.parquet",
+    )
+    pred._dup_detector = None
+    return pred
+
+
+def test_edi_name_resolution_is_disabled_by_default(predictor_no_flags):
+    """기본값에서는 EDI-only 요청의 규칙이 발화하지 않는다 — main 과 동등한 동작.
+
+    이 상향(적격군 표본 기준 Red 2 → 56)은 운영 용량 결정 대상이므로, 병합만으로
+    켜져서는 안 된다.
+    """
+    res = predictor_no_flags.predict(_edi_only_request())
+
+    assert res.risk_reasons == [], (
+        f"기본값에서 규칙이 발화했다 — risk_reasons={res.risk_reasons}"
+    )
+
+
+def test_named_request_still_works_with_all_flags_off(predictor_no_flags):
+    """대조군 — 요청에 약물명이 실려 있으면 플래그와 무관하게 종전대로 발화한다.
+
+    플래그가 차단하는 것은 EDI→약물명 **해소**이지 규칙 자체가 아니다.
+    """
+    res = predictor_no_flags.predict(_named_request())
+
+    assert any("TOP01" in r for r in res.risk_reasons), (
+        f"약물명이 실린 요청까지 막혔다 — risk_reasons={res.risk_reasons}"
+    )
+
+
+def test_two_flags_are_independent(standardizer, tmp_path, monkeypatch):
+    """ATC 플래그만 켜도 이름 해소가 꺼져 있으면 아무 효과가 없어야 한다.
+
+    두 상향을 독립으로 통제한다는 계약을 고정한다.
+    """
+    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+    monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
+    pred = HybridPredictor.__new__(HybridPredictor)
+    pred._start_time = 0.0
+    pred._ml = MagicMock()
+    pred._ml.loaded = False
+    pred._ml_lock = threading.Lock()
+    pred._hier_lock = threading.RLock()
+    pred._hierarchical = None
+    pred._ddi_matrix = None
+    pred._cyp = None
+    pred._std = standardizer
+    pred._builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=standardizer)
+    pred._safety_net = SafetyNet(
+        ddi_matrix_path=tmp_path / "absent_ddi.parquet",
+        drug_index_path=tmp_path / "absent_index.parquet",
+    )
+    pred._dup_detector = None
+
+    res = pred.predict(_edi_only_request())
+
+    assert res.risk_reasons == [], (
+        f"이름 해소가 꺼졌는데 ATC 플래그만으로 발화했다 — {res.risk_reasons}"
+    )
+
+
+def test_build_legacy_path_features_unchanged_when_flag_off(real_standardizer, monkeypatch):
+    """플래그가 꺼지면 `build()` 의 legacy 경로 위험 피처가 main 과 같아야 한다.
+
+    `build()` 는 `predict()` 와 무관하게 `resolve_codes()` 를 호출한다. wk 폴백이
+    플래그 밖에 있으면, 플래그가 꺼진 배포에서도 legacy(비 rulefeat.v1) 번들의
+    `has_*_risk_drug` 피처가 0 → 비영으로 바뀐다. 이 피처들은 모델 입력이며
+    `has_hepatic_risk_drug` 는 배포 모델 Stage1 importance 2위다.
+
+    실측: 실 EDI 처방 300명 기준 main 은 이름 해소 0/300·위험 피처 전량 0,
+    폴백이 플래그 밖일 때는 이름 299/300 · hepatic 45 / renal 31 / high 7.
+    """
+    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=real_standardizer)
+
+    # 실 EDI — lookup_edi 로는 해소되지 않고 wk 폴백으로만 이름이 나온다
+    req = PredictRequest(
+        patient_id="P-LEGACY",
+        patient_age=70,
+        drugs=[DrugItem(edi_code=e, total_days=30, start_date=date(2024, 7, 1))
+               for e in (_REAL_EDI_WARFARIN, _REAL_EDI_ASPIRIN, _REAL_EDI_ACECLOFENAC)],
+    )
+    _, feat = builder.build(req, feature_names=None, rule_features_active=False)
+
+    assert [d.drug_name for d in req.drugs] == [None, None, None], (
+        f"플래그가 꺼졌는데 build() 가 wk 폴백으로 약물명을 채웠다 — "
+        f"{[d.drug_name for d in req.drugs]}"
+    )
+    assert feat["has_renal_risk_drug"] == 0.0, "legacy 경로 신기능 피처가 바뀌었다"
+    assert feat["has_hepatic_risk_drug"] == 0.0, "legacy 경로 간기능 피처가 바뀌었다"
+    assert feat["has_high_risk_drug"] == 0.0, "legacy 경로 고위험약 피처가 바뀌었다"
