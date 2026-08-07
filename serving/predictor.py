@@ -837,6 +837,8 @@ class RequestFeatureBuilder:
         self._ddi = ddi_matrix
         self._cyp = cyp_extractor
         self._std = code_standardizer
+        # lookup_wk 부재 경고는 요청마다가 아니라 인스턴스당 1회만 낸다(로그 폭주 방지).
+        self._warned_no_lookup_wk = False
 
         # DDI 조회용 인덱스
         self._ddi_index: dict[frozenset, str] = {}
@@ -1029,6 +1031,67 @@ class RequestFeatureBuilder:
             return "Y_TRIPLE", sev
         return None, set()
 
+    def resolve_codes(self, drugs: list) -> None:
+        """
+        EDI 코드 → (ATC, 약물명) 보완. `drugs` 를 제자리에서 채운다.
+
+        요청에 이미 실린 값은 보존하며, 같은 목록에 두 번 호출해도 **결과는** 같다.
+        다만 비용까지 0 은 아니다 — 두 필드가 모두 찬 항목만 상단에서 조기 반환하므로,
+        해소에 실패한 항목은 호출할 때마다 `lookup_edi` → `get_wk` → `lookup_wk` 사슬을
+        다시 탄다(실측: 실 EDI 의 42.7% 가 여기 해당). `predict()` 가 Step 0 에서,
+        `build()` 가 Step 3 에서 각각 호출하므로 그 항목들은 요청당 2회 조회된다.
+
+        `predict()` 는 Step 0 에서 이것을 먼저 호출한다 — Rule Safety Net 과
+        중복약물 탐지가 **약물명 기반 매칭**을 하므로, 해소가 그 뒤에 오면
+        EDI 만 실린 요청에서 Top-10 규칙이 전량 무발화하기 때문이다.
+
+        두 필드는 독립으로 채운다. `atc_code` 가 실려 있다는 이유로 약물명 조회를
+        건너뛰면, ATC 만 보내는 적법한 요청에서 규칙이 영원히 침묵한다.
+
+        `lookup_edi` 는 DrugBank ID 로 키잉된 인덱스를 보므로 실 청구 EDI 코드는
+        해소하지 못한다. 이름이 남아 있으면 edi→wk 브릿지(`lookup_wk`)로 한 번 더
+        시도한다. 이때 **약물명만** 취한다 — `lookup_wk` 의 ATC 는 복합제에서
+        `|`·`,` 로 결합된 문자열이고, 소비처(`_detect_risk_flags`,
+        `_build_ddi_alerts`)가 `startswith` 로 파싱하므로 결합 문자열을 넣으면
+        첫 원소에만 우연히 매칭되는 조용한 오작동이 된다.
+        """
+        if self._std is None:
+            return
+        for d in drugs:
+            if d.atc_code and d.drug_name:
+                continue
+
+            atc, name = self._std.lookup_edi(d.edi_code)
+            if not d.atc_code and atc:
+                d.atc_code = atc
+            if not d.drug_name and name:
+                d.drug_name = name
+
+            if d.drug_name:
+                continue
+            # `lookup_wk` 는 선택적 계약이다. 이 빌더에 주입되는 표준화기는 역사적으로
+            # get_wk/get_efmdc/lookup_edi/drug_master 만 요구받았으므로, 없는 구현을
+            # 강제하지 않고 폴백만 건너뛴다. 다만 침묵하지는 않는다 — 이 조합은 실 EDI
+            # 에 대해 약물명 해소율을 0% 로 되돌리고, 그래도 API 는 정상 응답을 내므로
+            # 로그가 없으면 무경보와 무위험을 구별할 수 없다.
+            lookup_wk = getattr(self._std, "lookup_wk", None)
+            if lookup_wk is None:
+                if not self._warned_no_lookup_wk:
+                    self._warned_no_lookup_wk = True
+                    logger.warning(
+                        "표준화기에 lookup_wk 없음 — edi→wk 약물명 폴백 비활성. "
+                        "실 청구 EDI 는 lookup_edi 로 해소되지 않으므로 이름 기반 "
+                        "Safety Net 규칙(Top-10·QT·고위험약)이 무발화한다. "
+                        "표준화기 구현: %s",
+                        type(self._std).__name__,
+                    )
+                continue
+            wk = self._std.get_wk(d.edi_code)
+            if wk:
+                _, wk_name = lookup_wk(wk)
+                if wk_name:
+                    d.drug_name = wk_name
+
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None,
               rule_features_active: bool = False) -> tuple[np.ndarray, dict]:
         """
@@ -1038,14 +1101,9 @@ class RequestFeatureBuilder:
         ref = req.reference_date or date.today()
         drugs = req.drugs
 
-        # EDI → ATC 코드 보완
-        if self._std is not None:
-            for d in drugs:
-                if not d.atc_code:
-                    atc, name = self._std.lookup_edi(d.edi_code)
-                    d.atc_code = atc
-                    if not d.drug_name and name:
-                        d.drug_name = name
+        # EDI → ATC 코드 보완. `predict()` 경로에서는 Step 0 이 이미 수행했으므로 결과가
+        # 바뀌지 않는다. `build()` 를 단독 호출하는 경로(배치·테스트)를 위해 남겨 둔다.
+        self.resolve_codes(drugs)
 
         atc_codes = [d.atc_code for d in drugs if d.atc_code]
 
@@ -1386,6 +1444,12 @@ class HybridPredictor:
     def predict(self, req: PredictRequest) -> PredictResponse:
         """단일 환자 위험도 예측."""
         ref = req.reference_date or date.today()
+
+        # Step 0: EDI → ATC/약물명 해소. Step 1(SafetyNet)·Step 2(중복탐지)가 약물명
+        # 기반으로 매칭하므로 반드시 이들보다 먼저 수행해야 한다. 종전에는 해소가
+        # Step 3(build) 에서 일어나 EDI 만 실린 요청 — 실 청구 파이프라인의 기본형 —
+        # 에서 Top-10 규칙·QT 판정·고위험약 판정이 전량 무발화했다.
+        self._builder.resolve_codes(req.drugs)
 
         # Step 1: Rule Safety Net
         rule_level, rule_reasons, ddi_alerts = _run_safety_net(req.drugs, patient_age=req.patient_age, sn_instance=self._safety_net)
