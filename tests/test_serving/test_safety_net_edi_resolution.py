@@ -617,10 +617,13 @@ def test_named_request_still_works_with_all_flags_off(predictor_no_flags):
     )
 
 
-def test_two_flags_are_independent(standardizer, tmp_path, monkeypatch):
-    """ATC 플래그만 켜도 이름 해소가 꺼져 있으면 아무 효과가 없어야 한다.
+def test_atc_flag_is_nested_under_name_resolution(standardizer, tmp_path, monkeypatch):
+    """ATC 플래그만 켜도(이름 해소 off) 아무 효과가 없어야 한다.
 
-    두 상향을 독립으로 통제한다는 계약을 고정한다.
+    두 플래그는 독립이 아니라 **중첩**이다 — 이름 해소가 주 플래그이고 ATC 플래그는
+    그 안에서만 동작한다. `atc_candidates()` 는 `resolve_codes()` 와 무관하게 자체적으로
+    `get_wk` → `lookup_wk` 를 타므로, 중첩시키지 않으면 주 플래그가 꺼진 배포에서도
+    신/간기능 Red 상향이 발생한다(실측: 적격군 150명 표본에서 Red 2 → 40).
     """
     monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
     monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
@@ -679,3 +682,26 @@ def test_build_legacy_path_features_unchanged_when_flag_off(real_standardizer, m
     assert feat["has_renal_risk_drug"] == 0.0, "legacy 경로 신기능 피처가 바뀌었다"
     assert feat["has_hepatic_risk_drug"] == 0.0, "legacy 경로 간기능 피처가 바뀌었다"
     assert feat["has_high_risk_drug"] == 0.0, "legacy 경로 고위험약 피처가 바뀌었다"
+
+
+def test_atc_flag_alone_does_not_raise_elderly_grade(real_predictor, monkeypatch):
+    """B-only 상태에서 고령·5종 환자 등급이 오르지 않아야 한다.
+
+    직전 판의 독립성 테스트는 72세·2약제를 썼기 때문에
+    `age >= 75 and drug_count >= 5` 조건 자체를 태우지 못했고, 따라서 독립성을 주장할
+    근거가 되지 못했다. 이 테스트는 그 조건을 실제로 태운다.
+    """
+    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+    monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
+    drugs = [DrugItem(edi_code=_REAL_EDI_ACECLOFENAC, total_days=14,
+                      start_date=date(2024, 7, 1))]
+    drugs += [DrugItem(edi_code=e, total_days=30, start_date=date(2024, 7, 1))
+              for e in _REAL_EDI_FILLER]
+
+    res = real_predictor.predict(
+        PredictRequest(patient_id="P-B-ONLY", patient_age=78, drugs=drugs)
+    )
+
+    assert res.risk_level != RiskLevel.RED, (
+        f"주 플래그가 꺼졌는데 ATC 플래그만으로 Red 가 됐다 — {res.risk_level}"
+    )

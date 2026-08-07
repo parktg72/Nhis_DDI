@@ -1198,7 +1198,13 @@ class RequestFeatureBuilder:
         (`age >= 75 and drug_count >= 5 and (renal or hepatic)` → Red)에 직접 들어가며
         모델 입력이 아니므로 재학습 없이 효과가 있다. 그만큼 운영 영향이 즉시 나타난다.
         """
-        provider = self.atc_candidates if _risk_flag_atc_enabled() else None
+        # 두 플래그는 독립이 아니라 **중첩**이다. `atc_candidates()` 는 `resolve_codes()`
+        # 와 무관하게 자체적으로 `get_wk` → `lookup_wk` 를 타므로, 주 플래그(이름 해소)를
+        # 끈 배포에서 ATC 플래그만 켜면 신/간기능 Red 상향이 그대로 일어난다.
+        # 실측: 적격군 150명 표본에서 Red 2 → 40. 주 플래그가 꺼져 있으면 무조건 종전
+        # 동작(스칼라 `atc_code` 만)을 쓴다.
+        use_candidates = _edi_name_resolution_enabled() and _risk_flag_atc_enabled()
+        provider = self.atc_candidates if use_candidates else None
         return _risk_flags_from(drugs, provider)
 
     def build(self, req: PredictRequest, feature_names=None, scaler=None, selector=None,
