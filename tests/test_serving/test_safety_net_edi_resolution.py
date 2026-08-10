@@ -705,3 +705,33 @@ def test_atc_flag_alone_does_not_raise_elderly_grade(real_predictor, monkeypatch
     assert res.risk_level != RiskLevel.RED, (
         f"주 플래그가 꺼졌는데 ATC 플래그만으로 Red 가 됐다 — {res.risk_level}"
     )
+
+
+def test_atc_only_request_untouched_when_flag_off(standardizer, monkeypatch):
+    """`atc_code` 는 있고 `drug_name` 이 없는 요청도 기본값에서 main 과 같아야 한다.
+
+    main 의 해소 블록은 `if not d.atc_code:` 로 게이팅되어 ATC 가 실려 있으면 조회
+    자체를 건너뛴다. 브랜치가 두 필드를 독립으로 해소하도록 바꾸면서, 주 플래그가
+    꺼진 상태에서도 이 형태의 요청에 약물명이 채워지게 됐다. 그러면 legacy 경로의
+    `has_*_risk_drug` 피처가 main 과 달라진다.
+
+    이 경로는 4,000명 동등성 측정이 `DrugItem(edi_code=...)` 만 만들었기 때문에
+    빠져 있었다.
+    """
+    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=standardizer)
+    drugs = [
+        DrugItem(edi_code=_EDI_WARFARIN, atc_code="Z99ZZ99",
+                 total_days=30, start_date=date(2024, 7, 1)),
+        DrugItem(edi_code=_EDI_IBUPROFEN, atc_code="Y88YY88",
+                 total_days=7, start_date=date(2024, 7, 1)),
+    ]
+
+    builder.resolve_codes(drugs)
+
+    assert [d.drug_name for d in drugs] == [None, None], (
+        f"주 플래그가 꺼졌는데 ATC-only 요청에 약물명이 채워졌다 — "
+        f"{[d.drug_name for d in drugs]}"
+    )
+    assert [d.atc_code for d in drugs] == ["Z99ZZ99", "Y88YY88"], "요청에 실린 ATC 가 덮어써졌다"

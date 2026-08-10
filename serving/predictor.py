@@ -1115,8 +1115,16 @@ class RequestFeatureBuilder:
         """
         if self._std is None:
             return
+        enabled = _edi_name_resolution_enabled()
         for d in drugs:
             if d.atc_code and d.drug_name:
+                continue
+            # 주 플래그가 꺼져 있으면 main 의 게이팅을 그대로 보존한다 — main 의 해소
+            # 블록은 `if not d.atc_code:` 이므로 ATC 가 실린 항목은 조회 자체를 하지
+            # 않았다. 두 필드를 독립 해소하는 것은 플래그가 켜졌을 때의 동작이다.
+            # 이 분기가 없으면 `atc_code` 만 실린 적법한 요청에서 기본값이 main 과
+            # 달라지고, legacy 경로의 `has_*_risk_drug` 피처가 조용히 바뀐다.
+            if not enabled and d.atc_code:
                 continue
 
             atc, name = self._std.lookup_edi(d.edi_code)
@@ -1133,7 +1141,7 @@ class RequestFeatureBuilder:
             # 0 → 비영으로 바뀐다. 그 피처들은 모델 입력이고 `has_hepatic_risk_drug` 는
             # 배포 모델 Stage1 importance 2위다. 폴백을 플래그 안에 두어야 기본값이
             # main 과 같아진다.
-            if not _edi_name_resolution_enabled():
+            if not enabled:
                 continue
             # `lookup_wk` 는 선택적 계약이다. 이 빌더에 주입되는 표준화기는 역사적으로
             # get_wk/get_efmdc/lookup_edi/drug_master 만 요구받았으므로, 없는 구현을
