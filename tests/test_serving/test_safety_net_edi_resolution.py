@@ -810,3 +810,38 @@ def test_b_only_response_is_identical_to_all_flags_off(real_standardizer, tmp_pa
             f"B-only 응답이 기본값과 다르다 (age={age}, drugs={len(edis)})\n"
             f"  기본값: {baseline}\n  B-only: {b_only}"
         )
+
+
+def test_atc_candidate_failure_preserves_name_based_flags(monkeypatch):
+    """ATC 후보 조회가 예외를 던져도 이름으로 잡힌 위험 신호는 살아야 한다.
+
+    `_risk_flags_from()` 이 넓은 `try` 안에서 `codes |= atc_provider(d)` 를 실행하고
+    어떤 예외든 `return False, False` 하면, 이름이나 요청 ATC 로 이미 위험약이
+    확인된 환자까지 플래그가 전멸한다. 고령·다제약물 환자가 Red 대신 낮은 등급으로
+    응답될 수 있는 침묵 실패다.
+    """
+    class _Exploding:
+        """`lookup_wk` 가 터지는 표준화기 — 운영에서 참조DB 손상·네트워크 실패 상황."""
+        def lookup_edi(self, edi):
+            return (None, None)
+
+        def get_wk(self, edi):
+            return "WK-DUMMY"
+
+        def lookup_wk(self, wk):
+            raise RuntimeError("참조DB 조회 실패")
+
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=_Exploding())
+
+    # 이름만으로 신기능 위험이 확정되는 약물 (ibuprofen 은 _RENAL_RISK_KEYWORDS 소속)
+    drugs = [DrugItem(edi_code="900000777", drug_name="Ibuprofen",
+                      total_days=7, start_date=date(2024, 7, 1))]
+
+    has_renal, has_hepatic = builder.risk_flags(drugs)
+
+    assert has_renal is True, (
+        "ATC 후보 조회 예외가 이름 기반 신기능 신호까지 덮었다"
+    )
+    assert has_hepatic is False

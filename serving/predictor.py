@@ -242,7 +242,18 @@ def _risk_flags_from(
             if d.atc_code:
                 codes.add(d.atc_code)
             if atc_provider is not None:
-                codes |= atc_provider(d)
+                # 후보 조회 실패는 **그 약물의 추가 후보만** 버린다. 넓은 try 안에
+                # 두면 예외 하나가 `return False, False` 로 빠져 이름·요청 ATC 로
+                # 이미 확정된 위험 신호까지 전멸시킨다 — 고령·다제약물 환자가 Red
+                # 대신 낮은 등급을 받는 침묵 실패다.
+                try:
+                    codes |= atc_provider(d)
+                except Exception:
+                    logger.warning(
+                        "ATC 후보 조회 실패 — 이 약물의 후보만 건너뛴다. "
+                        "이름·요청 ATC 기반 판정은 유지된다. edi=%s",
+                        d.edi_code, exc_info=True,
+                    )
             if not has_renal and (
                 any(kw in name for kw in _RENAL_RISK_KEYWORDS)
                 or any(c.startswith(renal_prefixes) for c in codes)
