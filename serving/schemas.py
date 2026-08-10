@@ -206,6 +206,16 @@ class HealthResponse(BaseModel):
         None,
         description="계층 분류기(Stage1/Stage2) 로드 여부",
     )
+    # 서빙 동작을 바꾸는 환경 플래그의 **현재 값**. 배포에서 어떤 값이 주입됐는지는
+    # 코드가 강제할 수 없으므로, 실행 중인 인스턴스가 무엇으로 돌고 있는지를 드러낸다.
+    serving_flags: dict[str, bool] = Field(
+        default_factory=dict,
+        description=(
+            "SERVING_ENABLE_EDI_NAME_RESOLUTION / SERVING_RISK_FLAG_ATC_CANDIDATES 의 "
+            "현재 상태. 둘 다 false 가 기본이며, true 는 EDI→약물명 해소가 Rule Safety "
+            "Net 앞으로 당겨져 즉각 개입 대상이 늘어난 상태를 뜻한다."
+        ),
+    )
     # Codex 2026-05-07 #1 — feature schema drift 운영 visibility
     schema_drift: list[str] = Field(
         default_factory=list,

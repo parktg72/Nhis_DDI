@@ -28,6 +28,7 @@ from rules.safety_net import SafetyNet
 from scripts.etl.code_standardizer import CodeStandardizer
 from serving.predictor import (
     EDI_NAME_RESOLUTION_ENV,
+    _run_duplicate_detector,
     RISK_FLAG_ATC_ENV,
     HybridPredictor,
     RequestFeatureBuilder,
@@ -296,15 +297,16 @@ def test_wk_fallback_does_not_write_joined_atc(real_standardizer, monkeypatch):
     )
 
 
-def test_active_duplicate_detector_never_lowers_grade_on_edi_only(standardizer, tmp_path, monkeypatch):
-    """중복탐지를 실제로 켠 EDI-only 요청에서 등급이 내려가지 않아야 한다.
+def test_duplicate_detector_actually_fires_and_never_lowers_grade(standardizer, tmp_path, monkeypatch):
+    """중복탐지가 **실제로 발화하는** 입력에서 등급이 내려가지 않아야 한다.
 
-    Step 0 해소로 중복탐지(Step 2)도 처음으로 해소된 ATC 를 받게 되었다. 이 경로는
-    직전 판까지 테스트가 없었다(픽스처가 `_dup_detector=None`). 이 시스템의 결합
-    불변식은 단방향 상향(`RiskLevel.max`)이므로, 탐지기를 켜는 것이 등급을 낮추면
-    안 된다.
+    직전 판의 테스트는 TOP01 이 발화하는 요청을 썼기 때문에, 탐지기가 아무것도 하지
+    않아도 통과했다(agy·codex-terra 공통 지적). 이번에는 세 가지를 바꿨다.
+
+    1. TOP01 이 걸리지 않는 요청을 쓴다 — 등급 상승 요인이 중복 하나뿐이어야 한다.
+    2. `dup_count > 0` 을 직접 단언한다 — 탐지기가 실제로 일했는지 확인한다.
+    3. 그 상태에서 등급이 baseline 보다 낮아지지 않음을 확인한다.
     """
-    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
     from rules.duplicate_detector import DuplicateDetector
 
     def _build(dup_detector):
@@ -326,16 +328,71 @@ def test_active_duplicate_detector_never_lowers_grade_on_edi_only(standardizer, 
         pred._dup_detector = dup_detector
         return pred
 
-    without = _build(None).predict(_edi_only_request())
-    with_dup = _build(DuplicateDetector()).predict(_edi_only_request())
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    # 동일 ATC 두 건 — TOP01 대상이 아니며 중복만 성립한다.
+    def _req():
+        return PredictRequest(
+            patient_id="P-DUP", patient_age=70,
+            drugs=[
+                DrugItem(edi_code="900000501", atc_code="L01FG01",
+                         drug_name="Bevacizumab alpha", total_days=30,
+                         start_date=date(2024, 7, 1)),
+                DrugItem(edi_code="900000502", atc_code="L01FG01",
+                         drug_name="Bevacizumab beta", total_days=30,
+                         start_date=date(2024, 7, 1)),
+            ],
+        )
+
+    # 탐지기가 실제로 일했는지 먼저 확인 — 이것이 없으면 아래 단언이 무의미하다
+    drugs = _req().drugs
+    dup_count, dup_reasons = _run_duplicate_detector(drugs, dd_instance=DuplicateDetector())
+    assert dup_count > 0, (
+        f"중복탐지기가 발화하지 않아 이 테스트는 아무것도 검증하지 못한다 — "
+        f"count={dup_count}, reasons={dup_reasons}"
+    )
+
+    without = _build(None).predict(_req())
+    with_dup = _build(DuplicateDetector()).predict(_req())
 
     assert with_dup.risk_level.order >= without.risk_level.order, (
         f"중복탐지 활성화가 등급을 낮췄다 — {without.risk_level} → {with_dup.risk_level}"
     )
-    assert any("TOP01" in r for r in with_dup.risk_reasons), (
-        f"중복탐지 활성 상태에서 TOP01 이 사라졌다 — risk_reasons={with_dup.risk_reasons}"
+    assert any("중복" in r for r in with_dup.risk_reasons), (
+        f"중복 사유가 응답에 실리지 않았다 — {with_dup.risk_reasons}"
     )
 
+
+def test_duplicate_detection_is_inert_for_real_edi_only_requests(real_standardizer, monkeypatch):
+    """실 EDI-only 요청에서는 중복탐지가 동작하지 않는다 — 알려진 공백을 고정한다.
+
+    `DuplicateDetector.detect()` 는 **ATC 가 있는 약물만** 엔트리로 만든다. 그런데
+    `resolve_codes()` 의 wk 폴백은 약물명만 채우고 ATC 는 채우지 않으며(복합제에서
+    파이프·콤마 결합 문자열이 되어 `startswith` 소비처를 조용히 오작동시키므로),
+    `lookup_edi` 는 실 EDI 를 하나도 해소하지 못한다.
+
+    따라서 같은 성분으로 해소되는 실 EDI 두 건을 넣어도 탐지 결과는 0이다. 이는
+    플래그를 켜도 달라지지 않는다 — 리뷰에서 제기된 "해소된 복합 ATC 가 탐지기를
+    깨뜨린다"는 위험이 **도달 불가**임을 뜻하기도 한다.
+    """
+    from rules.duplicate_detector import DuplicateDetector
+
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=real_standardizer)
+    # 051500081 / 051500082 는 둘 다 Bevacizumab 으로 해소된다
+    drugs = [DrugItem(edi_code=e, total_days=30, start_date=date(2024, 7, 1))
+             for e in ("051500081", "051500082")]
+    builder.resolve_codes(drugs)
+
+    assert [d.drug_name for d in drugs] == ["Bevacizumab", "Bevacizumab"], (
+        f"픽스처 전제 붕괴 — {[d.drug_name for d in drugs]}"
+    )
+    assert all(d.atc_code is None for d in drugs), "wk 폴백이 ATC 를 채웠다"
+
+    dup_count, _ = _run_duplicate_detector(drugs, dd_instance=DuplicateDetector())
+
+    assert dup_count == 0, (
+        f"공백이 메워졌다면 이 테스트를 갱신하라 — count={dup_count}"
+    )
 
 def test_missing_lookup_wk_is_logged_not_silent(caplog, monkeypatch):
     """`lookup_wk` 없는 표준화기에서 해소를 건너뛸 때 조용히 넘어가면 안 된다.
@@ -845,3 +902,40 @@ def test_atc_candidate_failure_preserves_name_based_flags(monkeypatch):
         "ATC 후보 조회 예외가 이름 기반 신기능 신호까지 덮었다"
     )
     assert has_hepatic is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 플래그 관측성 — codex-terra 가 "기본값 off 가 배포에서 강제되는가"를 병합 조건으로
+# 걸었다. 환경변수 주입 자체는 배포 거버넌스 문제라 코드가 답할 수 없지만, **실행 중인
+# 인스턴스가 어떤 값으로 돌고 있는지**는 코드가 드러낼 수 있다. 그것이 없으면 운영자가
+# 확인할 방법이 없다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_health_exposes_flag_state(http_client, monkeypatch):
+    """`/health` 가 두 플래그의 현재 상태를 드러내야 한다."""
+    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+
+    r = http_client.get("/health")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "serving_flags" in body, f"플래그 상태가 노출되지 않는다 — keys={list(body)}"
+    assert body["serving_flags"] == {
+        EDI_NAME_RESOLUTION_ENV: False,
+        RISK_FLAG_ATC_ENV: False,
+    }, body["serving_flags"]
+
+
+def test_health_reflects_enabled_flags(http_client, monkeypatch):
+    """플래그를 켜면 `/health` 가 그대로 반영해야 한다 — 운영자가 오인하지 않도록."""
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
+
+    body = http_client.get("/health").json()
+
+    assert body["serving_flags"] == {
+        EDI_NAME_RESOLUTION_ENV: True,
+        RISK_FLAG_ATC_ENV: True,
+    }, body["serving_flags"]

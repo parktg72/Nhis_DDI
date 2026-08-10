@@ -212,6 +212,14 @@ def _edi_name_resolution_enabled() -> bool:
     return os.environ.get(EDI_NAME_RESOLUTION_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def serving_flag_state() -> dict[str, bool]:
+    """서빙 동작을 바꾸는 환경 플래그의 현재 값. `/health` 와 기동 로그가 쓴다."""
+    return {
+        EDI_NAME_RESOLUTION_ENV: _edi_name_resolution_enabled(),
+        RISK_FLAG_ATC_ENV: _risk_flag_atc_enabled(),
+    }
+
+
 def _risk_flags_from(
     drugs: list[DrugItem],
     atc_provider=None,
