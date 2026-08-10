@@ -735,3 +735,78 @@ def test_atc_only_request_untouched_when_flag_off(standardizer, monkeypatch):
         f"{[d.drug_name for d in drugs]}"
     )
     assert [d.atc_code for d in drugs] == ["Z99ZZ99", "Y88YY88"], "요청에 실린 ATC 가 덮어써졌다"
+
+
+def _response_fingerprint(res):
+    """등급뿐 아니라 사유·알림·subtype·개입까지 담은 비교용 지문."""
+    return (
+        res.risk_level,
+        res.rule_level,
+        res.yellow_subtype,
+        res.intervention,
+        res.action,
+        tuple(sorted(res.risk_reasons)),
+        tuple(sorted((a.drug_a, a.drug_b, a.severity, a.source) for a in res.ddi_alerts)),
+    )
+
+
+def test_b_only_response_is_identical_to_all_flags_off(real_standardizer, tmp_path, monkeypatch):
+    """B-only 상태의 **응답 전체**가 기본값과 같아야 한다 — 등급만이 아니다.
+
+    직전 판의 B-only 테스트는 `!= Red` 만 확인했으므로 Green→Yellow 상향, 사유·알림
+    변화, 환자별 Red 교체를 검출하지 못했다. 기본값(둘 다 off)이 main 과 동등함은
+    별도로 입증되어 있으므로, B-only 가 기본값과 응답까지 같으면 main 과도 같다.
+
+    코호트에는 `age >= 75 and drug_count >= 5` 조건을 실제로 태우는 요청을 포함한다.
+    """
+    def _build():
+        pred = HybridPredictor.__new__(HybridPredictor)
+        pred._start_time = 0.0
+        pred._ml = MagicMock()
+        pred._ml.loaded = False
+        pred._ml_lock = threading.Lock()
+        pred._hier_lock = threading.RLock()
+        pred._hierarchical = None
+        pred._ddi_matrix = None
+        pred._cyp = None
+        pred._std = real_standardizer
+        pred._builder = RequestFeatureBuilder(ddi_matrix=None,
+                                              code_standardizer=real_standardizer)
+        pred._safety_net = SafetyNet(
+            ddi_matrix_path=tmp_path / "absent_ddi.parquet",
+            drug_index_path=tmp_path / "absent_index.parquet",
+        )
+        pred._dup_detector = None
+        return pred
+
+    cases = [
+        # 고령 + 5종 — 신/간기능 Red 조건을 실제로 태운다
+        (78, [_REAL_EDI_ACECLOFENAC] + _REAL_EDI_FILLER),
+        # 고령 + 5종 + TOP01 쌍
+        (80, [_REAL_EDI_WARFARIN, _REAL_EDI_ASPIRIN] + _REAL_EDI_FILLER[:3]),
+        # 비고령 — 조건 미충족 대조군
+        (60, [_REAL_EDI_ACECLOFENAC] + _REAL_EDI_FILLER),
+        # 고령이나 약제 수 부족 — 조건 미충족 대조군
+        (80, [_REAL_EDI_ACECLOFENAC, _REAL_EDI_FILLER[0]]),
+    ]
+
+    for age, edis in cases:
+        def _run():
+            req = PredictRequest(
+                patient_id="P", patient_age=age,
+                drugs=[DrugItem(edi_code=e, total_days=30, start_date=date(2024, 7, 1))
+                       for e in edis],
+            )
+            return _response_fingerprint(_build().predict(req))
+
+        monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+        monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+        baseline = _run()
+
+        monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")   # 주 플래그는 여전히 off
+        b_only = _run()
+
+        assert b_only == baseline, (
+            f"B-only 응답이 기본값과 다르다 (age={age}, drugs={len(edis)})\n"
+            f"  기본값: {baseline}\n  B-only: {b_only}"
+        )
