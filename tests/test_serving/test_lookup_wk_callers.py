@@ -27,13 +27,25 @@ _SKIP_PARTS = {".worktrees", "__pycache__", "node_modules", ".git"}
 _SKIP_PREFIXES = (".venv", "venv", "packages_win", "hana/py", "python")
 
 
-# 읽을 수 없어 건너뛴 파일. 조용히 넘기면 열거가 불완전해지므로 드러낸다.
+# 읽거나 파싱하지 못해 건너뛴 파일. 조용히 넘기면 열거가 불완전해지므로 드러낸다.
 SKIPPED: list[tuple[str, str]] = []
+PARSE_FAILED: list[tuple[str, str]] = []
+
+
+def _parse(path: Path):
+    """파싱 실패를 **기록하고** None 을 돌려준다 — 조용한 continue 를 없앤다."""
+    rel = str(path.relative_to(ROOT)).replace("\\", "/")
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        PARSE_FAILED.append((rel, f"{type(exc).__name__}: {exc}"[:120]))
+        return None
 
 
 def _source_files() -> list[Path]:
     out = []
     SKIPPED.clear()
+    PARSE_FAILED.clear()
     for p in ROOT.rglob("*.py"):
         rel = p.relative_to(ROOT)
         parts = rel.parts
@@ -66,9 +78,8 @@ def _collect() -> dict[str, set[tuple[str, str]]]:
     """{'call': {(상대경로, 감싸는 함수)}, 'getattr': {...}}"""
     found: dict[str, set[tuple[str, str]]] = {"call": set(), "getattr": set()}
     for path in _source_files():
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:
+        tree = _parse(path)
+        if tree is None:
             continue
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
         for node in ast.walk(tree):
@@ -118,29 +129,70 @@ def test_production_lookup_wk_callers_match_the_known_set():
     )
 
 
-def test_no_dynamic_lookup_wk_resolution():
-    """`getattr` 의 속성명이 리터럴이어야 정적 열거가 성립한다."""
-    dynamic = []
-    for path in _source_files():
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:
-            continue
-        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+def _standardizer_modules() -> list[Path]:
+    """`CodeStandardizer` 를 다루는 프로덕션 모듈 — 동적 접근이 `lookup_wk` 에 닿을 수
+    있는 유일한 범위다. 저장소 전체에는 동적 `getattr` 이 73건 있으나 대부분 무관하므로,
+    임의의 문자열 필터 대신 이 범위로 좁힌다."""
+    out = []
+    for p in _source_files():
+        rel = str(p.relative_to(ROOT)).replace("\\", "/")
         if rel.startswith("tests/"):
             continue
+        txt = p.read_text(encoding="utf-8")
+        if "CodeStandardizer" in txt or "code_standardizer" in txt:
+            out.append(p)
+    return out
+
+
+# 표준화기를 다루는 모듈 안에서 허용된 동적 속성 접근. `lookup_wk` 와 무관함이
+# 확인된 것만 등재한다. 새 항목이 생기면 그것이 표준화기에 닿는지 검토해야 한다.
+_ALLOWED_DYNAMIC = {
+    # MLModel 의 sidecar 로딩 — 대상은 self(MLModel)이며 표준화기가 아니다.
+    ("serving/predictor.py", "load"),
+}
+
+
+def test_dynamic_attribute_access_in_standardizer_modules_is_known():
+    """표준화기를 다루는 모듈의 동적 속성 접근이 알려진 목록과 일치해야 한다.
+
+    정적 열거는 속성명이 리터럴일 때만 성립한다. 이 범위에 새 동적 접근이 생기면
+    `lookup_wk` 소비자를 놓칠 수 있으므로 검토를 강제한다.
+    """
+    found = set()
+    for path in _standardizer_modules():
+        tree = _parse(path)
+        if tree is None:
+            continue
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Name)
-                    and node.func.id == "getattr"
+                    and node.func.id in ("getattr", "setattr", "hasattr")
                     and len(node.args) >= 2
                     and not isinstance(node.args[1], ast.Constant)):
-                src = ast.get_source_segment(path.read_text(encoding="utf-8"), node) or ""
-                if "lookup" in src or "_std" in src:
-                    dynamic.append((rel, node.lineno, src[:80]))
-    assert not dynamic, (
-        f"속성명이 동적으로 계산되는 getattr 가 있어 정적 열거가 불완전하다: {dynamic}"
+                found.add((rel, _enclosing(tree, node)))
+
+    extra = found - _ALLOWED_DYNAMIC
+    assert not extra, (
+        "표준화기 관련 모듈에 새 동적 속성 접근이 생겼다. `lookup_wk` 에 닿을 수 있는지 "
+        f"검토하고 무관하면 목록에 추가하라: {sorted(extra)}"
     )
+
+
+def test_no_indirect_attribute_machinery_in_standardizer_modules():
+    """`attrgetter`·`__getattribute__`·`__getattr__` 로 우회하는 경로가 없어야 한다."""
+    found = []
+    for path in _standardizer_modules():
+        tree = _parse(path)
+        if tree is None:
+            continue
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in ("__getattribute__", "__getattr__"):
+                found.append((rel, node.lineno, node.attr))
+            if isinstance(node, ast.Name) and node.id == "attrgetter":
+                found.append((rel, node.lineno, "attrgetter"))
+    assert not found, f"간접 속성 접근 기계가 있어 정적 열거가 불완전하다: {found}"
 
 
 def test_standardize_guards_the_changed_return_contract():
@@ -168,10 +220,14 @@ def test_scan_coverage_is_not_silently_incomplete():
     현재 저장소에는 권한 문제로 열리지 않는 경로가 있다(`reviews/` 아래 산출물).
     이들이 `lookup_wk` 를 부를 여지가 없다는 근거를 함께 남긴다.
     """
-    _source_files()
-    unreadable = [x for x in SKIPPED]
+    _collect()   # 파싱까지 수행해 PARSE_FAILED 를 채운다
+    unreadable = list(SKIPPED)
     # 스캔에서 빠진 파일은 전부 `reviews/` 하위 산출물이어야 한다 —
     # 소스 트리(serving/, scripts/, rules/, dags/, hana_app/)에는 없어야 한다.
-    leaked = [x for x in unreadable
-              if x[0].split("/")[0] in {"serving", "scripts", "rules", "dags", "hana_app"}]
+    src = {"serving", "scripts", "rules", "dags", "hana_app"}
+    leaked = [x for x in unreadable if x[0].split("/")[0] in src]
     assert not leaked, f"소스 트리에서 읽지 못한 파일이 있어 열거가 불완전하다: {leaked}"
+    # 파싱 실패도 조용히 넘어가면 안 된다 — 그 파일의 호출자를 놓치기 때문이다.
+    assert not PARSE_FAILED, (
+        f"파싱하지 못한 파일이 있어 호출자 열거가 불완전하다: {PARSE_FAILED}"
+    )
