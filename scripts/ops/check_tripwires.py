@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
+from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,8 +40,7 @@ TRIPWIRE_TESTS: tuple[str, ...] = (
     "::test_tripwire_resolve_codes_leaves_atc_empty_for_real_edi",
 )
 
-_PASSED = re.compile(r"(\d+) passed")
-_NOT_PASSED = re.compile(r"\d+ (failed|skipped|error|errors|deselected|xfailed)")
+_TAIL = 4000   # 리포트가 판정하고, stdout 은 사람이 읽을 맥락으로만 붙인다
 
 
 @dataclass(frozen=True)
@@ -90,40 +90,64 @@ def _default_runner(argv: Sequence[str], env: dict[str, str]) -> tuple[int, str]
     return proc.returncode, out + err
 
 
+def judge(code: int, out: str, report: Path, tests: Sequence[str]) -> Result:
+    """**구조화된 결과만** 보고 판정한다. 요약 텍스트는 근거가 아니다.
+
+    13차에서 codex-terra 와 agy 가 함께 짚었다 — 앵커 없는 정규식이 전체 stdout 을
+    훑았으므로, 아무 데나 "2 passed" 가 섞여 있으면 통과로 읽혔다. 종료코드 0 을
+    믿지 않겠다고 만든 물건이 텍스트에는 속고 있었다. 이제 pytest 가 쓴 junit XML 의
+    수치만 본다. stdout 은 사람이 사유를 읽을 맥락으로만 붙인다.
+    """
+    ctx = out.strip()[-_TAIL:]
+
+    if not report.exists():
+        return Result(False, (
+            f"결과 리포트가 없다 (exit={code}). 종료코드는 요청이 끝났다는 뜻일 뿐 "
+            f"트립와이어가 돌았다는 뜻이 아니므로 통과로 치지 않는다.\n{ctx}"
+        ))
+    try:
+        suite = ElementTree.parse(report).getroot().find("testsuite")
+        if suite is None:
+            raise ValueError("testsuite 요소 없음")
+        counts = {k: int(suite.get(k, 0))
+                  for k in ("tests", "failures", "errors", "skipped")}
+    except (ElementTree.ParseError, ValueError, TypeError) as exc:
+        return Result(False, f"결과 리포트를 읽지 못했다 ({exc}). 통과로 치지 않는다.\n{ctx}")
+
+    if counts["failures"] or counts["errors"]:
+        return Result(False, (
+            f"트립와이어가 실패했다 (failures={counts['failures']}, "
+            f"errors={counts['errors']}).\n{ctx}"
+        ))
+    if counts["skipped"]:
+        return Result(False, (
+            f"트립와이어 {counts['skipped']}건이 생략됐다 — skip 은 통과가 아니다. "
+            "실데이터가 없는 환경이라면 그 환경은 '중복탐지 도달 불가'를 검증하지 "
+            f"못한 것이다.\n{ctx}"
+        ))
+    ran = counts["tests"] - counts["skipped"]
+    if ran != len(tests):
+        return Result(False, (
+            f"등록된 트립와이어 {len(tests)}건 중 {ran}건만 돌았다. 나머지가 왜 "
+            f"수집되지 않았는지 확인하라.\n{ctx}"
+        ))
+    if code != 0:
+        return Result(False, f"수치는 정상이나 종료코드가 {code} 다. 통과로 치지 않는다.\n{ctx}")
+
+    return Result(True, f"트립와이어 {ran}건이 STRICT 로 실행되어 통과했다.")
+
+
 def check_tripwires(
     runner: Callable[[Sequence[str], dict[str, str]], tuple[int, str]] = _default_runner,
     tests: Sequence[str] = TRIPWIRE_TESTS,
 ) -> Result:
     """트립와이어를 STRICT 로 돌리고 **실제로 돌았는지**까지 확인한다."""
-    argv = [sys.executable, "-m", "pytest", *tests, "-q", "--no-header", "-p",
-            "no:cacheprovider"]
-    env = build_env()
-    code, out = runner(argv, env)
-
-    if code != 0:
-        return Result(False, f"트립와이어 실행이 실패했다 (exit={code}).\n{out.strip()}")
-
-    if _NOT_PASSED.search(out):
-        return Result(False, (
-            "통과하지 않은 트립와이어가 있다 — skip 은 통과가 아니다. 실데이터가 없는 "
-            f"환경이라면 그 환경은 '중복탐지 도달 불가'를 검증하지 못한 것이다.\n{out.strip()}"
-        ))
-
-    m = _PASSED.search(out)
-    if not m:
-        return Result(False, (
-            "통과 건수를 요약에서 확인하지 못했다. 종료코드 0 은 요청이 성공했다는 "
-            f"뜻일 뿐 트립와이어가 돌았다는 뜻이 아니므로 통과로 치지 않는다.\n{out.strip()}"
-        ))
-
-    passed = int(m.group(1))
-    if passed != len(tests):
-        return Result(False, (
-            f"트립와이어 {len(tests)}건 중 {passed}건만 돌았다. 나머지가 왜 수집되지 "
-            f"않았는지 확인하라.\n{out.strip()}"
-        ))
-
-    return Result(True, f"트립와이어 {passed}건이 STRICT 로 실행되어 통과했다.")
+    with tempfile.TemporaryDirectory() as td:
+        report = Path(td) / "tripwires.xml"
+        argv = [sys.executable, "-m", "pytest", *tests, "-q", "--no-header",
+                "-p", "no:cacheprovider", f"--junit-xml={report}"]
+        code, out = runner(argv, build_env())
+        return judge(code, out, report, tests)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

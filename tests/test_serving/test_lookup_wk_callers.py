@@ -148,37 +148,43 @@ def test_production_lookup_wk_callers_match_the_known_set():
     )
 
 
-def _standardizer_modules() -> list[Path]:
-    """`CodeStandardizer` 를 다루는 프로덕션 모듈 — 동적 접근이 `lookup_wk` 에 닿을 수
-    있는 유일한 범위다. 저장소 전체에는 동적 `getattr` 이 73건 있으나 대부분 무관하므로,
-    임의의 문자열 필터 대신 이 범위로 좁힌다."""
-    out = []
-    for p in _source_files():
-        rel = str(p.relative_to(ROOT)).replace("\\", "/")
-        if rel.startswith("tests/"):
-            continue
-        txt = p.read_text(encoding="utf-8")
-        if "CodeStandardizer" in txt or "code_standardizer" in txt:
-            out.append(p)
-    return out
-
-
-# 표준화기를 다루는 모듈 안에서 허용된 동적 속성 접근. `lookup_wk` 와 무관함이
-# 확인된 것만 등재한다. 새 항목이 생기면 그것이 표준화기에 닿는지 검토해야 한다.
+# 프로덕션 전역에서 허용된 동적 속성 접근 — 15개 (파일, 함수) 쌍.
+#
+# 12차까지 이 검사는 `"CodeStandardizer" in txt` 로 범위를 좁혔다. 그러면 주입받은
+# 객체를 `def f(std): ...` 로만 다루는 파일은 검사되지 않으므로 우회가 남는다
+# (agy 13차 지적). 전역으로 넓히고 현재 존재하는 것을 전부 등재했다.
+#
+# 각 항목은 `lookup_wk` 와 무관함이 확인된 것이다 — SAS/HANA 행 객체의 컬럼 접근,
+# sklearn 파라미터 설정, FastAPI 앱 속성, MLModel sidecar 로딩. 새 항목이 생기면
+# 그것이 표준화기에 닿는지 검토해야 하며, 그 검토를 강제하는 것이 이 목록의 목적이다.
 _ALLOWED_DYNAMIC = {
+    ("hana_app/core/hana_etl.py", "_t30_to_records"),
+    ("hana_app/core/hana_etl.py", "_t60_to_records"),
+    ("hana_app/core/hana_etl.py", "build_t40_index"),
+    ("hana_app/core/hana_etl.py", "fetch_eligibility_ages"),
+    ("hana_app/core/hana_etl.py", "fetch_eligibility_demographics"),
+    ("hana_app/core/ml_runner.py", "stratify_and_sample_patients"),
+    ("hana_app/core/phase3_models.py", "set_params"),
+    ("hana_app/core/sas_reader.py", "_t30_to_records"),
+    ("hana_app/core/sas_reader.py", "_t60_to_records"),
+    ("hana_app/core/sas_reader.py", "fetch_eligibility_ages"),
+    ("hana_app/core/sas_reader.py", "fetch_eligibility_demographics"),
+    ("hana_app/core/sas_reader.py", "fetch_eligibility_for_sampling"),
+    ("scripts/train/pipeline.py", "run_training"),
+    ("serving/main.py", "<module>"),
     # MLModel 의 sidecar 로딩 — 대상은 self(MLModel)이며 표준화기가 아니다.
     ("serving/predictor.py", "load"),
 }
 
 
-def test_dynamic_attribute_access_in_standardizer_modules_is_known():
-    """표준화기를 다루는 모듈의 동적 속성 접근이 알려진 목록과 일치해야 한다.
+def test_dynamic_attribute_access_in_production_is_known():
+    """프로덕션 전역의 동적 속성 접근이 알려진 목록과 일치해야 한다.
 
-    정적 열거는 속성명이 리터럴일 때만 성립한다. 이 범위에 새 동적 접근이 생기면
-    `lookup_wk` 소비자를 놓칠 수 있으므로 검토를 강제한다.
+    정적 열거는 속성명이 리터럴일 때만 성립한다. 새 동적 접근이 생기면 `lookup_wk`
+    소비자를 놓칠 수 있으므로 검토를 강제한다.
     """
     found = set()
-    for path in _standardizer_modules():
+    for path in _production_modules():
         tree = _parse(path)
         if tree is None:
             continue
@@ -193,8 +199,13 @@ def test_dynamic_attribute_access_in_standardizer_modules_is_known():
 
     extra = found - _ALLOWED_DYNAMIC
     assert not extra, (
-        "표준화기 관련 모듈에 새 동적 속성 접근이 생겼다. `lookup_wk` 에 닿을 수 있는지 "
-        f"검토하고 무관하면 목록에 추가하라: {sorted(extra)}"
+        "프로덕션에 새 동적 속성 접근이 생겼다. `lookup_wk` 에 닿을 수 있는지 검토하고 "
+        f"무관하면 목록에 추가하라: {sorted(extra)}"
+    )
+    stale = _ALLOWED_DYNAMIC - found
+    assert not stale, (
+        "허용 목록에 더 이상 존재하지 않는 항목이 있다. 목록이 낡으면 그만큼 검토가 "
+        f"헐거워지므로 제거하라: {sorted(stale)}"
     )
 
 

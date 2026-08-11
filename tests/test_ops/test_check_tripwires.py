@@ -22,7 +22,21 @@ from scripts.ops.check_tripwires import (  # noqa: E402
     build_env,
     check_tripwires,
     emit,
+    judge,
 )
+
+
+def _report(tmp_path, *, tests: int, failures: int = 0, errors: int = 0, skipped: int = 0):
+    """pytest 가 쓰는 junit XML 을 흉내낸 파일을 만든다."""
+    p = tmp_path / "tripwires.xml"
+    p.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<testsuites><testsuite name="pytest" '
+        f'tests="{tests}" failures="{failures}" errors="{errors}" skipped="{skipped}">'
+        "</testsuite></testsuites>\n",
+        encoding="utf-8",
+    )
+    return p
 
 
 def _runner(returncode: int, stdout: str):
@@ -88,47 +102,76 @@ def test_existing_wslenv_entries_are_preserved():
     assert STRICT_ENV in entries, entries
 
 
-def test_passing_run_is_ok():
-    run = _runner(0, f"{len(TRIPWIRE_TESTS)} passed in 3.00s\n")
-    result = check_tripwires(runner=run)
+def test_passing_report_is_ok(tmp_path):
+    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS))
+    result = judge(0, f"{len(TRIPWIRE_TESTS)} passed in 3.00s\n", report, TRIPWIRE_TESTS)
     assert result.ok, result.message
-    assert run.captured["env"][STRICT_ENV] == "1"
-    for t in TRIPWIRE_TESTS:
-        assert t in run.captured["argv"], run.captured["argv"]
 
 
-def test_skipped_run_is_not_ok():
-    """skip 은 통과가 아니다 — 이것이 이 게이트의 존재 이유다."""
-    run = _runner(0, "1 passed, 1 skipped in 3.00s\n")
-    result = check_tripwires(runner=run)
+def test_stdout_cannot_fake_a_pass(tmp_path):
+    """**이 게이트가 존재하는 이유.** 요약 텍스트는 판정 근거가 아니다.
+
+    13차에서 codex-terra 와 agy 가 함께 짚었다 — 앵커 없는 정규식이 전체 stdout 을
+    훑으므로, 아무 데나 "2 passed" 가 있으면 통과로 읽혔다. 종료코드 0 을 믿지
+    않겠다고 만든 물건이 텍스트에는 속고 있었다. 이제 구조화된 결과만 본다.
+    """
+    report = _report(tmp_path, tests=0)
+    stdout = "test output mentioning 2 passed somewhere\nERROR: nothing ran\n"
+    result = judge(0, stdout, report, TRIPWIRE_TESTS)
+    assert not result.ok, "가짜 요약 텍스트에 속았다"
+
+
+def test_skipped_report_is_not_ok(tmp_path):
+    """skip 은 통과가 아니다 — 이것이 STRICT 승격의 존재 이유다."""
+    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS), skipped=1)
+    result = judge(0, "1 passed, 1 skipped\n", report, TRIPWIRE_TESTS)
     assert not result.ok
     assert "skip" in result.message.lower() or "생략" in result.message
 
 
-def test_failing_run_is_not_ok():
-    run = _runner(1, "1 failed, 1 passed in 3.00s\n")
-    result = check_tripwires(runner=run)
+def test_failing_report_is_not_ok(tmp_path):
+    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS), failures=1)
+    result = judge(1, "1 failed, 1 passed\n", report, TRIPWIRE_TESTS)
     assert not result.ok
 
 
-def test_unreadable_summary_fails_closed():
-    """통과 건수를 읽지 못하면 통과로 치지 않는다.
-
-    종료코드 0 은 '요청이 성공했다'는 뜻일 뿐 '트립와이어가 돌았다'는 뜻이 아니다.
-    건수를 확인하지 못한 상태는 모름이며, 모름은 근거가 아니다.
-    """
-    run = _runner(0, "no summary line here\n")
-    result = check_tripwires(runner=run)
+def test_error_report_is_not_ok(tmp_path):
+    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS), errors=1)
+    result = judge(0, "", report, TRIPWIRE_TESTS)
     assert not result.ok
-    assert "확인" in result.message or "요약" in result.message
 
 
-def test_partial_run_is_not_ok():
+def test_missing_report_fails_closed(tmp_path):
+    """리포트가 없으면 통과로 치지 않는다 — 모름은 근거가 아니다."""
+    result = judge(0, "2 passed in 3.00s\n", tmp_path / "absent.xml", TRIPWIRE_TESTS)
+    assert not result.ok
+    assert "리포트" in result.message or "확인" in result.message
+
+
+def test_unparsable_report_fails_closed(tmp_path):
+    p = tmp_path / "broken.xml"
+    p.write_text("not xml at all", encoding="utf-8")
+    result = judge(0, "2 passed\n", p, TRIPWIRE_TESTS)
+    assert not result.ok
+
+
+def test_partial_run_is_not_ok(tmp_path):
     """등록된 트립와이어보다 적게 돌면 통과가 아니다."""
-    run = _runner(0, "1 passed in 3.00s\n")
-    result = check_tripwires(runner=run)
+    report = _report(tmp_path, tests=1)
+    result = judge(0, "1 passed\n", report, TRIPWIRE_TESTS)
     assert not result.ok
     assert str(len(TRIPWIRE_TESTS)) in result.message
+
+
+def test_runner_is_asked_for_a_structured_report(tmp_path):
+    """실행 인자에 junit XML 출력이 반드시 들어가야 한다."""
+    run = _runner(0, "")
+    check_tripwires(runner=run)
+    assert any(a.startswith("--junit-xml=") for a in run.captured["argv"]), \
+        run.captured["argv"]
+    assert run.captured["env"][STRICT_ENV] == "1"
+    for t in TRIPWIRE_TESTS:
+        assert t in run.captured["argv"], run.captured["argv"]
 
 
 def test_registered_tripwires_exist_in_the_suite():

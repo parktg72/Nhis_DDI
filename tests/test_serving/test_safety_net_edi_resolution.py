@@ -419,7 +419,15 @@ def test_duplicate_detection_is_inert_for_real_edi_only_requests(real_standardiz
 
     따라서 같은 성분으로 해소되는 실 EDI 두 건을 넣어도 탐지 결과는 0이다. 이는
     플래그를 켜도 달라지지 않는다 — 리뷰에서 제기된 "해소된 복합 ATC 가 탐지기를
-    깨뜨린다"는 위험이 **도달 불가**임을 뜻하기도 한다.
+    깨뜨린다"는 위험이 **이 경로에서는** 도달 불가임을 뜻한다.
+
+    **범위를 정확히 쓴다** — API 전체에 대한 진술이 아니다. 클라이언트가 `atc_code`
+    를 직접 실으면 탐지기는 발화하며, 바로 위
+    `test_duplicate_detector_actually_fires_and_never_lowers_grade` 가 그것을 보인다.
+    그 경로는 main 에도 있고 이 브랜치가 바꾸지 않는다. 도달 불가인 것은 **EDI 해소가
+    만들어내는 ATC** 이며, 그것이 `_run_duplicate_detector` fail-safe 미추가 판단이
+    걸려 있는 대상이다. codex-terra 13차 지적 — "증거 B 자체가 요청 ATC 를 가진
+    입력에서 탐지기 발화를 보인다".
     """
     from rules.duplicate_detector import DuplicateDetector
 
@@ -989,7 +997,11 @@ def test_health_reflects_enabled_flags(http_client, monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 트립와이어 — "중복탐지 도달 불가"는 코드 구조가 아니라 **데이터 사실**에 기댄다.
+# 트립와이어 — "EDI 해소 경로에서 중복탐지 도달 불가"는 코드 구조가 아니라
+# **데이터 사실**에 기댄다.
+#
+# 이 문장의 범위에 주의한다. API 전체가 아니라 EDI 해소 경로에 한정된다 — 클라이언트가
+# `atc_code` 를 직접 실으면 탐지기는 발화하며 그 경로는 main 과 동일하다.
 #
 # `lookup_edi` 가 실 청구 EDI 를 하나도 해소하지 못하기 때문에 `resolve_codes()` 가
 # `d.atc_code` 를 채우지 않고, 그래서 중복탐지가 엔트리를 만들지 못한다. 참조DB 를
