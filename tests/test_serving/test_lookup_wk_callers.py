@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -74,58 +75,75 @@ def _enclosing(tree: ast.AST, node: ast.AST) -> str:
     return best
 
 
-def _collect() -> dict[str, set[tuple[str, str]]]:
-    """{'call': {(상대경로, 감싸는 함수)}, 'getattr': {...}}"""
-    found: dict[str, set[tuple[str, str]]] = {"call": set(), "getattr": set()}
+def _collect() -> Counter:
+    """{(상대경로, 감싸는 함수): 접점 수}
+
+    **집합이 아니라 개수**다. 이미 알려진 함수 안에 호출을 하나 더 넣어도 집합은
+    변하지 않으므로, 집합 기준 검사는 그 변경을 놓친다(codex-terra 11차 지적).
+    """
+    found: Counter = Counter()
     for path in _source_files():
         tree = _parse(path)
         if tree is None:
             continue
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
         for node in ast.walk(tree):
+            hit = False
             # x.lookup_wk(...)
             if (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
                     and node.func.attr == "lookup_wk"):
-                found["call"].add((rel, _enclosing(tree, node)))
+                hit = True
             # getattr(x, "lookup_wk", ...)
-            if (isinstance(node, ast.Call)
+            elif (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Name)
                     and node.func.id == "getattr"
                     and node.args and len(node.args) >= 2
                     and isinstance(node.args[1], ast.Constant)
                     and node.args[1].value == "lookup_wk"):
-                found["getattr"].add((rel, _enclosing(tree, node)))
+                hit = True
+            if hit:
+                found[(rel, _enclosing(tree, node))] += 1
     return found
 
 
-# 프로덕션 호출자 — 이 목록이 바뀌면 계약 변경의 영향 범위가 달라진 것이다.
+# 프로덕션 접점 — 함수마다 **몇 번** 닿는지까지 고정한다. 이 표가 바뀌면 계약 변경의
+# 영향 범위가 달라진 것이다.
 _EXPECTED_PRODUCTION = {
     # 게이팅 없음(전역). `if atc_fb:` 가드가 반환 계약 변경의 전파를 막는다.
-    ("scripts/etl/code_standardizer.py", "standardize"),
-    # 주 플래그(SERVING_ENABLE_EDI_NAME_RESOLUTION) 안
-    ("serving/predictor.py", "resolve_codes"),
+    ("scripts/etl/code_standardizer.py", "standardize"): 1,
+    # 주 플래그(SERVING_ENABLE_EDI_NAME_RESOLUTION) 안 — getattr 로 한 번 획득한다.
+    # 획득한 지역 이름으로 부르는 `lookup_wk(wk)` 는 정적으로 보이지 않으므로,
+    # 이 getattr 1건이 그 경로 전체의 관문이라는 사실 자체가 계상 대상이다.
+    ("serving/predictor.py", "resolve_codes"): 1,
     # 주 플래그 안에 중첩된 ATC 플래그 경로
-    ("serving/predictor.py", "atc_candidates"),
+    ("serving/predictor.py", "atc_candidates"): 1,
 }
 
 
-def _production_only(items: set[tuple[str, str]]) -> set[tuple[str, str]]:
-    return {x for x in items if not x[0].startswith("tests/")}
+def _production_only(counts: Counter) -> dict[tuple[str, str], int]:
+    return {k: v for k, v in counts.items() if not k[0].startswith("tests/")}
 
 
 def test_production_lookup_wk_callers_match_the_known_set():
-    """프로덕션 호출자가 알려진 셋과 정확히 일치해야 한다."""
-    found = _collect()
-    actual = _production_only(found["call"] | found["getattr"])
+    """프로덕션 접점이 알려진 표와 **개수까지** 일치해야 한다."""
+    actual = _production_only(_collect())
 
-    missing = _EXPECTED_PRODUCTION - actual
-    extra = actual - _EXPECTED_PRODUCTION
-    assert not missing, f"알려진 호출자가 사라졌다 — 목록을 갱신하라: {sorted(missing)}"
+    missing = {k: v for k, v in _EXPECTED_PRODUCTION.items() if k not in actual}
+    extra = {k: v for k, v in actual.items() if k not in _EXPECTED_PRODUCTION}
+    changed = {k: (_EXPECTED_PRODUCTION[k], v) for k, v in actual.items()
+               if k in _EXPECTED_PRODUCTION and _EXPECTED_PRODUCTION[k] != v}
+
+    assert not missing, f"알려진 접점이 사라졌다 — 표를 갱신하라: {sorted(missing)}"
     assert not extra, (
-        "새 `lookup_wk` 호출자가 생겼다. `841b849` 의 반환 계약 변경(ATC 없는 엔트리의 "
-        "약물명을 반환)이 이 경로에도 닿는지 확인하고, 무영향이면 목록에 추가하라: "
-        f"{sorted(extra)}"
+        "새 `lookup_wk` 접점이 생겼다. `841b849` 의 반환 계약 변경(ATC 없는 엔트리의 "
+        "약물명을 반환)이 이 경로에도 닿는지 확인하고, 무영향이면 표에 추가하라: "
+        f"{sorted(extra.items())}"
+    )
+    assert not changed, (
+        "기존 함수 안의 `lookup_wk` 접점 수가 바뀌었다(기대, 실제). 같은 함수라도 "
+        "새 접점은 새 소비 경로이므로 반환 계약 변경의 영향을 다시 봐야 한다: "
+        f"{sorted(changed.items())}"
     )
 
 
@@ -179,19 +197,52 @@ def test_dynamic_attribute_access_in_standardizer_modules_is_known():
     )
 
 
+# 속성 접근을 우회시키는 `operator` 도구들. 이름만 보면 안 되고 별칭을 풀어야 한다.
+_INDIRECT_OPERATOR_FUNCS = ("attrgetter", "methodcaller")
+_INDIRECT_DUNDERS = ("__getattribute__", "__getattr__")
+
+
+def _indirect_aliases(tree: ast.AST) -> set[str]:
+    """이 모듈에서 간접 접근 도구를 가리키게 된 **지역 이름** 전부.
+
+    `from operator import attrgetter as ag` 는 `ag` 를 등록한다. 별칭을 풀지 않으면
+    `ag("lookup_wk")` 가 그냥 통과한다(codex-terra 11차 지적).
+
+    `import operator as op` 형태는 여기서 등록하지 않는다 — 사용 시점이 반드시
+    `op.attrgetter` 라는 **속성 접근**이라 아래 `ast.Attribute` 분기가 이미 잡고,
+    모듈 이름 자체를 금지하면 `operator.add` 같은 무관한 사용까지 오탐이 된다.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "operator":
+            for a in node.names:
+                if a.name in _INDIRECT_OPERATOR_FUNCS:
+                    names.add(a.asname or a.name)
+    return names
+
+
 def test_no_indirect_attribute_machinery_in_standardizer_modules():
-    """`attrgetter`·`__getattribute__`·`__getattr__` 로 우회하는 경로가 없어야 한다."""
+    """`attrgetter`·`methodcaller`·`__getattribute__`·`__getattr__` 우회가 없어야 한다.
+
+    별칭·모듈 경유(`operator.attrgetter`, `import operator as op`,
+    `from operator import attrgetter as ag`)까지 모두 잡는다.
+    """
     found = []
     for path in _standardizer_modules():
         tree = _parse(path)
         if tree is None:
             continue
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        aliases = _indirect_aliases(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr in ("__getattribute__", "__getattr__"):
+            # x.__getattr__ / x.attrgetter / operator.attrgetter / op.attrgetter
+            if isinstance(node, ast.Attribute) and node.attr in (
+                    _INDIRECT_DUNDERS + _INDIRECT_OPERATOR_FUNCS):
                 found.append((rel, node.lineno, node.attr))
-            if isinstance(node, ast.Name) and node.id == "attrgetter":
-                found.append((rel, node.lineno, "attrgetter"))
+            # attrgetter(...) / ag(...) — 임포트로 이 모듈에 묶인 이름
+            elif isinstance(node, ast.Name) and (
+                    node.id in _INDIRECT_OPERATOR_FUNCS or node.id in aliases):
+                found.append((rel, node.lineno, f"{node.id} (operator 별칭)"))
     assert not found, f"간접 속성 접근 기계가 있어 정적 열거가 불완전하다: {found}"
 
 
@@ -240,24 +291,45 @@ def test_skip_accounting_actually_works(tmp_path, monkeypatch):
     비어 있어도 통과한다. 계상이 고장나 있어도(예: 예외 종류가 바뀌어 잡히지 않음)
     "빠뜨린 게 없다"로 읽히므로, 계상 자체를 별도로 검증한다.
     fable-advisor 10차 지적.
+
+    **양쪽 다 `_source_files()`/`_collect()` 를 실제로 통과시킨다.** 이전 판은 읽기
+    실패 절반이 테스트가 직접 `SKIPPED.append` 를 하는 자기충족 형태여서, 계상이
+    고장나도 통과했다(codex-terra·fable-advisor 11차 공통 지적).
     """
-    import ast as _ast
+    mod = sys.modules[__name__]
+    monkeypatch.setattr(mod, "ROOT", tmp_path, raising=False)
 
-    # 파싱 실패 계상 — 문법이 깨진 파일을 만들어 `_parse` 가 기록하는지 본다
-    bad = tmp_path / "broken.py"
-    bad.write_text("def f(:\n    pass\n", encoding="utf-8")
-    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path, raising=False)
-    PARSE_FAILED.clear()
-    tree = _parse(bad)
-    assert tree is None, "문법 오류 파일이 파싱됐다 — 픽스처 전제 붕괴"
-    assert PARSE_FAILED, "파싱 실패가 계상되지 않았다 — 커버리지 검사가 무의미하다"
-    assert "broken.py" in PARSE_FAILED[0][0]
+    (tmp_path / "fine.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "broken.py").write_text("def f(:\n    pass\n", encoding="utf-8")
+    (tmp_path / "denied.py").write_text("y = 2\n", encoding="utf-8")
 
-    # 읽기 실패 계상 — 존재하지 않는 파일로 `read_text` 를 실패시킨다
-    SKIPPED.clear()
-    ghost = tmp_path / "ghost.py"
-    try:
-        ghost.read_text(encoding="utf-8")
-    except OSError as exc:
-        SKIPPED.append(("ghost.py", type(exc).__name__))
-    assert SKIPPED, "읽기 실패 계상 경로가 동작하지 않는다"
+    # 읽기 실패를 실제로 일으킨다. chmod 는 이 저장소가 놓인 파일시스템(NTFS/DrvFs)
+    # 에서 신뢰할 수 없으므로, `read_text` 가 그 파일에 대해서만 PermissionError 를
+    # 내도록 한다 — `_source_files()` 의 except 절이 이를 잡아 계상해야 한다.
+    real_read_text = Path.read_text
+
+    def fake_read_text(self, *args, **kwargs):
+        if self.name == "denied.py":
+            raise PermissionError(13, "permission denied (테스트가 주입한 읽기 실패)")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    scanned = {p.name for p in _source_files()}
+    assert scanned == {"fine.py", "broken.py"}, (
+        f"스캐너가 읽은 파일 집합이 기대와 다르다 — 픽스처 전제 붕괴: {sorted(scanned)}"
+    )
+    assert [n for n, _ in SKIPPED] == ["denied.py"], (
+        f"읽기 실패가 계상되지 않았다 — 커버리지 검사가 무의미하다: {SKIPPED}"
+    )
+    assert SKIPPED[0][1] == "PermissionError", f"예외 종류가 잘못 계상됐다: {SKIPPED}"
+
+    # 파싱 실패 계상 — `_collect()` 가 `_source_files()` → `_parse()` 를 다 태운다.
+    # (`_source_files()` 가 두 목록을 비우므로 순서가 아니라 이 호출이 채운 값을 본다)
+    _collect()
+    assert [n for n, _ in PARSE_FAILED] == ["broken.py"], (
+        f"파싱 실패가 계상되지 않았다 — 커버리지 검사가 무의미하다: {PARSE_FAILED}"
+    )
+    assert [n for n, _ in SKIPPED] == ["denied.py"], (
+        f"`_collect()` 경로에서 읽기 실패 계상이 사라졌다: {SKIPPED}"
+    )

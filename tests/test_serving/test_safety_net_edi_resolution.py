@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 from datetime import date
@@ -224,11 +225,51 @@ _REAL_EDI_NAPROXEN = "053500020"   # wk 199501ATB → Naproxen
 _REAL_EDI_ASPIRIN  = "054801360"   # wk 111001ATE → Aspirin (인덱스 엔트리에 ATC 없음)
 
 
+# 실데이터가 없으면 아래 검사들은 조용히 사라진다. 평소에는 그게 맞지만, 릴리스
+# 게이트에서는 "돌지 않았다"가 "이상 없다"로 읽히면 안 된다 — 특히 트립와이어는
+# 무발화가 곧 안전 판정의 근거이므로, 비활성화가 침묵하면 근거가 사라진다.
+# `SERVING_TRIPWIRE_STRICT=1` 로 돌리면 skip 이 실패로 승격된다.
+# fable-advisor 11차 조건 (1).
+TRIPWIRE_STRICT_ENV = "SERVING_TRIPWIRE_STRICT"
+
+
+def _require_real_data(what: str) -> None:
+    """실데이터 부재 처리 — 기본은 skip, STRICT 에서는 실패."""
+    if os.environ.get(TRIPWIRE_STRICT_ENV) == "1":
+        pytest.fail(
+            f"{what} 없음 — 이 환경은 실데이터 기반 주장을 검증하지 못한다. "
+            f"{TRIPWIRE_STRICT_ENV}=1 은 조용한 비활성화를 금지한다(릴리스 게이트). "
+            "트립와이어가 돌지 않으면 '중복탐지 도달 불가'와 그 위에 선 "
+            "`_run_duplicate_detector` fail-safe 미추가 판단에 근거가 없다."
+        )
+    pytest.skip(f"{what} 없음 — 생략 (릴리스 게이트는 {TRIPWIRE_STRICT_ENV}=1 로 실패 처리)")
+
+
+def test_tripwire_strict_mode_turns_silent_skip_into_failure(monkeypatch):
+    """STRICT 승격 메커니즘 자체가 동작하는지 확인한다.
+
+    `_require_real_data` 가 코드에 **존재하는지**가 아니라 두 환경에서 각각 무엇을
+    던지는지를 실행해서 본다. 이게 없으면 조건 (1) 대응 역시 진술로만 남는다.
+    """
+    monkeypatch.delenv(TRIPWIRE_STRICT_ENV, raising=False)
+    with pytest.raises(pytest.skip.Exception):
+        _require_real_data("실 Raw 데이터")
+
+    monkeypatch.setenv(TRIPWIRE_STRICT_ENV, "1")
+    with pytest.raises(pytest.fail.Exception):
+        _require_real_data("실 Raw 데이터")
+
+    # 값이 "1" 이 아니면 승격되지 않는다 — 게이트를 켠 줄 알았는데 안 켜지는 일 방지
+    monkeypatch.setenv(TRIPWIRE_STRICT_ENV, "true")
+    with pytest.raises(pytest.skip.Exception):
+        _require_real_data("실 Raw 데이터")
+
+
 @pytest.fixture(scope="module")
 def real_standardizer():
     """저장소의 실제 참조DB를 쓰는 CodeStandardizer (모듈 스코프 — 적재 비용이 크다)."""
     if not Path(ROOT / "data/processed/edi_to_wk.parquet").exists():
-        pytest.skip("실 참조DB 없음 — 운영 경로 테스트 생략")
+        _require_real_data("실 참조DB")
     return CodeStandardizer()
 
 
@@ -971,7 +1012,7 @@ def test_tripwire_lookup_edi_still_resolves_no_real_edi(real_standardizer):
 
     files = sorted(glob.glob(str(ROOT / "data/Raw/records_*.parquet")))
     if not files:
-        pytest.skip("실 Raw 데이터 없음 — 트립와이어 검사 생략")
+        _require_real_data("실 Raw 데이터")
 
     edis = sorted(set(
         pq.read_table(files[0], columns=["edi_code"]).column("edi_code").to_pylist()
