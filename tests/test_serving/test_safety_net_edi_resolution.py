@@ -225,11 +225,16 @@ _REAL_EDI_NAPROXEN = "053500020"   # wk 199501ATB → Naproxen
 _REAL_EDI_ASPIRIN  = "054801360"   # wk 111001ATE → Aspirin (인덱스 엔트리에 ATC 없음)
 
 
-# 실데이터가 없으면 아래 검사들은 조용히 사라진다. 평소에는 그게 맞지만, 릴리스
-# 게이트에서는 "돌지 않았다"가 "이상 없다"로 읽히면 안 된다 — 특히 트립와이어는
-# 무발화가 곧 안전 판정의 근거이므로, 비활성화가 침묵하면 근거가 사라진다.
+# 실데이터가 없으면 아래 검사들은 조용히 사라진다. 평소에는 그게 맞지만, 트립와이어는
+# 무발화가 곧 안전 판정의 근거이므로 비활성화가 침묵하면 근거가 사라진다.
 # `SERVING_TRIPWIRE_STRICT=1` 로 돌리면 skip 이 실패로 승격된다.
 # fable-advisor 11차 조건 (1).
+#
+# 이 값을 켜는 주체는 `scripts/ops/check_tripwires.py` 다. 12차에서 fable 과
+# codex-terra 가 함께 지적한 대로, "릴리스 게이트가 STRICT 로 돈다"는 것이 진술로만
+# 남아 있으면 이 승격은 아무것도 강제하지 않는다. 이 저장소에는 CI 가 없으므로
+# 게이트는 호출 가능한 스크립트로 존재하며, 그 스크립트 자체는
+# `tests/test_ops/test_check_tripwires.py` 가 검사한다.
 TRIPWIRE_STRICT_ENV = "SERVING_TRIPWIRE_STRICT"
 
 
@@ -238,11 +243,12 @@ def _require_real_data(what: str) -> None:
     if os.environ.get(TRIPWIRE_STRICT_ENV) == "1":
         pytest.fail(
             f"{what} 없음 — 이 환경은 실데이터 기반 주장을 검증하지 못한다. "
-            f"{TRIPWIRE_STRICT_ENV}=1 은 조용한 비활성화를 금지한다(릴리스 게이트). "
+            f"{TRIPWIRE_STRICT_ENV}=1 은 조용한 비활성화를 금지한다 "
+            "(`python -m scripts.ops.check_tripwires` 가 이 값을 켠다). "
             "트립와이어가 돌지 않으면 '중복탐지 도달 불가'와 그 위에 선 "
             "`_run_duplicate_detector` fail-safe 미추가 판단에 근거가 없다."
         )
-    pytest.skip(f"{what} 없음 — 생략 (릴리스 게이트는 {TRIPWIRE_STRICT_ENV}=1 로 실패 처리)")
+    pytest.skip(f"{what} 없음 — 생략 (`scripts.ops.check_tripwires` 는 이를 실패로 만든다)")
 
 
 def test_tripwire_strict_mode_turns_silent_skip_into_failure(monkeypatch):
@@ -997,6 +1003,43 @@ def test_health_reflects_enabled_flags(http_client, monkeypatch):
 # 검사를 둔다. fable-advisor 10차 지적 — "영구 결정이 아니라 트립와이어가 걸릴
 # 때까지의 조건부 결정으로 기록되어야 한다".
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+# main(8a1157c) 의 기본값 `/health` 응답 키. 워크트리에서 실측해 옮겼다.
+# 이 브랜치는 여기에 `serving_flags` **하나만** 더한다 — 그 외 키가 늘거나 줄면
+# 기본값 응답 계약이 이 브랜치 때문에 달라진 것이므로 아래 검사가 실패한다.
+_MAIN_HEALTH_KEYS = {
+    "degraded_reasons", "dl_bundle_run_id", "dl_loaded", "dl_lookback_days",
+    "dl_schema_version", "feature_schema_lenient", "feature_schema_lenient_allowed",
+    "feature_schema_lenient_sunset_date", "hierarchical_loaded", "model_loaded",
+    "model_mode", "rule_loaded", "schema_drift", "status", "uptime_sec", "version",
+}
+
+
+def test_default_health_adds_exactly_one_key_over_main(http_client, monkeypatch):
+    """기본값 `/health` 는 main 대비 `serving_flags` 한 개만 늘어야 한다.
+
+    세 층 동등성(build·predict·ETL)은 `/health` 를 덮지 않는다. 이 브랜치는 플래그가
+    꺼져 있어도 응답 스키마를 바꾸므로(가법적), 그 변경의 크기를 정확히 고정한다.
+    codex-terra 12차 지적 — "기본값 동등성의 범위가 /health 변경을 제외한 채 주장됐다".
+    """
+    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+
+    body = http_client.get("/health").json()
+    keys = set(body)
+
+    assert keys - _MAIN_HEALTH_KEYS == {"serving_flags"}, (
+        f"기본값 /health 에 예상 밖의 키 변화가 있다: 추가 {sorted(keys - _MAIN_HEALTH_KEYS)}"
+    )
+    assert not _MAIN_HEALTH_KEYS - keys, (
+        f"main 에 있던 /health 키가 사라졌다 — 기본값 응답 계약이 깨졌다: "
+        f"{sorted(_MAIN_HEALTH_KEYS - keys)}"
+    )
+    assert body["serving_flags"] == {
+        EDI_NAME_RESOLUTION_ENV: False,
+        RISK_FLAG_ATC_ENV: False,
+    }, body["serving_flags"]
 
 
 def test_tripwire_lookup_edi_still_resolves_no_real_edi(real_standardizer):

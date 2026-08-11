@@ -89,12 +89,13 @@ def _collect() -> Counter:
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
         for node in ast.walk(tree):
             hit = False
-            # x.lookup_wk(...)
-            if (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "lookup_wk"):
+            # x.lookup_wk — **호출 여부를 묻지 않는다.** 즉시 호출(`x.lookup_wk(wk)`)
+            # 이든 획득 후 나중 호출(`g = x.lookup_wk` … `g(wk)`)이든 속성 접근이
+            # 일어난 그 지점이 계약의 소비 지점이다. `ast.Call` 로 한정하면 후자를
+            # 통째로 놓친다(agy·codex-terra 12차 지적).
+            if isinstance(node, ast.Attribute) and node.attr == "lookup_wk":
                 hit = True
-            # getattr(x, "lookup_wk", ...)
+            # getattr(x, "lookup_wk", ...) — 속성 노드를 만들지 않으므로 따로 센다
             elif (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Name)
                     and node.func.id == "getattr"
@@ -221,14 +222,27 @@ def _indirect_aliases(tree: ast.AST) -> set[str]:
     return names
 
 
-def test_no_indirect_attribute_machinery_in_standardizer_modules():
+def _production_modules() -> list[Path]:
+    """프로덕션 소스 전체(157개). 간접 접근 기계 검사는 여기까지 넓힌다.
+
+    `_standardizer_modules()` 로 좁히면 표준화기를 이름으로 언급하지 않는 파일 —
+    예컨대 주입받은 객체를 `def f(std): ...` 로만 다루는 파일 — 에서의 우회를 놓친다
+    (agy 12차 지적). 전역 확대 비용은 실측했다: 이 검사가 잡는 구문은 프로덕션
+    전체에서 **0건**이므로 허용 목록조차 필요 없다. 동적 `getattr` 검사와 달리
+    여기서는 좁힐 이유가 없었다.
+    """
+    return [p for p in _source_files()
+            if not str(p.relative_to(ROOT)).replace("\\", "/").startswith("tests/")]
+
+
+def test_no_indirect_attribute_machinery_in_production():
     """`attrgetter`·`methodcaller`·`__getattribute__`·`__getattr__` 우회가 없어야 한다.
 
     별칭·모듈 경유(`operator.attrgetter`, `import operator as op`,
     `from operator import attrgetter as ag`)까지 모두 잡는다.
     """
     found = []
-    for path in _standardizer_modules():
+    for path in _production_modules():
         tree = _parse(path)
         if tree is None:
             continue
