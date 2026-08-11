@@ -231,3 +231,33 @@ def test_scan_coverage_is_not_silently_incomplete():
     assert not PARSE_FAILED, (
         f"파싱하지 못한 파일이 있어 호출자 열거가 불완전하다: {PARSE_FAILED}"
     )
+
+
+def test_skip_accounting_actually_works(tmp_path, monkeypatch):
+    """스킵 계상 메커니즘 자체가 동작하는지 확인한다.
+
+    `test_scan_coverage_is_not_silently_incomplete` 는 `SKIPPED`/`PARSE_FAILED` 가
+    비어 있어도 통과한다. 계상이 고장나 있어도(예: 예외 종류가 바뀌어 잡히지 않음)
+    "빠뜨린 게 없다"로 읽히므로, 계상 자체를 별도로 검증한다.
+    fable-advisor 10차 지적.
+    """
+    import ast as _ast
+
+    # 파싱 실패 계상 — 문법이 깨진 파일을 만들어 `_parse` 가 기록하는지 본다
+    bad = tmp_path / "broken.py"
+    bad.write_text("def f(:\n    pass\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path, raising=False)
+    PARSE_FAILED.clear()
+    tree = _parse(bad)
+    assert tree is None, "문법 오류 파일이 파싱됐다 — 픽스처 전제 붕괴"
+    assert PARSE_FAILED, "파싱 실패가 계상되지 않았다 — 커버리지 검사가 무의미하다"
+    assert "broken.py" in PARSE_FAILED[0][0]
+
+    # 읽기 실패 계상 — 존재하지 않는 파일로 `read_text` 를 실패시킨다
+    SKIPPED.clear()
+    ghost = tmp_path / "ghost.py"
+    try:
+        ghost.read_text(encoding="utf-8")
+    except OSError as exc:
+        SKIPPED.append(("ghost.py", type(exc).__name__))
+    assert SKIPPED, "읽기 실패 계상 경로가 동작하지 않는다"

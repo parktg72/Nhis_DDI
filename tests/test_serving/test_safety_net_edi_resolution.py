@@ -939,3 +939,68 @@ def test_health_reflects_enabled_flags(http_client, monkeypatch):
         EDI_NAME_RESOLUTION_ENV: True,
         RISK_FLAG_ATC_ENV: True,
     }, body["serving_flags"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 트립와이어 — "중복탐지 도달 불가"는 코드 구조가 아니라 **데이터 사실**에 기댄다.
+#
+# `lookup_edi` 가 실 청구 EDI 를 하나도 해소하지 못하기 때문에 `resolve_codes()` 가
+# `d.atc_code` 를 채우지 않고, 그래서 중복탐지가 엔트리를 만들지 못한다. 참조DB 를
+# 백필하면(예: `config/edi_atc_extra.csv` 신설, D-코드 이름 회수) 이 전제가 무너지고
+# 다음 두 판단이 **동시에** 무효가 된다.
+#
+#   ① "중복탐지 관련 위험은 도달 불가"
+#   ② 그 위에 선 `_run_duplicate_detector` fail-safe 미추가 결정
+#
+# 아무도 알아채지 못한 채 무효화되는 것을 막기 위해, 전제가 깨지는 순간 실패하는
+# 검사를 둔다. fable-advisor 10차 지적 — "영구 결정이 아니라 트립와이어가 걸릴
+# 때까지의 조건부 결정으로 기록되어야 한다".
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_tripwire_lookup_edi_still_resolves_no_real_edi(real_standardizer):
+    """실 EDI 표본에서 `lookup_edi` 해소가 0건이어야 한다 — 아니면 전제가 바뀐 것이다.
+
+    이 테스트가 실패하면 참조DB 가 백필된 것이고, 다음을 재검토해야 한다.
+      - 중복탐지가 이제 ATC 를 받는가 → `_run_duplicate_detector` fail-safe 필요성
+      - `resolve_codes()` 가 기본값에서 `atc_code` 를 채우기 시작하는가 → 기본값
+        동등성 재측정(세 층 sha256)
+    """
+    import glob
+    import pyarrow.parquet as pq
+
+    files = sorted(glob.glob(str(ROOT / "data/Raw/records_*.parquet")))
+    if not files:
+        pytest.skip("실 Raw 데이터 없음 — 트립와이어 검사 생략")
+
+    edis = sorted(set(
+        pq.read_table(files[0], columns=["edi_code"]).column("edi_code").to_pylist()
+    ))
+    resolved = [e for e in edis if any(real_standardizer.lookup_edi(e))]
+
+    assert not resolved, (
+        f"`lookup_edi` 가 실 EDI 를 해소하기 시작했다 ({len(resolved)}/{len(edis)}건). "
+        f"'중복탐지 도달 불가'와 fail-safe 미추가 판단의 전제가 무너졌다. "
+        f"표본: {resolved[:5]}"
+    )
+
+
+def test_tripwire_resolve_codes_leaves_atc_empty_for_real_edi(real_standardizer, monkeypatch):
+    """플래그를 켜도 실 EDI 요청의 `atc_code` 가 비어 있어야 한다.
+
+    위 트립와이어의 서빙 쪽 짝이다. `atc_code` 가 채워지기 시작하면 중복탐지가
+    엔트리를 만들고, 복합제의 결합 ATC 문자열이 탐지기에 도달하게 된다.
+    """
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=real_standardizer)
+    drugs = [DrugItem(edi_code=e, total_days=30, start_date=date(2024, 7, 1))
+             for e in (_REAL_EDI_WARFARIN, _REAL_EDI_ASPIRIN, _REAL_EDI_ACECLOFENAC,
+                       "051500081", "051500082")]
+
+    builder.resolve_codes(drugs)
+
+    filled = [(d.edi_code, d.atc_code) for d in drugs if d.atc_code]
+    assert not filled, (
+        f"실 EDI 요청에 `atc_code` 가 채워졌다 — 중복탐지 도달 가능성이 생겼다: {filled}"
+    )
