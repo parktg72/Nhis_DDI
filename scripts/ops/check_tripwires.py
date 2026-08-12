@@ -83,11 +83,25 @@ def emit(message: str, stream=None) -> None:
     print(safe, file=out)
 
 
+TIMEOUT_S = 900   # 트립와이어는 참조DB 적재가 있어 느리지만, 무한 대기는 실패다
+
+
 def _default_runner(argv: Sequence[str], env: dict[str, str]) -> tuple[int, str]:
-    proc = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True)
+    proc = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True,
+                          timeout=TIMEOUT_S)
     out = proc.stdout.decode("utf-8", errors="replace")
     err = proc.stderr.decode("utf-8", errors="replace")
     return proc.returncode, out + err
+
+
+def _identity(nodeid: str) -> tuple[str, str]:
+    """nodeid → junit 의 (classname, name).
+
+    pytest 는 `tests/a/b.py::test_x` 를 classname `tests.a.b`, name `test_x` 로 쓴다.
+    """
+    path, _, name = nodeid.partition("::")
+    classname = path[:-3] if path.endswith(".py") else path
+    return classname.replace("/", ".").replace("\\", "."), name
 
 
 def judge(code: int, out: str, report: Path, tests: Sequence[str]) -> Result:
@@ -106,11 +120,15 @@ def judge(code: int, out: str, report: Path, tests: Sequence[str]) -> Result:
             f"트립와이어가 돌았다는 뜻이 아니므로 통과로 치지 않는다.\n{ctx}"
         ))
     try:
-        suite = ElementTree.parse(report).getroot().find("testsuite")
-        if suite is None:
+        root = ElementTree.parse(report).getroot()
+        suites = list(root.iter("testsuite"))
+        if not suites:
             raise ValueError("testsuite 요소 없음")
-        counts = {k: int(suite.get(k, 0))
+        # **모든** suite 를 합산한다 — 첫 suite 만 보면 나머지의 실패를 놓친다
+        counts = {k: sum(int(s.get(k, 0)) for s in suites)
                   for k in ("tests", "failures", "errors", "skipped")}
+        seen = {(c.get("classname", ""), c.get("name", ""))
+                for c in root.iter("testcase")}
     except (ElementTree.ParseError, ValueError, TypeError) as exc:
         return Result(False, f"결과 리포트를 읽지 못했다 ({exc}). 통과로 치지 않는다.\n{ctx}")
 
@@ -131,6 +149,16 @@ def judge(code: int, out: str, report: Path, tests: Sequence[str]) -> Result:
             f"등록된 트립와이어 {len(tests)}건 중 {ran}건만 돌았다. 나머지가 왜 "
             f"수집되지 않았는지 확인하라.\n{ctx}"
         ))
+
+    # 수치가 맞아도 **다른 테스트**가 돌았을 수 있다. 신원까지 대조하지 않으면
+    # 게이트는 "어떤 2건이든 통과했다"만 말하고 트립와이어에 대해서는 아무것도
+    # 말하지 않는다(codex-terra·fable-advisor 14차 지적).
+    expected = {_identity(t) for t in tests}
+    if seen != expected:
+        return Result(False, (
+            "돌아간 테스트의 신원이 등록된 트립와이어와 일치하지 않는다.\n"
+            f"  기대: {sorted(expected)}\n  실제: {sorted(seen)}\n{ctx}"
+        ))
     if code != 0:
         return Result(False, f"수치는 정상이나 종료코드가 {code} 다. 통과로 치지 않는다.\n{ctx}")
 
@@ -146,7 +174,13 @@ def check_tripwires(
         report = Path(td) / "tripwires.xml"
         argv = [sys.executable, "-m", "pytest", *tests, "-q", "--no-header",
                 "-p", "no:cacheprovider", f"--junit-xml={report}"]
-        code, out = runner(argv, build_env())
+        try:
+            code, out = runner(argv, build_env())
+        except subprocess.TimeoutExpired as exc:
+            return Result(False, (
+                f"트립와이어 실행이 제한 시간({exc.timeout}초)을 넘겼다. 무한 대기는 "
+                "게이트에서 통과보다 나쁘다 — 아무도 결과를 못 받는다."
+            ))
         return judge(code, out, report, tests)
 
 

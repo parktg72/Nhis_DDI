@@ -1014,6 +1014,14 @@ def test_health_reflects_enabled_flags(http_client, monkeypatch):
 # 아무도 알아채지 못한 채 무효화되는 것을 막기 위해, 전제가 깨지는 순간 실패하는
 # 검사를 둔다. fable-advisor 10차 지적 — "영구 결정이 아니라 트립와이어가 걸릴
 # 때까지의 조건부 결정으로 기록되어야 한다".
+#
+# **표본 범위** — 이 두 검사는 전수 조사가 아니다. 하나는 `data/Raw/` 의 **첫**
+# parquet 한 파일의 EDI 를, 다른 하나는 고정된 실 EDI **5건**을 본다. 따라서 이들이
+# 성립시키는 것은 "이 데이터 스냅샷과 이 참조DB 버전에서 전제가 유지된다"이지
+# "모든 배포 데이터에서 유지된다"가 아니다(codex-terra 14차 지적). 전체 EDI 모집단
+# 확대는 후속 과제 F-2a 에 묶여 있으며, 그때까지 이 한정이 주장 4 의 실제 범위다.
+# 실패 메시지는 무엇을 보고 판단했는지를 함께 출력한다 — 범위를 모른 채 초록을
+# 읽는 일이 없도록.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1074,10 +1082,12 @@ def test_tripwire_lookup_edi_still_resolves_no_real_edi(real_standardizer):
     ))
     resolved = [e for e in edis if any(real_standardizer.lookup_edi(e))]
 
+    # 무엇을 보고 판단했는지 남긴다 — 이 검사가 덮는 범위는 첫 파일 하나다.
+    scope = f"{Path(files[0]).name} / EDI {len(edis)}종 (전체 Raw 파일 {len(files)}개 중 1개)"
     assert not resolved, (
         f"`lookup_edi` 가 실 EDI 를 해소하기 시작했다 ({len(resolved)}/{len(edis)}건). "
-        f"'중복탐지 도달 불가'와 fail-safe 미추가 판단의 전제가 무너졌다. "
-        f"표본: {resolved[:5]}"
+        f"'EDI 해소 경로에서 중복탐지 도달 불가'와 fail-safe 미추가 판단의 전제가 "
+        f"무너졌다. 검사 범위: {scope}. 표본: {resolved[:5]}"
     )
 
 
@@ -1098,5 +1108,6 @@ def test_tripwire_resolve_codes_leaves_atc_empty_for_real_edi(real_standardizer,
 
     filled = [(d.edi_code, d.atc_code) for d in drugs if d.atc_code]
     assert not filled, (
-        f"실 EDI 요청에 `atc_code` 가 채워졌다 — 중복탐지 도달 가능성이 생겼다: {filled}"
+        f"실 EDI 요청에 `atc_code` 가 채워졌다 — 중복탐지 도달 가능성이 생겼다. "
+        f"검사 범위: 고정 EDI {len(drugs)}건(전수 아님): {filled}"
     )

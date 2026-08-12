@@ -26,16 +26,39 @@ from scripts.ops.check_tripwires import (  # noqa: E402
 )
 
 
-def _report(tmp_path, *, tests: int, failures: int = 0, errors: int = 0, skipped: int = 0):
-    """pytest 가 쓰는 junit XML 을 흉내낸 파일을 만든다."""
+def _cases(nodeids):
+    """nodeid 목록을 pytest 가 쓰는 testcase 요소로 바꾼다."""
+    out = []
+    for nodeid in nodeids:
+        path, _, name = nodeid.partition("::")
+        classname = path[:-3].replace("/", ".") if path.endswith(".py") else path
+        out.append(f'<testcase classname="{classname}" name="{name}" time="0.1" />')
+    return "".join(out)
+
+
+def _report(tmp_path, *, nodeids=None, tests=None, failures=0, errors=0, skipped=0,
+            suites=1):
+    """pytest 가 쓰는 junit XML 을 흉내낸 파일을 만든다.
+
+    `nodeids` 를 주면 그 신원의 testcase 요소를 쓴다. 수치만 있고 요소가 없는
+    리포트도 만들 수 있어야 하므로 `tests` 는 따로 받는다.
+    """
+    cases = _cases(nodeids or [])
+    n = len(nodeids) if nodeids is not None and tests is None else (tests or 0)
     p = tmp_path / "tripwires.xml"
-    p.write_text(
-        '<?xml version="1.0" encoding="utf-8"?>\n'
-        '<testsuites><testsuite name="pytest" '
-        f'tests="{tests}" failures="{failures}" errors="{errors}" skipped="{skipped}">'
-        "</testsuite></testsuites>\n",
-        encoding="utf-8",
-    )
+    if suites == 1:
+        body = (f'<testsuite name="pytest" tests="{n}" failures="{failures}" '
+                f'errors="{errors}" skipped="{skipped}">{cases}</testsuite>')
+    else:
+        # 다중 suite — 판정이 첫 suite 만 보고 끝내면 안 된다
+        half = _cases((nodeids or [])[:1])
+        rest = _cases((nodeids or [])[1:])
+        body = (f'<testsuite name="a" tests="1" failures="0" errors="0" skipped="0">'
+                f'{half}</testsuite>'
+                f'<testsuite name="b" tests="{n - 1}" failures="{failures}" '
+                f'errors="{errors}" skipped="{skipped}">{rest}</testsuite>')
+    p.write_text(f'<?xml version="1.0" encoding="utf-8"?>\n<testsuites>{body}</testsuites>\n',
+                 encoding="utf-8")
     return p
 
 
@@ -103,7 +126,7 @@ def test_existing_wslenv_entries_are_preserved():
 
 
 def test_passing_report_is_ok(tmp_path):
-    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS))
+    report = _report(tmp_path, nodeids=TRIPWIRE_TESTS)
     result = judge(0, f"{len(TRIPWIRE_TESTS)} passed in 3.00s\n", report, TRIPWIRE_TESTS)
     assert result.ok, result.message
 
@@ -123,20 +146,20 @@ def test_stdout_cannot_fake_a_pass(tmp_path):
 
 def test_skipped_report_is_not_ok(tmp_path):
     """skip 은 통과가 아니다 — 이것이 STRICT 승격의 존재 이유다."""
-    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS), skipped=1)
+    report = _report(tmp_path, nodeids=TRIPWIRE_TESTS, skipped=1)
     result = judge(0, "1 passed, 1 skipped\n", report, TRIPWIRE_TESTS)
     assert not result.ok
     assert "skip" in result.message.lower() or "생략" in result.message
 
 
 def test_failing_report_is_not_ok(tmp_path):
-    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS), failures=1)
+    report = _report(tmp_path, nodeids=TRIPWIRE_TESTS, failures=1)
     result = judge(1, "1 failed, 1 passed\n", report, TRIPWIRE_TESTS)
     assert not result.ok
 
 
 def test_error_report_is_not_ok(tmp_path):
-    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS), errors=1)
+    report = _report(tmp_path, nodeids=TRIPWIRE_TESTS, errors=1)
     result = judge(0, "", report, TRIPWIRE_TESTS)
     assert not result.ok
 
@@ -157,7 +180,7 @@ def test_unparsable_report_fails_closed(tmp_path):
 
 def test_partial_run_is_not_ok(tmp_path):
     """등록된 트립와이어보다 적게 돌면 통과가 아니다."""
-    report = _report(tmp_path, tests=1)
+    report = _report(tmp_path, nodeids=TRIPWIRE_TESTS[:1])
     result = judge(0, "1 passed\n", report, TRIPWIRE_TESTS)
     assert not result.ok
     assert str(len(TRIPWIRE_TESTS)) in result.message
@@ -172,6 +195,70 @@ def test_runner_is_asked_for_a_structured_report(tmp_path):
     assert run.captured["env"][STRICT_ENV] == "1"
     for t in TRIPWIRE_TESTS:
         assert t in run.captured["argv"], run.captured["argv"]
+
+
+def test_counts_alone_cannot_pass_the_gate(tmp_path):
+    """수치가 맞아도 **다른 테스트**가 돌았으면 통과가 아니다.
+
+    14차에서 codex-terra 와 fable-advisor 가 함께 짚었다 — suite 속성만 보면
+    "어떤 2건이든" 통과한다. 트립와이어가 아니라 다른 두 테스트가 돌아도 게이트가
+    초록이면, 게이트는 트립와이어에 대해 아무것도 말해 주지 않는다.
+    """
+    wrong = ("tests/test_serving/test_other.py::test_something",
+             "tests/test_serving/test_other.py::test_else")
+    report = _report(tmp_path, nodeids=wrong)
+    result = judge(0, "2 passed\n", report, TRIPWIRE_TESTS)
+    assert not result.ok, "신원이 다른 테스트가 통과로 읽혔다"
+    assert "신원" in result.message or "일치" in result.message
+
+
+def test_attributes_without_testcases_do_not_pass(tmp_path):
+    """수치만 있고 testcase 요소가 없는 리포트는 통과가 아니다."""
+    report = _report(tmp_path, tests=len(TRIPWIRE_TESTS))
+    result = judge(0, "2 passed\n", report, TRIPWIRE_TESTS)
+    assert not result.ok
+
+
+def test_multiple_suites_are_aggregated(tmp_path):
+    """다중 suite 리포트에서 첫 suite 만 보고 끝내면 안 된다."""
+    report = _report(tmp_path, nodeids=TRIPWIRE_TESTS, suites=2)
+    result = judge(0, "2 passed\n", report, TRIPWIRE_TESTS)
+    assert result.ok, result.message
+
+    report = _report(tmp_path, nodeids=TRIPWIRE_TESTS, suites=2, failures=1)
+    assert not judge(1, "", report, TRIPWIRE_TESTS).ok, "두 번째 suite 의 실패를 놓쳤다"
+
+
+def test_timeout_is_not_a_pass(tmp_path):
+    """게이트가 걸려 멈추면 실패다 — 무한 대기는 CI 에서 통과보다 나쁘다."""
+    import subprocess
+
+    def hanging(argv, env):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=1)
+
+    result = check_tripwires(runner=hanging)
+    assert not result.ok
+    assert "시간" in result.message or "timeout" in result.message.lower()
+
+
+def test_default_runner_passes_a_timeout(monkeypatch):
+    """실제 러너가 timeout 없이 subprocess 를 부르면 안 된다(fable 14차 지적)."""
+    import subprocess as sp
+
+    from scripts.ops import check_tripwires as mod
+
+    seen = {}
+
+    class _Done:
+        returncode, stdout, stderr = 0, b"", b""
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        return _Done()
+
+    monkeypatch.setattr(sp, "run", fake_run)
+    mod._default_runner(["x"], {})
+    assert seen.get("timeout"), f"timeout 이 지정되지 않았다: {seen}"
 
 
 def test_registered_tripwires_exist_in_the_suite():

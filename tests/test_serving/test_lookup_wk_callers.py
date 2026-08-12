@@ -157,23 +157,27 @@ def test_production_lookup_wk_callers_match_the_known_set():
 # 각 항목은 `lookup_wk` 와 무관함이 확인된 것이다 — SAS/HANA 행 객체의 컬럼 접근,
 # sklearn 파라미터 설정, FastAPI 앱 속성, MLModel sidecar 로딩. 새 항목이 생기면
 # 그것이 표준화기에 닿는지 검토해야 하며, 그 검토를 강제하는 것이 이 목록의 목적이다.
+#
+# **집합이 아니라 개수다.** 집합으로 두면 이미 허용된 함수 안에 동적 접근이 하나 더
+# 생겨도 통과한다. 11차에 `lookup_wk` 접점 표에서 지적받아 Counter 로 고친 바로 그
+# 약점을, 13차에 새로 만든 이 목록에 다시 넣었다(codex-terra·fable-advisor 14차 지적).
 _ALLOWED_DYNAMIC = {
-    ("hana_app/core/hana_etl.py", "_t30_to_records"),
-    ("hana_app/core/hana_etl.py", "_t60_to_records"),
-    ("hana_app/core/hana_etl.py", "build_t40_index"),
-    ("hana_app/core/hana_etl.py", "fetch_eligibility_ages"),
-    ("hana_app/core/hana_etl.py", "fetch_eligibility_demographics"),
-    ("hana_app/core/ml_runner.py", "stratify_and_sample_patients"),
-    ("hana_app/core/phase3_models.py", "set_params"),
-    ("hana_app/core/sas_reader.py", "_t30_to_records"),
-    ("hana_app/core/sas_reader.py", "_t60_to_records"),
-    ("hana_app/core/sas_reader.py", "fetch_eligibility_ages"),
-    ("hana_app/core/sas_reader.py", "fetch_eligibility_demographics"),
-    ("hana_app/core/sas_reader.py", "fetch_eligibility_for_sampling"),
-    ("scripts/train/pipeline.py", "run_training"),
-    ("serving/main.py", "<module>"),
+    ("hana_app/core/hana_etl.py", "_t30_to_records"): 10,
+    ("hana_app/core/hana_etl.py", "_t60_to_records"): 11,
+    ("hana_app/core/hana_etl.py", "build_t40_index"): 2,
+    ("hana_app/core/hana_etl.py", "fetch_eligibility_ages"): 2,
+    ("hana_app/core/hana_etl.py", "fetch_eligibility_demographics"): 4,
+    ("hana_app/core/ml_runner.py", "stratify_and_sample_patients"): 4,
+    ("hana_app/core/phase3_models.py", "set_params"): 3,
+    ("hana_app/core/sas_reader.py", "_t30_to_records"): 10,
+    ("hana_app/core/sas_reader.py", "_t60_to_records"): 11,
+    ("hana_app/core/sas_reader.py", "fetch_eligibility_ages"): 2,
+    ("hana_app/core/sas_reader.py", "fetch_eligibility_demographics"): 4,
+    ("hana_app/core/sas_reader.py", "fetch_eligibility_for_sampling"): 7,
+    ("scripts/train/pipeline.py", "run_training"): 1,
+    ("serving/main.py", "<module>"): 1,
     # MLModel 의 sidecar 로딩 — 대상은 self(MLModel)이며 표준화기가 아니다.
-    ("serving/predictor.py", "load"),
+    ("serving/predictor.py", "load"): 1,
 }
 
 
@@ -183,7 +187,7 @@ def test_dynamic_attribute_access_in_production_is_known():
     정적 열거는 속성명이 리터럴일 때만 성립한다. 새 동적 접근이 생기면 `lookup_wk`
     소비자를 놓칠 수 있으므로 검토를 강제한다.
     """
-    found = set()
+    found: Counter = Counter()
     for path in _production_modules():
         tree = _parse(path)
         if tree is None:
@@ -195,17 +199,25 @@ def test_dynamic_attribute_access_in_production_is_known():
                     and node.func.id in ("getattr", "setattr", "hasattr")
                     and len(node.args) >= 2
                     and not isinstance(node.args[1], ast.Constant)):
-                found.add((rel, _enclosing(tree, node)))
+                found[(rel, _enclosing(tree, node))] += 1
 
-    extra = found - _ALLOWED_DYNAMIC
+    extra = {k: v for k, v in found.items() if k not in _ALLOWED_DYNAMIC}
+    stale = {k: v for k, v in _ALLOWED_DYNAMIC.items() if k not in found}
+    changed = {k: (_ALLOWED_DYNAMIC[k], v) for k, v in found.items()
+               if k in _ALLOWED_DYNAMIC and _ALLOWED_DYNAMIC[k] != v}
+
     assert not extra, (
         "프로덕션에 새 동적 속성 접근이 생겼다. `lookup_wk` 에 닿을 수 있는지 검토하고 "
-        f"무관하면 목록에 추가하라: {sorted(extra)}"
+        f"무관하면 목록에 추가하라: {sorted(extra.items())}"
     )
-    stale = _ALLOWED_DYNAMIC - found
     assert not stale, (
         "허용 목록에 더 이상 존재하지 않는 항목이 있다. 목록이 낡으면 그만큼 검토가 "
-        f"헐거워지므로 제거하라: {sorted(stale)}"
+        f"헐거워지므로 제거하라: {sorted(stale.items())}"
+    )
+    assert not changed, (
+        "이미 허용된 함수 안의 동적 접근 **개수**가 바뀌었다(기대, 실제). 같은 함수라도 "
+        "새 동적 접근은 새 우회 가능성이므로 다시 봐야 한다: "
+        f"{sorted(changed.items())}"
     )
 
 
