@@ -1111,3 +1111,86 @@ def test_tripwire_resolve_codes_leaves_atc_empty_for_real_edi(real_standardizer,
         f"실 EDI 요청에 `atc_code` 가 채워졌다 — 중복탐지 도달 가능성이 생겼다. "
         f"검사 범위: 고정 EDI {len(drugs)}건(전수 아님): {filled}"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 플래그가 켜졌을 때 새로 생기는 실패 경로 — main 보다 나빠지면 안 된다.
+#
+# `lookup_edi` 는 main 도 부르므로 그 예외는 main 의 동작이며 여기서 건드리지 않는다.
+# 그러나 edi→wk 폴백(`get_wk`/`lookup_wk`)은 이 브랜치가 플래그 안에 새로 넣은 것이라,
+# 거기서 예외가 나면 **main 이라면 성공했을 요청이 500 이 된다.** 이름을 못 얻는 것은
+# main 과 같은 상태이므로, 폴백 실패는 그 상태로 내려앉되 침묵하지 않아야 한다.
+# codex-terra 12·13·14·15차 연속 권고.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _RaisingWkStandardizer:
+    """`lookup_edi` 는 정상, edi→wk 폴백만 터지는 표준화기."""
+
+    def __init__(self, boom_on="get_wk"):
+        self._boom_on = boom_on
+        self.lookup_edi_calls = 0
+
+    def lookup_edi(self, edi):
+        self.lookup_edi_calls += 1
+        return None, None          # 실 EDI 처럼 해소되지 않는다
+
+    def get_wk(self, edi):
+        if self._boom_on == "get_wk":
+            raise RuntimeError("참조DB 파일이 손상됨")
+        return "249103ATB"
+
+    def lookup_wk(self, wk):
+        if self._boom_on == "lookup_wk":
+            raise RuntimeError("wk 인덱스 조회 실패")
+        return None, "Warfarin"
+
+
+@pytest.mark.parametrize("boom_on", ["get_wk", "lookup_wk"])
+def test_wk_fallback_failure_does_not_abort_the_request(boom_on, monkeypatch, caplog):
+    """폴백이 터져도 요청은 살아야 한다 — main 이라면 성공했을 요청이기 때문이다."""
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    std = _RaisingWkStandardizer(boom_on=boom_on)
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=std)
+    drugs = [DrugItem(edi_code="645600390", total_days=30, start_date=date(2024, 7, 1))]
+
+    with caplog.at_level(logging.WARNING):
+        builder.resolve_codes(drugs)      # 예외가 새어 나오면 이 줄에서 실패한다
+
+    assert drugs[0].drug_name is None, "폴백이 실패했는데 이름이 채워졌다"
+    assert any("폴백" in r.message or "fallback" in r.message.lower()
+               for r in caplog.records), (
+        f"폴백 실패가 조용히 넘어갔다 — 무경보와 무위험을 구별할 수 없다: "
+        f"{[r.message for r in caplog.records]}"
+    )
+
+
+def test_lookup_edi_failure_is_not_swallowed(monkeypatch):
+    """`lookup_edi` 예외는 잡지 않는다 — main 도 부르는 경로이므로 동작을 바꾸면 안 된다.
+
+    폴백 실패를 삼키는 것과 main 공통 경로의 실패를 삼키는 것은 다르다. 후자를 삼키면
+    기본값 동작이 main 과 달라진다.
+    """
+    class _BoomOnLookupEdi:
+        def lookup_edi(self, edi):
+            raise RuntimeError("인덱스 적재 실패")
+
+    monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=_BoomOnLookupEdi())
+    drugs = [DrugItem(edi_code="645600390", total_days=30, start_date=date(2024, 7, 1))]
+
+    with pytest.raises(RuntimeError, match="인덱스 적재 실패"):
+        builder.resolve_codes(drugs)
+
+
+def test_wk_fallback_is_not_reached_when_flag_is_off(monkeypatch):
+    """플래그가 꺼져 있으면 폴백 자체가 호출되지 않는다 — 새 실패 경로도 없다."""
+    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
+    std = _RaisingWkStandardizer(boom_on="get_wk")
+    builder = RequestFeatureBuilder(ddi_matrix=None, code_standardizer=std)
+    drugs = [DrugItem(edi_code="645600390", total_days=30, start_date=date(2024, 7, 1))]
+
+    builder.resolve_codes(drugs)          # get_wk 가 터지는데도 도달하지 않는다
+
+    assert std.lookup_edi_calls == 1, "main 공통 경로는 그대로 호출돼야 한다"
+    assert drugs[0].drug_name is None

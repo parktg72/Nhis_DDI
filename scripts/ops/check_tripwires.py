@@ -83,7 +83,11 @@ def emit(message: str, stream=None) -> None:
     print(safe, file=out)
 
 
-TIMEOUT_S = 900   # 트립와이어는 참조DB 적재가 있어 느리지만, 무한 대기는 실패다
+# 실측 기반. 트립와이어 2건은 참조DB 적재를 포함해 7.6초가 걸린다(2026-08-12,
+# 이 저장소의 실 데이터). 여유를 8배 두되 CI 병목이 되지 않는 값으로 잡는다 —
+# 900초는 근거 없이 고른 값이었고 15분 병목은 무한 대기 다음으로 나쁘다(agy 15차).
+# 이 값을 늘려야 한다면 먼저 왜 느려졌는지 보라.
+TIMEOUT_S = 60
 
 
 def _default_runner(argv: Sequence[str], env: dict[str, str]) -> tuple[int, str]:

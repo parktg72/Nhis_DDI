@@ -916,6 +916,8 @@ class RequestFeatureBuilder:
         self._std = code_standardizer
         # lookup_wk 부재 경고는 요청마다가 아니라 인스턴스당 1회만 낸다(로그 폭주 방지).
         self._warned_no_lookup_wk = False
+        # 폴백 예외 경고도 인스턴스당 1회 (로그 폭주 방지)
+        self._warned_wk_fallback_failed = False
 
         # DDI 조회용 인덱스
         self._ddi_index: dict[frozenset, str] = {}
@@ -1179,11 +1181,29 @@ class RequestFeatureBuilder:
                         type(self._std).__name__,
                     )
                 continue
-            wk = self._std.get_wk(d.edi_code)
-            if wk:
-                _, wk_name = lookup_wk(wk)
-                if wk_name:
-                    d.drug_name = wk_name
+            # 폴백 실패는 요청을 죽이지 않는다. 이 블록은 플래그 안에 있으므로 main 에는
+            # 없는 경로이고, 여기서 예외가 새어 나가면 **main 이라면 성공했을 요청이
+            # 500 이 된다** — 플래그를 켠 것이 안전성을 떨어뜨리는 셈이다. 이름을 못 얻는
+            # 것은 main 과 같은 상태이므로 그 상태로 내려앉되, 침묵하지는 않는다.
+            # 위 `lookup_edi` 는 main 도 부르는 공통 경로라 여기서 잡지 않는다 — 잡으면
+            # 기본값 동작이 main 과 달라진다.
+            try:
+                wk = self._std.get_wk(d.edi_code)
+                if wk:
+                    _, wk_name = lookup_wk(wk)
+                    if wk_name:
+                        d.drug_name = wk_name
+            except Exception:
+                if not self._warned_wk_fallback_failed:
+                    self._warned_wk_fallback_failed = True
+                    logger.warning(
+                        "edi→wk 약물명 폴백 실패 — 해당 항목은 이름 없이 진행한다. "
+                        "이름 기반 Safety Net 규칙(Top-10·QT·고위험약)이 그 항목에 "
+                        "대해 무발화하므로, 무경보를 무위험으로 읽으면 안 된다. "
+                        "표준화기 구현: %s",
+                        type(self._std).__name__,
+                        exc_info=True,
+                    )
 
     def atc_candidates(self, drug) -> set[str]:
         """이 약물이 가질 수 있는 ATC 코드 **집합**.

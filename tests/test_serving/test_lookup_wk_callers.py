@@ -215,15 +215,55 @@ def test_dynamic_attribute_access_in_production_is_known():
         f"헐거워지므로 제거하라: {sorted(stale.items())}"
     )
     assert not changed, (
-        "이미 허용된 함수 안의 동적 접근 **개수**가 바뀌었다(기대, 실제). 같은 함수라도 "
-        "새 동적 접근은 새 우회 가능성이므로 다시 봐야 한다: "
-        f"{sorted(changed.items())}"
+        "이미 허용된 함수 안의 동적 접근 **개수**가 바뀌었다(기대, 실제): "
+        f"{sorted(changed.items())}\n"
+        "리팩터링으로 개수만 바뀐 경우라도 그냥 숫자를 고치지 말고 확인하라 — "
+        "(1) 새 접근의 대상이 CodeStandardizer 인가, (2) 속성명이 런타임에 계산되는가, "
+        "(3) 계산된다면 그 값에 'lookup_wk' 가 들어갈 수 있는가. 셋 다 아니면 숫자를 "
+        "갱신하고, 하나라도 예면 정적 열거가 그 경로를 못 보므로 별도 검사가 필요하다."
     )
 
 
 # 속성 접근을 우회시키는 `operator` 도구들. 이름만 보면 안 되고 별칭을 풀어야 한다.
 _INDIRECT_OPERATOR_FUNCS = ("attrgetter", "methodcaller")
-_INDIRECT_DUNDERS = ("__getattribute__", "__getattr__")
+_INDIRECT_DUNDERS = ("__getattribute__", "__getattr__", "__dict__")
+
+# 반사(reflection)로 속성명을 우회 획득하는 형태. 동적 `getattr` 검사는 **벌거벗은
+# 이름**만 보므로 `builtins.getattr(std, name)` 은 `ast.Attribute` 호출이라 빠져나가고,
+# `vars(std)[name]` 은 아예 다른 형태다(codex-terra 14·15차 지적).
+# 실측: 프로덕션 157개 파일에서 아래 형태는 **0건**이라 허용 목록 없이 전면 금지한다.
+_REFLECTION_BUILTINS = ("getattr", "setattr", "hasattr")
+_REFLECTION_MAPPING = ("vars",)
+
+
+def test_no_reflection_bypass_in_production():
+    """`builtins.getattr`·`vars()`·`__dict__` 로 정적 열거를 우회할 수 없어야 한다.
+
+    동적 `getattr` 허용 목록은 벌거벗은 이름 호출만 센다. 같은 일을 모듈 경유나
+    매핑 접근으로 하면 그 목록 밖으로 나간다. 현재 프로덕션에 그런 구문이 하나도
+    없으므로 허용 목록을 두지 않고 전면 금지한다 — 생기면 그때 검토하면 된다.
+    """
+    found = []
+    for path in _production_modules():
+        tree = _parse(path)
+        if tree is None:
+            continue
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        for node in ast.walk(tree):
+            # builtins.getattr(...) / op.getattr(...) — 모듈 경유 호출
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _REFLECTION_BUILTINS):
+                found.append((rel, node.lineno, f"{node.func.attr} (모듈 경유)"))
+            # vars(obj)[name]
+            elif (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id in _REFLECTION_MAPPING):
+                found.append((rel, node.lineno, node.func.id))
+    assert not found, (
+        "반사로 속성을 우회 획득하는 구문이 생겼다. 동적 `getattr` 허용 목록이 이 "
+        f"형태를 세지 않으므로 `lookup_wk` 소비자를 놓칠 수 있다: {found}"
+    )
 
 
 def _indirect_aliases(tree: ast.AST) -> set[str]:
