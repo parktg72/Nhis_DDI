@@ -142,3 +142,6 @@ hana_app/results/
 !.understand-anything/intermediate/review.json
 .understand-anything/tmp/
 .understand-anything/.trash-*/
+
+# 기술검토 내부판 — 구체 공격면·재현경로 포함, 공개 저장소 제외
+docs/reviews/_internal/
