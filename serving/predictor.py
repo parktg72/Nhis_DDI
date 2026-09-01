@@ -1022,9 +1022,13 @@ class RequestFeatureBuilder:
         f = self._rule_namespace(drugs, ref, patient_age)
         if f is None:
             return None, set()
-        if f.ddi_major >= 1:
-            return "Y_DDI_MAJOR", ({"DDI_MAJOR_3PLUS"} if f.ddi_major >= 3 else {"DDI_MAJOR"})
+        # 중증 트리거는 major 여부와 무관하게 먼저 모은다. 종전에는 major 에서 조기 반환해
+        # 둘 다인 환자의 SEV_* 사유가 소실됐다 — 약사는 전화는 받되 급성신손상 3제 조합의
+        # 존재를 통보받지 못했다. subtype 위계(major > severe)는 그대로 두고 사유만 합친다.
         sev = collect_severe_immediate_triggers(f)
+        if f.ddi_major >= 1:
+            major = {"DDI_MAJOR_3PLUS"} if f.ddi_major >= 3 else {"DDI_MAJOR"}
+            return "Y_DDI_MAJOR", major | sev
         if sev:
             return "Y_TRIPLE", sev
         return None, set()
