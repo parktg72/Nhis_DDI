@@ -23,7 +23,7 @@ from scripts.datasets.contracts import (
     BundleHashMismatchError,
     LookbackMismatchError,
 )
-from serving.predictor import get_predictor
+from serving.predictor import get_predictor, serving_flag_state
 from serving.schemas import HealthResponse, ModelInfoResponse
 
 logger = logging.getLogger(__name__)
@@ -160,6 +160,7 @@ async def health_check():
             rule_loaded=pred._safety_net is not None,
             version=APP_VERSION,
             uptime_sec=round(pred.uptime, 1),
+            serving_flags=serving_flag_state(),
             model_mode=_model_mode(pred),
             hierarchical_loaded=hier_loaded,
             schema_drift=schema_drift,
@@ -176,6 +177,7 @@ async def health_check():
             rule_loaded=False,
             version=APP_VERSION,
             uptime_sec=0.0,
+            serving_flags=serving_flag_state(),
             model_mode="none",
             hierarchical_loaded=False,
             schema_drift=[],
