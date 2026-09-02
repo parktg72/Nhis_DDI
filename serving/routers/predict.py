@@ -22,6 +22,22 @@ from serving.schemas import (
 
 logger = logging.getLogger(__name__)
 
+
+def _rule_ids(result) -> list[str]:
+    """사유 목록에서 **규칙 ID 만** 뽑는다 (A5 발화 측정용).
+
+    설명 문구와 약물명은 넣지 않는다. 이 파일은 환자 단위로 append 되므로,
+    필요한 최소치(어느 규칙이 발화했는가)만 남겨 환자별 약물 정보가 축적되지
+    않게 한다. 규칙별 발화 환자 수와 "사유 없는 Red" 건수는 이것으로 산출된다.
+    """
+    out: list[str] = []
+    for r in (getattr(result, "risk_reasons", None) or []):
+        rid = str(r).split(":", 1)[0].strip()
+        if rid and rid not in out:
+            out.append(rid)
+    return out
+
+
 router = APIRouter(tags=["predict"])
 
 
@@ -58,6 +74,8 @@ async def predict(req: PredictRequest):
             ),
             "latency_ms": round(latency_ms, 1),
             "source": "api",
+            "rule_ids": _rule_ids(result),
+            "n_reasons": len(result.risk_reasons or []),
         })
     except Exception:
         logger.warning("메트릭 기록 실패 — 예측은 정상 반환", exc_info=True)
@@ -101,6 +119,8 @@ async def predict_batch(req: BatchPredictRequest):
                     ),
                     "latency_ms": round(single_latency_ms, 1),
                     "source": "batch",
+                    "rule_ids": _rule_ids(single_result),
+                    "n_reasons": len(single_result.risk_reasons or []),
                 })
             except Exception:
                 logger.warning("배치 메트릭 기록 실패 (patient_id=%s)", single_req.patient_id)
