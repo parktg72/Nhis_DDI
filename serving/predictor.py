@@ -203,6 +203,17 @@ RISK_FLAG_ATC_ENV = "SERVING_RISK_FLAG_ATC_CANDIDATES"
 # 끈 상태에서도 `build()` 는 종전대로 Step 3 에서 해소한다 — ML 피처 산출 경로는 그대로다.
 EDI_NAME_RESOLUTION_ENV = "SERVING_ENABLE_EDI_NAME_RESOLUTION"
 
+# 규칙층이 **발화하되 개입 등급은 올리지 않게** 할지 여부. 기본 **비활성**.
+#
+# 위 해소 플래그를 켜면 Top-10 이 발화하지만 즉각 개입 대상이 함께 28배가 된다. 탐지는
+# 지금 필요하고 개입 용량은 아직 결정되지 않았다 — 둘을 한 플래그에 묶으면 약사 인력이
+# 부족하다는 이유로 탐지까지 못 켜게 된다. 이 플래그가 그 둘을 가른다.
+#
+# 끊는 것은 **SafetyNet 등급의 승격뿐**이다. 아래 셋은 그대로 둔다 — 끊으면 안전 후퇴다.
+#   · 결정적 Red 백스톱(금기)  · rule_floor subtype 하한  · ML 등급
+# 탐지 결과는 `rule_level` 필드와 `risk_reasons`·`ddi_alerts` 에 그대로 실려 관측 가능하다.
+RULE_DETECT_ONLY_ENV = "SERVING_RULE_DETECT_ONLY"
+
 
 def _risk_flag_atc_enabled() -> bool:
     return os.environ.get(RISK_FLAG_ATC_ENV, "").strip().lower() in ("1", "true", "yes", "on")
@@ -212,11 +223,16 @@ def _edi_name_resolution_enabled() -> bool:
     return os.environ.get(EDI_NAME_RESOLUTION_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _rule_detect_only_enabled() -> bool:
+    return os.environ.get(RULE_DETECT_ONLY_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def serving_flag_state() -> dict[str, bool]:
     """서빙 동작을 바꾸는 환경 플래그의 현재 값. `/health` 와 기동 로그가 쓴다."""
     return {
         EDI_NAME_RESOLUTION_ENV: _edi_name_resolution_enabled(),
         RISK_FLAG_ATC_ENV: _risk_flag_atc_enabled(),
+        RULE_DETECT_ONLY_ENV: _rule_detect_only_enabled(),
     }
 
 
@@ -1749,9 +1765,13 @@ class HybridPredictor:
             logger.warning("결정적 Red 백스톱 계산 실패(무시): %s", e)
 
         # Step 4: 최종 등급 = max(Rule, ML, 결정적 Red 백스톱)
-        final_level = rule_level
+        # 탐지 전용이면 SafetyNet 등급은 최종 등급을 올리지 않는다. rule_level 은 응답에
+        # 그대로 실려 무엇이 탐지됐는지 관측 가능하다. 백스톱·floor·ML 은 아래에서 그대로 적용된다.
+        final_level = RiskLevel.NORMAL if _rule_detect_only_enabled() else rule_level
         if ml_level is not None:
-            final_level = RiskLevel.max(rule_level, ml_level)
+            # rule_level 이 아니라 final_level 과 비교한다 — 탐지 전용에서 ML 경로로
+            # 규칙 등급이 되살아나면 플래그가 무력해진다.
+            final_level = RiskLevel.max(final_level, ml_level)
         if _red_reasons:
             final_level = RiskLevel.max(final_level, RiskLevel.RED)
 

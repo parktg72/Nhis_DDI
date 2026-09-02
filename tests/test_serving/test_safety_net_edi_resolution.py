@@ -29,6 +29,7 @@ from rules.safety_net import SafetyNet
 from scripts.etl.code_standardizer import CodeStandardizer
 from serving.predictor import (
     EDI_NAME_RESOLUTION_ENV,
+    RULE_DETECT_ONLY_ENV,
     _run_duplicate_detector,
     RISK_FLAG_ATC_ENV,
     HybridPredictor,
@@ -968,9 +969,14 @@ def test_atc_candidate_failure_preserves_name_based_flags(monkeypatch):
 
 
 def test_health_exposes_flag_state(http_client, monkeypatch):
-    """`/health` 가 두 플래그의 현재 상태를 드러내야 한다."""
-    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
-    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+    """`/health` 가 서빙 플래그의 현재 상태를 드러내야 한다.
+
+    정확히 일치로 고정한다 — 플래그가 늘면 여기서 깨지고, 늘린 사람이 그것을
+    의식적으로 갱신하게 된다(codex-terra 12차 계약). 탐지 전용 플래그가 늘 때
+    이 세 건이 실제로 깨졌고 그에 따라 갱신했다.
+    """
+    for env in (EDI_NAME_RESOLUTION_ENV, RISK_FLAG_ATC_ENV, RULE_DETECT_ONLY_ENV):
+        monkeypatch.delenv(env, raising=False)
 
     r = http_client.get("/health")
 
@@ -980,6 +986,7 @@ def test_health_exposes_flag_state(http_client, monkeypatch):
     assert body["serving_flags"] == {
         EDI_NAME_RESOLUTION_ENV: False,
         RISK_FLAG_ATC_ENV: False,
+        RULE_DETECT_ONLY_ENV: False,
     }, body["serving_flags"]
 
 
@@ -987,12 +994,14 @@ def test_health_reflects_enabled_flags(http_client, monkeypatch):
     """플래그를 켜면 `/health` 가 그대로 반영해야 한다 — 운영자가 오인하지 않도록."""
     monkeypatch.setenv(EDI_NAME_RESOLUTION_ENV, "1")
     monkeypatch.setenv(RISK_FLAG_ATC_ENV, "1")
+    monkeypatch.setenv(RULE_DETECT_ONLY_ENV, "1")
 
     body = http_client.get("/health").json()
 
     assert body["serving_flags"] == {
         EDI_NAME_RESOLUTION_ENV: True,
         RISK_FLAG_ATC_ENV: True,
+        RULE_DETECT_ONLY_ENV: True,
     }, body["serving_flags"]
 
 
@@ -1043,8 +1052,8 @@ def test_default_health_adds_exactly_one_key_over_main(http_client, monkeypatch)
     꺼져 있어도 응답 스키마를 바꾸므로(가법적), 그 변경의 크기를 정확히 고정한다.
     codex-terra 12차 지적 — "기본값 동등성의 범위가 /health 변경을 제외한 채 주장됐다".
     """
-    monkeypatch.delenv(EDI_NAME_RESOLUTION_ENV, raising=False)
-    monkeypatch.delenv(RISK_FLAG_ATC_ENV, raising=False)
+    for env in (EDI_NAME_RESOLUTION_ENV, RISK_FLAG_ATC_ENV, RULE_DETECT_ONLY_ENV):
+        monkeypatch.delenv(env, raising=False)
 
     body = http_client.get("/health").json()
     keys = set(body)
@@ -1059,6 +1068,7 @@ def test_default_health_adds_exactly_one_key_over_main(http_client, monkeypatch)
     assert body["serving_flags"] == {
         EDI_NAME_RESOLUTION_ENV: False,
         RISK_FLAG_ATC_ENV: False,
+        RULE_DETECT_ONLY_ENV: False,
     }, body["serving_flags"]
 
 
