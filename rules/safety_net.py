@@ -458,20 +458,31 @@ class SafetyNet:
         grade = "Normal"
 
         # 🔴 Red 조건
+        #
+        # 등급을 올리는 조건은 모두 사유를 남긴다. 종전에는 이 함수가 risk_grade 만
+        # 바꾸고 triggered_rules 에 아무것도 넣지 않아, 규칙 경로가 발화하지 않은
+        # 환자는 사유 0건인 채로 Red 가 됐다 — 약사는 "즉각 개입(직접 연락)" 지시를
+        # 근거 없이 받는다. 등급 자체는 바꾸지 않고 사유만 채운다.
         red = False
         if result.ddi_contraindicated_count >= 1:
             red = True
+            self._add_grade_reason(result, "GRADE_CONTRAINDICATED", "금기 DDI 1건 이상")
         if result.ddi_major_count >= 3:
             red = True
+            self._add_grade_reason(result, "GRADE_MAJOR_3PLUS", "Major DDI 3건 이상")
         if result.triple_whammy_flag:
             red = True
         if result.qt_drug_count >= 3:
             red = True
         if drug_count >= 10 and self._has_high_risk_drug(result):
             red = True
+            self._add_grade_reason(result, "GRADE_POLYPHARMACY_HIGH_RISK",
+                                   "동시 10종 이상 + 고위험 약물")
         if (patient_age is not None and patient_age >= 75 and
                 drug_count >= 5 and (has_renal_risk or has_hepatic_risk)):
             red = True
+            self._add_grade_reason(result, "GRADE_ELDERLY_ORGAN_RISK",
+                                   "75세 이상 + 동시 5종 이상 + 신/간 위험 약물")
 
         if red:
             grade = "Red"
@@ -486,6 +497,18 @@ class SafetyNet:
             grade = "Normal"
 
         result.risk_grade = grade
+
+    @staticmethod
+    def _add_grade_reason(result: RiskAssessment, rule_id: str, label: str) -> None:
+        """등급 산출 조건의 사유를 남긴다. 중복 추가하지 않는다.
+
+        triple_whammy 와 QT 는 이미 TOP03·TOP09 로 사유를 남기므로 여기서 다루지
+        않는다. 나머지 네 조건이 사유 없는 Red 의 발생원이었다.
+        """
+        entry = f"{rule_id}: {label}"
+        if entry not in result.triggered_rules:
+            result.triggered_rules.append(entry)
+
 
     @staticmethod
     def _has_high_risk_drug(result: RiskAssessment) -> bool:
