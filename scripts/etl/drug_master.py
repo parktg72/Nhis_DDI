@@ -316,6 +316,10 @@ class DrugMaster:
         """정규화된 성분명 → DDI 매트릭스 ID (D-코드 or DB-코드)."""
         return self._name_to_ddi_id.get(component_name.strip().lower())
 
+    def name_for_ddi_id(self, ddi_id: str) -> Optional[str]:
+        """DDI ID 의 대표 성분명. EDI 인덱스에 없는 DUR D-코드를 위한 경로다."""
+        return self._ddi_id_to_name.get(ddi_id)
+
     def get_ddi_ids(self, wk_compn_cd: str) -> list[str]:
         """
         WK_COMPN_CD → DDI 매트릭스 ID 목록.

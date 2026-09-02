@@ -120,7 +120,7 @@ drug_groups:
   # 스타틴
   statin:
     name_keywords: [atorvastatin, simvastatin, rosuvastatin, pravastatin, lovastatin, fluvastatin, pitavastatin, cerivastatin]
-    atc_prefixes: [C10AA01, C10AA02, C10AA07, C10AA03, C10AA02, C10AA04]
+    atc_prefixes: [C10AA01, C10AA02, C10AA03, C10AA04, C10AA05, C10AA06, C10AA07, C10AA08]
 
   # 마크로라이드 (CYP3A4 강억제)
   macrolide_strong:
