@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from monitoring.metrics_writer import get_metrics_writer
-from serving.predictor import serving_flag_state
 from serving.predictor import get_predictor
 from serving.schemas import (
     BatchPredictRequest,
@@ -39,6 +38,18 @@ logger = logging.getLogger(__name__)
 _RULE_ID_RE = re.compile(r"^(?:TOP\d{2}|(?:GRADE|SEV|RED|DDI)_[A-Z0-9_]+)$")
 
 METRICS_SCHEMA_VERSION = 3
+
+
+def _flag_state() -> dict:
+    """현재 서빙 플래그 상태. **지연 import 다.**
+
+    `serving.predictor` 를 모듈 최상단에서 부르면, 플래그를 바꿔 가며
+    `sys.modules` 를 비우고 재적재하는 테스트(탐지 전용 검증)에서 무거운 의존성이
+    반복 적재된다. 기록 시점에만 부른다.
+    """
+    from serving.predictor import serving_flag_state
+    return serving_flag_state()
+
 
 
 def _split_reasons(result) -> tuple[list[str], int]:
@@ -102,7 +113,7 @@ async def predict(req: PredictRequest):
             "schema_version": METRICS_SCHEMA_VERSION,
             # 플래그 상태를 행에 남긴다. 관측 기간 중 플래그가 바뀌면 꺼진 날과
             # 켜진 날의 행이 한 파일에 섞이고, 집계가 그것을 구분할 수 없다.
-            "serving_flags": serving_flag_state(),
+            "serving_flags": _flag_state(),
             "rule_ids": _ids,
             "n_reasons": len(result.risk_reasons or []),
             "n_other_reasons": _other,
@@ -151,7 +162,7 @@ async def predict_batch(req: BatchPredictRequest):
                     "latency_ms": round(single_latency_ms, 1),
                     "source": "batch",
                     "schema_version": METRICS_SCHEMA_VERSION,
-                    "serving_flags": serving_flag_state(),
+                    "serving_flags": _flag_state(),
                     "rule_ids": _b_ids,
                     "n_reasons": len(single_result.risk_reasons or []),
                     "n_other_reasons": _b_other,

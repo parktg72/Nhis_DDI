@@ -322,8 +322,9 @@ def test_empty_patient_ids_are_not_one_patient(tmp_path, capsys):
     main(["--path", str(p)])
     out = capsys.readouterr().out
 
-    assert "고유 환자         3명" in out, "빈 ID 두 행이 한 환자로 합쳐졌다"
+    assert "고유 환자         1명" in out, "빈 ID 행이 환자 지표에 들어갔다"
     assert "patient_id 없는 행 2개" in out
+    assert "환자 지표(ⓐ·①)에서 제외" in out
 
 
 def test_flag_change_during_window_is_flagged(tmp_path, capsys):
@@ -332,11 +333,12 @@ def test_flag_change_during_window_is_flagged(tmp_path, capsys):
     off["serving_flags"] = {"SERVING_ENABLE_EDI_NAME_RESOLUTION": False,
                             "SERVING_RULE_DETECT_ONLY": False}
     p = _write(tmp_path / "m.jsonl", [off, _rec("P2", "2026-09-06", "Yellow", ["TOP01"])])
-    main(["--path", str(p)])
+    rc = main(["--path", str(p)])
     out = capsys.readouterr().out
 
+    assert rc == EXIT_NO_DATA, "혼합 분모로 집계를 계속했다 — 어떤 비율도 의미가 없다"
     assert "서빙 플래그가 2가지로 관측됐다" in out
-    assert "발화율을 그대로 인용하지 말 것" in out
+    assert "어떤 비율도 의미가 없다" in out
 
 
 def test_both_rates_are_printed(tmp_path, capsys):
@@ -393,15 +395,19 @@ def test_report_can_be_saved(tmp_path):
     assert "A5 — 운영 발화 집계" in dest.read_text(encoding="utf-8")
 
 
-def test_schema2_records_do_not_trigger_a_false_flag_change(tmp_path, capsys):
-    """`serving_flags` 가 없는 구 스키마(2)를 플래그 전환으로 오판하면 안 된다."""
+def test_unknown_flag_state_stops_the_report(tmp_path, capsys):
+    """플래그 상태를 모르는 행이 섞이면 집계를 중단해야 한다.
+
+    어떤 플래그로 얻은 수치인지 모르면 발화율은 아무것도 재지 않는다.
+    """
     old = _rec("P1", "2026-09-05", "Yellow", ["TOP01"], version=2)
     del old["serving_flags"]
     p = _write(tmp_path / "m.jsonl", [old, _rec("P2", "2026-09-06", "Green", [])])
-    main(["--path", str(p)])
+    rc = main(["--path", str(p)])
     out = capsys.readouterr().out
 
-    assert "서빙 플래그가" not in out, "없는 플래그 전환을 보고했다"
+    assert rc == EXIT_NO_DATA, "플래그 상태를 모르는 행을 섞어 집계했다"
+    assert "플래그 상태를 알 수 없는 행 1개" in out
 
 
 def test_rate_direction_is_not_asserted(tmp_path, capsys):
@@ -411,3 +417,36 @@ def test_rate_direction_is_not_asserted(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert "어느 쪽이 큰지는 고정돼 있지 않다" in out
+
+
+def test_name_resolution_off_period_is_refused(tmp_path, capsys):
+    """이름 해소가 꺼진 구간은 집계하지 않는다.
+
+    그 구간의 발화 0 은 규칙의 문제가 아니라 플래그의 문제다. 그대로 집계하면
+    "규칙이 안 터진다" 는 없는 결론이 나온다.
+    """
+    off = _rec("P1", "2026-09-05", "Green", [])
+    off["serving_flags"] = {"SERVING_ENABLE_EDI_NAME_RESOLUTION": False,
+                            "SERVING_RULE_DETECT_ONLY": False}
+    p = _write(tmp_path / "m.jsonl", [off])
+    rc = main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert rc == EXIT_NO_DATA
+    assert "이름 해소가 꺼진 구간이다" in out
+
+
+def test_anonymous_rows_still_count_for_reasonless_red(tmp_path, capsys):
+    """patient_id 가 없어도 사유 없는 Red 판정에서는 빠지지 않아야 한다.
+
+    환자 지표에서 제외하는 것과 안전 판정에서 제외하는 것은 다르다.
+    """
+    p = _write(tmp_path / "m.jsonl", [
+        _rec("P1", "2026-09-05", "Normal", ["TOP01"], rule_level="Green"),
+        _rec("", "2026-09-05", "Normal", [], rule_level="Red"),   # 익명 + 사유 없는 Red
+    ])
+    rc = main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert rc == EXIT_REASONLESS_RED, "익명 행의 사유 없는 Red 를 놓쳤다"
+    assert "사유 0건 요청   1행" in out

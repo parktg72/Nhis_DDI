@@ -196,43 +196,71 @@ def main(argv=None) -> int:
     parts = sorted({_part(r) for r in new_fmt})
     say(f"  관측 일자         {len(parts)}일  {parts[0]} ~ {parts[-1]}  (집계 가능분 기준)")
 
+    # ── 플래그 상태를 먼저 확정한다 ─────────────────────────────────────
+    # 혼합 분모로는 어떤 비율도 의미가 없다. 꺼진 날과 켜진 날이 섞이면 발화율이
+    # 아무것도 재지 않는다. 경고만 하고 계속 세면 그 숫자가 그대로 인용된다.
+    n_rows = len(new_fmt)
+    flag_sets = {json.dumps(r["serving_flags"], sort_keys=True)
+                 for r in new_fmt if isinstance(r.get("serving_flags"), dict)}
+    n_unknown = sum(1 for r in new_fmt if not isinstance(r.get("serving_flags"), dict))
+
+    if n_unknown:
+        say()
+        say(f"  ✗ 플래그 상태를 알 수 없는 행 {n_unknown:,}개 (구 스키마).")
+        say("    어떤 플래그로 얻은 수치인지 모르면 발화율은 아무것도 재지 않는다.")
+        say("    --since 로 플래그가 기록되기 시작한 이후 구간만 집계할 것.")
+        return EXIT_NO_DATA
+
+    if len(flag_sets) > 1:
+        say()
+        say(f"  ✗ 관측 구간에서 서빙 플래그가 {len(flag_sets)}가지로 관측됐다.")
+        for fs in sorted(flag_sets):
+            d = json.loads(fs)
+            on = sorted(k for k, v in d.items() if v) or ["(전부 꺼짐)"]
+            say(f"      켜짐: {', '.join(on)}")
+        say("    분모가 섞여 어떤 비율도 의미가 없다. --since/--until 로 플래그가")
+        say("    일정한 구간을 잘라 각각 집계할 것.")
+        return EXIT_NO_DATA
+
+    if flag_sets:
+        d = json.loads(next(iter(flag_sets)))
+        on = sorted(k for k, v in d.items() if v) or ["(전부 꺼짐)"]
+        say(f"  서빙 플래그       {', '.join(on)}")
+        if not d.get("SERVING_ENABLE_EDI_NAME_RESOLUTION"):
+            say()
+            say("  ✗ 이름 해소가 꺼진 구간이다. EDI-only 요청에서 규칙은 원래 발화하지 않는다.")
+            say("    이 구간의 발화 0 은 규칙의 문제가 아니라 플래그의 문제다.")
+            return EXIT_NO_DATA
+
     # ── 환자 단위로 접는다 ────────────────────────────────────────────────
     # 리포트가 "환자" 라고 쓰므로 실제로 환자로 세야 한다. 같은 환자의 여러 요청을
     # 그대로 세면 재요청이 많은 환자가 비율을 끌어올린다.
-    # 빈 patient_id 는 한 환자로 접으면 안 된다 — 서로 다른 환자가 한 명이 되어
-    # 발화율이 왜곡된다. 행마다 고유 키를 주고, 몇 건인지 따로 밝힌다.
+    #
+    # patient_id 가 없는 행은 **환자 지표에서 제외한다.** 한 명으로 접으면 서로 다른
+    # 환자가 한 명이 되고, 행마다 별개로 세면 고유 환자 수가 부풀려진다. 둘 다
+    # 틀린 숫자다. 요청 기준 지표(ⓑ)와 사유 없는 Red(행 기준)에는 그대로 쓴다.
     per_patient: dict[str, set] = {}
     red_flag: dict[str, bool] = {}
     anonymous = 0
-    for i, r in enumerate(new_fmt):
+    for r in new_fmt:
         pid = str(r.get("patient_id") or "").strip()
         if not pid:
             anonymous += 1
-            pid = f"__no_id__{i}"
+            continue
         ids = per_patient.setdefault(pid, set())
         ids.update(x for x in r["rule_ids"] if isinstance(x, str))
         is_red = (str(r.get("risk_level")) in RED_LEVELS
                   or str(r.get("rule_level")) in RED_LEVELS)
         red_flag[pid] = red_flag.get(pid, False) or is_red
     n = len(per_patient)
-    n_rows = len(new_fmt)
     say(f"  고유 환자         {n:,}명  (요청 {n_rows:,}행)")
     if anonymous:
-        say(f"  ⚠ patient_id 없는 행 {anonymous:,}개 — 각각 별개 환자로 셌다. 실제 환자 수는 이보다 적을 수 있다.")
-
-    # 관측 기간 중 플래그가 바뀌면 꺼진 날과 켜진 날의 행이 한 파일에 섞인다.
-    # serving_flags 는 스키마 3 부터 기록된다. 없는 레코드를 "전부 꺼짐" 으로 세면
-    # 없는 플래그 전환이 보고된다 — 있는 것만 비교한다.
-    flag_sets = {json.dumps(r["serving_flags"], sort_keys=True)
-                 for r in new_fmt if isinstance(r.get("serving_flags"), dict)}
-    if len(flag_sets) > 1:
+        say(f"  ⚠ patient_id 없는 행 {anonymous:,}개 — **환자 지표(ⓐ·①)에서 제외**했다.")
+        say("     요청 기준 지표(ⓑ)와 사유 없는 Red 판정에는 그대로 포함된다.")
+    if n == 0:
         say()
-        say(f"  ⚠ 관측 구간에서 서빙 플래그가 {len(flag_sets)}가지로 관측됐다.")
-        say("    꺼진 구간과 켜진 구간이 한 집계에 섞여 있다 — 발화율을 그대로 인용하지 말 것.")
-        for fs in sorted(flag_sets):
-            d = json.loads(fs)
-            on = sorted(k for k, v in d.items() if v) or ["(전부 꺼짐)"]
-            say(f"      켜짐: {', '.join(on)}")
+        say("  ✗ patient_id 가 있는 행이 없다. 환자 단위 지표를 낼 수 없다.")
+        return EXIT_NO_DATA
 
     hits = Counter()
     for ids in per_patient.values():
