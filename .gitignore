@@ -148,3 +148,6 @@ docs/reviews/_internal/
 
 # 개선계획 내부판·섹션별 교차리뷰 — 코드 좌표·플래그명 포함, 공개 저장소 제외
 docs/plans/_internal/
+
+# A3 측정 산출물 (재현 가능 · 추적하지 않음)
+a3_coverage.json

@@ -87,6 +87,19 @@ async def lifespan(app: FastAPI):
         path=_settings.METRICS_JSONL_PATH,
         lock_timeout=_settings.METRICS_JSONL_LOCK_TIMEOUT,
     )
+    # 서빙 동작을 바꾸는 플래그의 실제 값을 기동 시 남긴다. 배포에서 어떤 값이
+    # 주입됐는지는 코드가 강제할 수 없으므로, 최소한 무엇으로 돌고 있는지는 로그와
+    # /health 양쪽에서 확인 가능해야 한다.
+    from serving.predictor import serving_flag_state
+    _flags = serving_flag_state()
+    if any(_flags.values()):
+        logger.warning(
+            "서빙 플래그 활성: %s — EDI→약물명 해소가 Rule Safety Net 앞으로 당겨져 "
+            "즉각 개입 대상이 늘어난다. 약사 인력 용량 승인 여부를 확인하라.",
+            {k: v for k, v in _flags.items() if v},
+        )
+    else:
+        logger.info("서빙 플래그 전부 비활성(기본값): %s", _flags)
     logger.info("MetricsWriter 초기화 완료: %s", _settings.METRICS_JSONL_PATH)
     yield
     logger.info("서버 종료")
