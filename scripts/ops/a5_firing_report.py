@@ -84,25 +84,40 @@ def parse_args(argv=None):
 
 
 def load(path: Path, since: str | None, until: str | None):
-    """JSONL 을 읽어 (레코드, 파싱실패수) 반환. 깨진 줄은 세고 넘어간다."""
-    rows, broken = [], 0
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                r = json.loads(line)
-            except json.JSONDecodeError:
-                broken += 1
-                continue
-            part = r.get("partition") or (r.get("timestamp") or "")[:10]
-            if since and part < since:
-                continue
-            if until and part > until:
-                continue
-            rows.append(r)
-    return rows, broken
+    """JSONL 을 읽어 (레코드, 손상 줄 수, 미완성 마지막 줄 여부) 반환.
+
+    **집계기는 기록기의 락을 잡지 않는다** — 기록기는 filelock 을 쓰고 이 도구는
+    표준 라이브러리만 쓰기 때문이다(폐쇄망 제약). 그래서 서빙이 append 하는 중에
+    읽으면 마지막 줄이 잘려 있을 수 있다.
+
+    append-only 파일에서 동시 쓰기로 잘릴 수 있는 것은 **마지막 줄뿐**이다.
+    파일이 개행으로 끝나지 않으면 그 줄은 기록 중인 것으로 보고 제외한다(정상).
+    그 밖의 위치에서 파싱이 실패하면 그것은 실제 손상이며, 조용히 넘기면
+    과소집계가 된다 — 호출자가 집계 불가로 끝낸다.
+    """
+    raw = path.read_text(encoding="utf-8")
+    incomplete_tail = bool(raw) and not raw.endswith("\n")
+    lines = raw.splitlines()
+    if incomplete_tail and lines:
+        lines = lines[:-1]
+
+    rows, corrupt = [], 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            corrupt += 1
+            continue
+        part = r.get("partition") or (r.get("timestamp") or "")[:10]
+        if since and part < since:
+            continue
+        if until and part > until:
+            continue
+        rows.append(r)
+    return rows, corrupt, incomplete_tail
 
 
 def _is_new(r: dict) -> bool:
@@ -147,7 +162,12 @@ def main(argv=None) -> int:
         say("  → 서빙이 아직 기록하지 않았거나 경로가 다르다. DDI_METRICS_JSONL_PATH 확인.")
         return EXIT_NO_DATA
 
-    rows, broken = load(path, args.since, args.until)
+    rows, corrupt, incomplete_tail = load(path, args.since, args.until)
+    if corrupt:
+        say(f"\n손상된 줄 {corrupt:,}개가 있다 — 집계를 신뢰할 수 없다.")
+        say("  → 마지막 줄이 아닌 위치의 파싱 실패는 기록 중 잘림이 아니라 손상이다.")
+        say("    파일을 확인하기 전까지 이 결과를 쓰지 말 것. 발화 0 이 아니라 집계 불가다.")
+        return EXIT_NO_DATA
     if not rows:
         say("\n집계 대상 레코드가 0건이다. 기간 조건 또는 기록 여부를 확인할 것.")
         say("  → 이것은 발화 0 이 아니라 집계 불가다.")
@@ -160,8 +180,8 @@ def main(argv=None) -> int:
     say(f"  레코드            {len(rows):,}행")
     say(f"  발화 집계 가능    {len(new_fmt):,}행  (schema_version ≥ {SCHEMA_MIN})")
     say(f"  구형식            {len(old_fmt):,}행  (규칙 ID 없음 — 발화 집계 제외)")
-    if broken:
-        say(f"  파싱 실패         {broken:,}줄")
+    if incomplete_tail:
+        say("  마지막 줄 미완성  1줄  (기록 중 — 제외. 집계기는 기록기의 락을 잡지 않는다)")
 
     if not new_fmt:
         parts = sorted({_part(r) for r in rows})
@@ -179,18 +199,40 @@ def main(argv=None) -> int:
     # ── 환자 단위로 접는다 ────────────────────────────────────────────────
     # 리포트가 "환자" 라고 쓰므로 실제로 환자로 세야 한다. 같은 환자의 여러 요청을
     # 그대로 세면 재요청이 많은 환자가 비율을 끌어올린다.
+    # 빈 patient_id 는 한 환자로 접으면 안 된다 — 서로 다른 환자가 한 명이 되어
+    # 발화율이 왜곡된다. 행마다 고유 키를 주고, 몇 건인지 따로 밝힌다.
     per_patient: dict[str, set] = {}
     red_flag: dict[str, bool] = {}
-    for r in new_fmt:
-        pid = str(r.get("patient_id") or "")
+    anonymous = 0
+    for i, r in enumerate(new_fmt):
+        pid = str(r.get("patient_id") or "").strip()
+        if not pid:
+            anonymous += 1
+            pid = f"__no_id__{i}"
         ids = per_patient.setdefault(pid, set())
         ids.update(x for x in r["rule_ids"] if isinstance(x, str))
-        # 최종 등급과 규칙층 등급 중 하나라도 Red 면 Red 환자다
         is_red = (str(r.get("risk_level")) in RED_LEVELS
                   or str(r.get("rule_level")) in RED_LEVELS)
         red_flag[pid] = red_flag.get(pid, False) or is_red
     n = len(per_patient)
-    say(f"  고유 환자         {n:,}명  (요청 {len(new_fmt):,}행)")
+    n_rows = len(new_fmt)
+    say(f"  고유 환자         {n:,}명  (요청 {n_rows:,}행)")
+    if anonymous:
+        say(f"  ⚠ patient_id 없는 행 {anonymous:,}개 — 각각 별개 환자로 셌다. 실제 환자 수는 이보다 적을 수 있다.")
+
+    # 관측 기간 중 플래그가 바뀌면 꺼진 날과 켜진 날의 행이 한 파일에 섞인다.
+    # serving_flags 는 스키마 3 부터 기록된다. 없는 레코드를 "전부 꺼짐" 으로 세면
+    # 없는 플래그 전환이 보고된다 — 있는 것만 비교한다.
+    flag_sets = {json.dumps(r["serving_flags"], sort_keys=True)
+                 for r in new_fmt if isinstance(r.get("serving_flags"), dict)}
+    if len(flag_sets) > 1:
+        say()
+        say(f"  ⚠ 관측 구간에서 서빙 플래그가 {len(flag_sets)}가지로 관측됐다.")
+        say("    꺼진 구간과 켜진 구간이 한 집계에 섞여 있다 — 발화율을 그대로 인용하지 말 것.")
+        for fs in sorted(flag_sets):
+            d = json.loads(fs)
+            on = sorted(k for k, v in d.items() if v) or ["(전부 꺼짐)"]
+            say(f"      켜짐: {', '.join(on)}")
 
     hits = Counter()
     for ids in per_patient.values():
@@ -223,9 +265,18 @@ def main(argv=None) -> int:
     # ── ② 환자 단위 발화율 ──────────────────────────────────────────────
     any_top = sum(1 for ids in per_patient.values() if ids & set(TOP_RULES))
     any_rule = sum(1 for ids in per_patient.values() if ids)
-    head("② 환자 단위 발화율")
-    say(f"  Top-10 중 1개 이상   {any_top:,} / {n:,}  = {any_top / n:.2%}")
-    say(f"  규칙 ID 가 하나라도  {any_rule:,} / {n:,}  = {any_rule / n:.2%}")
+    any_top_rows = sum(1 for r in new_fmt if set(r["rule_ids"]) & set(TOP_RULES))
+    head("② 발화율 — 두 기준을 함께 본다")
+    say("  ⓐ 기간 유병 (고유 환자 기준) — 관측 창에서 **한 번이라도** 그 규칙이 닿은 환자")
+    say(f"     Top-10 중 1개 이상   {any_top:,} / {n:,}명  = {any_top / n:.2%}")
+    say(f"     규칙 ID 가 하나라도  {any_rule:,} / {n:,}명  = {any_rule / n:.2%}")
+    say()
+    say("  ⓑ 요청 기준 — 예측 1회당 얼마나 터지는가")
+    say(f"     Top-10 중 1개 이상   {any_top_rows:,} / {n_rows:,}행  = {any_top_rows / n_rows:.2%}")
+    say()
+    say("  두 값은 다르고, **어느 쪽이 큰지는 고정돼 있지 않다.** 발화하는 환자가 자주")
+    say("  재요청하면 ⓑ 가 커지고, 발화하지 않는 환자가 자주 재요청하면 ⓐ 가 커진다.")
+    say("  **ⓐ 를 \"운영 발화율\" 로 인용하지 말 것** — 그것은 기간 유병이다.")
 
     # ── ③ 사유 없는 Red ─────────────────────────────────────────────────
     # 최종 등급만 보면 안 된다 — 탐지 전용에서는 최종 등급이 Red 로 올라가지
@@ -241,7 +292,7 @@ def main(argv=None) -> int:
     head("③ 사유 없는 Red — A4 활성 차단 항목")
     say(f"  Red 환자        {n_red_pat:,}명  ({n_red_pat / n:.2%})"
         "   ※ 최종 등급 또는 규칙층 등급 기준")
-    say(f"  사유 0건 요청   {len(reasonless):,}행")
+    say(f"  사유 0건 요청   {len(reasonless):,}행  ※ 환자가 아니라 **요청 행** 기준 — 한 요청이라도 있으면 차단이다")
     if reasonless:
         say()
         say("  ✗ 차단 유지. 약사가 근거 없이 즉각 개입 지시를 받는 경우가 있다.")
@@ -273,8 +324,13 @@ def main(argv=None) -> int:
     say("  이 수치는 관측 기간·트래픽에 묶인다. 비율만 떼어 인용하면 근거가 사라진다.")
 
     if args.out:
-        Path(args.out).write_text("\n".join(OUT) + "\n", encoding="utf-8")
-        print(f"\n저장: {args.out}")
+        try:
+            Path(args.out).write_text("\n".join(OUT) + "\n", encoding="utf-8")
+            print(f"\n저장: {args.out}")
+        except OSError as e:
+            # 저장 실패를 문서에 없는 exit 1 로 흘리면 반환값 계약이 깨진다.
+            print(f"\n리포트 저장 실패: {args.out} — {e}")
+            return EXIT_NO_DATA
     return rc
 
 

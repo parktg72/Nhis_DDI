@@ -32,7 +32,7 @@ def _write(path: Path, rows: list[dict]) -> Path:
 
 
 def _rec(pid: str, day: str, level: str, ids: list[str] | None, *,
-         rule_level: str | None = None, other: int = 0, version: int | None = 2) -> dict:
+         rule_level: str | None = None, other: int = 0, version: int | None = 3) -> dict:
     r = {
         "timestamp": f"{day}T01:00:00+00:00", "partition": day,
         "patient_id": pid, "risk_level": level,
@@ -41,6 +41,8 @@ def _rec(pid: str, day: str, level: str, ids: list[str] | None, *,
     }
     if version is not None:
         r["schema_version"] = version
+        r["serving_flags"] = {"SERVING_ENABLE_EDI_NAME_RESOLUTION": True,
+                              "SERVING_RULE_DETECT_ONLY": True}
         r["rule_ids"] = ids or []
         r["n_reasons"] = len(ids or []) + other
         r["n_other_reasons"] = other
@@ -273,17 +275,102 @@ def test_date_filter(tmp_path, capsys):
     assert "2026-09-20 ~ 2026-09-20" in out
 
 
-def test_broken_lines_are_counted_not_fatal(tmp_path, capsys):
-    """깨진 줄은 세고 넘어가되, 조용히 사라지면 안 된다."""
+def test_corrupt_line_stops_the_report(tmp_path, capsys):
+    """마지막 줄이 아닌 위치의 손상은 **집계 불가**여야 한다.
+
+    세고 넘어가면 조용한 과소집계가 된다. append-only 파일에서 동시 쓰기로
+    잘릴 수 있는 것은 마지막 줄뿐이므로, 그 밖의 파싱 실패는 실제 손상이다.
+    """
     p = tmp_path / "m.jsonl"
     p.write_text(
-        json.dumps(_rec("P1", "2026-09-05", "Yellow", ["TOP01"]), ensure_ascii=False)
-        + "\n{ 깨진 줄\n", encoding="utf-8")
+        "{ 손상된 줄\n"
+        + json.dumps(_rec("P1", "2026-09-05", "Yellow", ["TOP01"]), ensure_ascii=False)
+        + "\n", encoding="utf-8")
     rc = main(["--path", str(p)])
     out = capsys.readouterr().out
 
-    assert rc != EXIT_NO_DATA, "깨진 줄 때문에 집계가 중단됐다"
-    assert "파싱 실패         1줄" in out
+    assert rc == EXIT_NO_DATA, "손상된 줄이 있는데 집계를 계속했다"
+    assert "집계를 신뢰할 수 없다" in out
+
+
+def test_incomplete_tail_is_not_corruption(tmp_path, capsys):
+    """기록 중인 마지막 줄은 손상이 아니라 제외 대상이다.
+
+    집계기는 기록기의 락을 잡지 않으므로(폐쇄망 제약), 서빙이 append 하는 중에
+    읽으면 마지막 줄이 잘려 있을 수 있다. 이것까지 손상으로 처리하면 트래픽이
+    있는 시간대에는 집계가 아예 되지 않는다.
+    """
+    p = tmp_path / "m.jsonl"
+    good = [_rec(f"P{i}", f"2026-09-{5+i:02d}", "Yellow", ["TOP01"]) for i in range(8)]
+    p.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in good)
+                 + "\n" + '{"timestamp": "2026-09-13T01:00:00+0',  # ← 잘린 채 끝
+                 encoding="utf-8")
+    rc = main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert rc == EXIT_OK, "기록 중인 마지막 줄 때문에 집계가 중단됐다"
+    assert "마지막 줄 미완성" in out
+
+
+def test_empty_patient_ids_are_not_one_patient(tmp_path, capsys):
+    """빈 patient_id 를 한 환자로 접으면 안 된다 — 발화율이 왜곡된다."""
+    p = _write(tmp_path / "m.jsonl", [
+        _rec("", "2026-09-05", "Yellow", ["TOP01"]),
+        _rec("", "2026-09-05", "Yellow", ["TOP09"]),
+        _rec("P1", "2026-09-05", "Green", []),
+    ])
+    main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert "고유 환자         3명" in out, "빈 ID 두 행이 한 환자로 합쳐졌다"
+    assert "patient_id 없는 행 2개" in out
+
+
+def test_flag_change_during_window_is_flagged(tmp_path, capsys):
+    """관측 중 플래그가 바뀌면 경고해야 한다 — 꺼진 날과 켜진 날이 섞인다."""
+    off = _rec("P1", "2026-09-05", "Green", [])
+    off["serving_flags"] = {"SERVING_ENABLE_EDI_NAME_RESOLUTION": False,
+                            "SERVING_RULE_DETECT_ONLY": False}
+    p = _write(tmp_path / "m.jsonl", [off, _rec("P2", "2026-09-06", "Yellow", ["TOP01"])])
+    main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert "서빙 플래그가 2가지로 관측됐다" in out
+    assert "발화율을 그대로 인용하지 말 것" in out
+
+
+def test_both_rates_are_printed(tmp_path, capsys):
+    """기간 유병(환자)과 요청 기준을 함께 인쇄해야 한다.
+
+    합집합만 인쇄하면 그 값이 "운영 발화율" 로 나간다. 환자가 여러 번 요청하면
+    환자 기준이 요청 기준보다 크게 나온다.
+    """
+    rows = [_rec("P1", f"2026-09-{5+i:02d}", "Yellow", ["TOP01"]) for i in range(4)]
+    rows += [_rec(f"Q{i}", "2026-09-05", "Green", []) for i in range(6)]
+    p = _write(tmp_path / "m.jsonl", rows)
+    main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert "ⓐ 기간 유병" in out and "ⓑ 요청 기준" in out
+    # 환자 기준 1/7 = 14.29%, 요청 기준 4/10 = 40.00%
+    assert "1 / 7" in out and "4 / 10" in out
+    assert '"운영 발화율" 로 인용하지 말 것' in out
+
+
+def test_non_rule_uppercase_tokens_are_not_ids(tmp_path, capsys):
+    """네임스페이스 밖의 대문자 토큰은 규칙 ID 가 아니다.
+
+    생산자 쪽 문법이지만, 집계기가 그런 값을 받아도 Top-10 으로 세지 않아야 한다.
+    """
+    p = _write(tmp_path / "m.jsonl", [
+        _rec("P1", "2026-09-05", "Yellow", ["TIMEOUT", "UNKNOWN", "TOP01"]),
+    ])
+    main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert "TIMEOUT" in out, "알 수 없는 ID 를 조용히 버리면 안 된다"
+    # Top-10 표에는 TOP01 만
+    assert "TOP01   항응고제 + NSAID" in out
 
 
 def test_empty_after_filter_is_not_a_zero(tmp_path, capsys):
@@ -304,3 +391,23 @@ def test_report_can_be_saved(tmp_path):
 
     assert dest.exists()
     assert "A5 — 운영 발화 집계" in dest.read_text(encoding="utf-8")
+
+
+def test_schema2_records_do_not_trigger_a_false_flag_change(tmp_path, capsys):
+    """`serving_flags` 가 없는 구 스키마(2)를 플래그 전환으로 오판하면 안 된다."""
+    old = _rec("P1", "2026-09-05", "Yellow", ["TOP01"], version=2)
+    del old["serving_flags"]
+    p = _write(tmp_path / "m.jsonl", [old, _rec("P2", "2026-09-06", "Green", [])])
+    main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert "서빙 플래그가" not in out, "없는 플래그 전환을 보고했다"
+
+
+def test_rate_direction_is_not_asserted(tmp_path, capsys):
+    """두 발화율의 대소를 단정하지 않아야 한다 — 방향은 고정이 아니다."""
+    p = _write(tmp_path / "m.jsonl", [_rec("P1", "2026-09-05", "Yellow", ["TOP01"])])
+    main(["--path", str(p)])
+    out = capsys.readouterr().out
+
+    assert "어느 쪽이 큰지는 고정돼 있지 않다" in out

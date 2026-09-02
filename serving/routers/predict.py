@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from monitoring.metrics_writer import get_metrics_writer
+from serving.predictor import serving_flag_state
 from serving.predictor import get_predictor
 from serving.schemas import (
     BatchPredictRequest,
@@ -24,15 +25,20 @@ from serving.schemas import (
 logger = logging.getLogger(__name__)
 
 
-# 사유 목록에서 규칙 ID 로 인정하는 문법. `TOP01` · `GRADE_MAJOR_3PLUS` ·
-# `SEV_10DRUG_HIGHRISK` · `RED_CONTRAINDICATED` 처럼 대문자·숫자·밑줄로만 이루어진
-# 토큰만 ID 다. 사유 문자열에는 ID 형식이 아닌 것도 섞인다 —
-# `동일성분중복 3건`(건수마다 달라진다) · `ML 모델 Red 확률: 45.2%`(값이 매번 다르다).
-# 이것들을 ID 로 세면 집계표가 오염되고 카디널리티가 무한히 늘어난다.
-_RULE_ID_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+# 사유 목록에서 규칙 ID 로 인정하는 문법. **네임스페이스를 명시적으로 제한한다.**
+# 대문자 토큰이면 다 통과시키면 TIMEOUT·UNKNOWN 같은 비규칙 토큰도 규칙으로 세게
+# 된다. 실제로 사유에 실리는 것은 아래 다섯 갈래뿐이다.
+#   TOP01~TOP10   Top-10 DDI 규칙
+#   GRADE_*       등급 산출 조건 (10종+고위험약 · 75세+신/간 등)
+#   SEV_*         rule_floor 의 중증 하한 트리거
+#   RED_*         결정적 Red 백스톱 (금기)
+#   DDI_*         subtype 판정에서 온 DDI 사유
+# 사유 문자열에는 ID 형식이 아닌 것도 섞인다 — `동일성분중복 3건`(건수마다
+# 달라진다) · `ML 모델 Red 확률: 45.2%`(값이 매번 다르다). 이것들을 ID 로 세면
+# 집계표가 오염되고 카디널리티가 무한히 늘어난다.
+_RULE_ID_RE = re.compile(r"^(?:TOP\d{2}|(?:GRADE|SEV|RED|DDI)_[A-Z0-9_]+)$")
 
-# 기록 스키마 버전. 집계 도구가 필드 존재 추측 대신 이 값을 본다.
-METRICS_SCHEMA_VERSION = 2
+METRICS_SCHEMA_VERSION = 3
 
 
 def _split_reasons(result) -> tuple[list[str], int]:
@@ -94,6 +100,9 @@ async def predict(req: PredictRequest):
             "latency_ms": round(latency_ms, 1),
             "source": "api",
             "schema_version": METRICS_SCHEMA_VERSION,
+            # 플래그 상태를 행에 남긴다. 관측 기간 중 플래그가 바뀌면 꺼진 날과
+            # 켜진 날의 행이 한 파일에 섞이고, 집계가 그것을 구분할 수 없다.
+            "serving_flags": serving_flag_state(),
             "rule_ids": _ids,
             "n_reasons": len(result.risk_reasons or []),
             "n_other_reasons": _other,
@@ -142,6 +151,7 @@ async def predict_batch(req: BatchPredictRequest):
                     "latency_ms": round(single_latency_ms, 1),
                     "source": "batch",
                     "schema_version": METRICS_SCHEMA_VERSION,
+                    "serving_flags": serving_flag_state(),
                     "rule_ids": _b_ids,
                     "n_reasons": len(single_result.risk_reasons or []),
                     "n_other_reasons": _b_other,
