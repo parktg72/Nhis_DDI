@@ -119,6 +119,13 @@ _EXPECTED_PRODUCTION = {
     ("serving/predictor.py", "resolve_codes"): 1,
     # 주 플래그 안에 중첩된 ATC 플래그 경로
     ("serving/predictor.py", "atc_candidates"): 1,
+    # A3 측정 스크립트 2건 — 오프라인·읽기 전용이며 서빙 경로가 아니다.
+    # 둘 다 `_, name = lookup_wk(...)` 로 ATC 를 버리고 약물명만 쓰므로
+    # `841b849` 의 반환 계약 변경(ATC 없는 엔트리도 약물명을 반환)에 무영향이다.
+    # 서빙 경로가 아니라는 이유로 스캔에서 빼지는 않는다 — ops 스크립트도
+    # 프로덕션이며, 예외를 만들면 이 표가 다음 ops 호출자를 놓친다.
+    ("scripts/ops/a3_remeasure.py", "resolve_names"): 1,
+    ("scripts/ops/a3_residual_cause.py", "main"): 1,
 }
 
 
