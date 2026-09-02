@@ -32,19 +32,23 @@ from pathlib import Path
 
 # ── 기준값 ────────────────────────────────────────────────────────────────
 # 개행 정규화(CR 제거) 후 SHA-256 앞 16자. Windows/Unix 체크아웃 차이를 흡수한다.
+# 세대 구분이 2026-09-02 에 바뀌었다. A1 병합 전에는 "main = Step 0 없음 /
+# 안전망 = 별도 브랜치" 였으나, 병합으로 안전망 코드가 main 이 됐다. 지금 구분은
+# "구판(병합 전)" 과 "현판(병합 후)" 이다.
 SOURCE_FINGERPRINTS = {
     "serving/predictor.py": {
-        "83a2821467b45c44": "main 계열 (8a1157c) — Step 0 이름해소 없음",
-        "368c65a1edfec681": "안전망 계열 (a98a0a4) — Step 0 있음, 플래그로 가려짐",
-        "eed5448d36477ab8": "안전망 계열 + A2 사유 병합 — 최신",
+        "83a2821467b45c44": "구판 — Step 0 이름해소 자체가 없음 (A1 병합 전 main)",
+        "368c65a1edfec681": "구판 — 안전망 브랜치 (A1 병합 전)",
+        "eed5448d36477ab8": "구판 — 안전망 + A2 사유 병합 (A1 병합 전)",
+        "f6ce1a0c379c1c44": "현판 — A1·RS1~RS3·A1a 병합 후. 세 플래그 전부 존재",
     },
     "serving/routers/health.py": {
-        "935f4c8f22770966": "main 계열 — /health 에 serving_flags 없음",
-        "e7555b7ae3803e9c": "안전망 계열 — serving_flags 노출",
+        "935f4c8f22770966": "구판 — /health 에 serving_flags 없음",
+        "e7555b7ae3803e9c": "현판 — serving_flags 노출",
     },
     "serving/schemas.py": {
-        "774337c64fdb93fd": "main 계열",
-        "e3ffc338f8cde3d1": "안전망 계열",
+        "774337c64fdb93fd": "구판",
+        "e3ffc338f8cde3d1": "현판",
     },
 }
 BUNDLE_DEFAULT = "hana_app/models/hierarchical/retrain_prod_0711_hierarchy_cur"
@@ -90,16 +94,17 @@ def check_source(root: Path) -> str:
         label = table.get(short, "알 수 없는 판 — 로컬 수정 또는 제3의 계열")
         say(f"  {rel:<28} {short}  {label}")
         verdicts.append(
-            "main" if "main 계열" in label else
-            "safetynet" if "안전망 계열" in label else "unknown"
+            "current" if "현판" in label else
+            "old" if "구판" in label else "unknown"
         )
     uniq = set(verdicts)
-    if uniq == {"main"}:
-        v = "MAIN — Step 0 이름해소가 코드에 없다. 병합이 선행이다."
-    elif uniq == {"safetynet"}:
-        v = "SAFETYNET — Step 0 이 있다. 남은 것은 플래그 활성 결정이다."
+    if uniq == {"current"}:
+        v = ("현판 — 세 플래그가 모두 코드에 있다. 남은 것은 활성 결정이며, "
+             "탐지만 켜려면 이름 해소 + 탐지 전용을 함께 켠다(배포 런북 참조).")
+    elif uniq == {"old"}:
+        v = "구판 — 배포본이 A1 병합 전이다. 재배포가 선행이다."
     else:
-        v = f"혼재/불명 {sorted(uniq)} — 배포본이 단일 계열이 아니다. 개별 대조 필요."
+        v = f"혼재/불명 {sorted(uniq)} — 배포본이 단일 판이 아니다. 개별 대조 필요."
     say(f"\n  판정: {v}")
     return v
 
