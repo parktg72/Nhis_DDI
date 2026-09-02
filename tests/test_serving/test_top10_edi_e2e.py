@@ -1,22 +1,22 @@
-"""A3 — 실 EDI만 담은 HTTP 요청에서 Top-10 규칙이 발화하는지 잠근다.
+"""실 EDI만 담은 HTTP 요청에서 Top-10 규칙이 발화하는지 잠근다 (A3).
 
 `test_safety_net_edi_resolution.py` 는 해소 경로 자체와 TOP01·TOP09 를 다룬다.
-이 파일은 나머지 **발화 가능 규칙(TOP02·06·07·08)** 을 HTTP 경로로 고정하고,
-**미발화 4종(TOP03·04·05·10)** 을 잔여로 명시적으로 못 박는다. 중복하지 않는다.
+이 파일은 나머지 여덟 규칙을 HTTP 경로로 고정한다. 중복하지 않는다.
 
-분류 근거와 원인 규명은 `docs/plans/2026-09-02-a3-발화가능성-실측.md`.
+분류 근거는 `docs/plans/2026-09-02-a3-발화가능성-실측.md`.
 
 여기의 EDI 코드는 모두 2024-07-01 하루치 청구 원본에 **실제로 등장**하는 값이다.
 합성 코드가 아니므로 참조DB 연결이 끊기면 조용히 통과하지 않고 드러난다.
 
 ────────────────────────────────────────────────────────────────────────────
-미발화 4종 테스트의 의미 (중요)
+잔여 4종의 승격 (2026-09-02)
 
-아래 `test_residual_*` 는 "발화하지 않음"을 통과 조건으로 삼는다. 이는 현재
-상태를 승인하는 것이 아니라 **안전 공백을 잠가 두는 것**이다. 해소 결함
-RS1·RS2·RS3 중 하나라도 고쳐지면 이 테스트들이 **실패한다.** 그때 할 일은
-테스트를 지우는 것이 아니라 잔여 목록에서 해당 규칙을 빼고 발화 테스트로
-승격시키는 것이다. 실패 메시지가 그것을 지시한다.
+이 파일은 처음에 TOP03·04·05·10 을 "미발화 잔여" 로 못박고 있었다. 원인은
+해소 결함 RS1(성분↔DDI 식별자 미연결)·RS2(복합제 첫 성분만 반환)·RS3(statin
+ATC 목록 오류) 였고, 셋을 고치자 넷 다 발화하게 됐다(해소율 60.2% → 80.7%,
+발화 6종 → 10종). 잔여 테스트가 설계대로 실패해 승격을 지시했고 그에 따랐다.
+
+아래 `test_resolution_did_not_regress` 가 그 해소를 되돌아가지 못하게 잠근다.
 ────────────────────────────────────────────────────────────────────────────
 """
 from __future__ import annotations
@@ -53,17 +53,17 @@ EDI_FROVATRIPTAN  = "644703310"  # wk 509501ATB → Frovatriptan (triptan)
 EDI_LITHIUM       = "642200390"  # wk 184701ATB → Lithium carbonate
 EDI_CELECOXIB     = "647304120"  # wk 347702ACH → Celecoxib (nsaids)
 
-# 미발화 4종의 구성 약물 — 처방은 실제로 있으나 이름 해소가 실패한다
+# RS1~RS3 수정으로 승격된 네 규칙의 구성 약물 (종전에는 이름 해소가 실패했다)
 EDI_ENALAPRIL     = "660700970"  # wk 151601ATB → Enalapril (acei) — 해소됨
-EDI_SPIRONOLACTONE = "669800160"  # wk 231101ATB → 해소 실패 (RS1)
+EDI_SPIRONOLACTONE = "669800160"  # wk 231101ATB → Spironolactone (RS1 수정으로 해소)
 EDI_DIGOXIN       = "640000090"  # wk 144801ATB → Digoxin — 해소됨
-EDI_AMIODARONE    = "652101250"  # wk 107401ATB → 해소 실패 (RS1)
-EDI_METHOTREXATE  = "642101470"  # wk 192101ATB → 해소 실패 (RS1)
+EDI_AMIODARONE    = "652101250"  # wk 107401ATB → Amiodarone (RS1 수정으로 해소)
+EDI_METHOTREXATE  = "642101470"  # wk 192101ATB → Methotrexate (RS1 수정으로 해소)
 EDI_TRIMETHOPRIM  = "643900680"  # wk 311500ATB → Trimethoprim — 해소됨
-EDI_ATORVASTATIN  = "648101430"  # wk 111501ATB → 해소 실패 (RS1)
-EDI_CLARITHROMYCIN = "669804360"  # wk 134901ATB → 해소 실패 (RS1)
-# 복합제 — 성분에 스타틴이 있으나 첫 성분 이름만 반환된다 (RS2)
-EDI_STATIN_COMBO  = "073400160"  # wk 472300ATB → 성분 [atorvastatin, amlodipine], 해소명 Amlodipine
+EDI_ATORVASTATIN  = "648101430"  # wk 111501ATB → Atorvastatin (RS1 수정으로 해소)
+EDI_CLARITHROMYCIN = "669804360"  # wk 134901ATB → Clarithromycin (RS1 수정으로 해소)
+# 복합제 — 성분에 스타틴이 있다. RS2 수정 전에는 첫 성분 이름만 반환됐다.
+EDI_STATIN_COMBO  = "073400160"  # wk 472300ATB → 성분 [atorvastatin, amlodipine]
 
 
 @pytest.fixture(scope="module")
@@ -132,6 +132,11 @@ def _reasons(client, patient_id: str, edis: list[str]) -> list[str]:
         ("TOP06", [EDI_ESCITALOPRAM, EDI_LINEZOLID], "SSRI + MAOI"),
         ("TOP07", [EDI_ESCITALOPRAM, EDI_FROVATRIPTAN], "SSRI + triptan"),
         ("TOP08", [EDI_LITHIUM, EDI_CELECOXIB], "lithium + NSAID"),
+        # RS1~RS3 수정으로 승격된 네 규칙
+        ("TOP03", [EDI_ENALAPRIL, EDI_SPIRONOLACTONE, EDI_CELECOXIB], "Triple Whammy"),
+        ("TOP04", [EDI_DIGOXIN, EDI_AMIODARONE], "digoxin + amiodarone"),
+        ("TOP05", [EDI_METHOTREXATE, EDI_TRIMETHOPRIM], "methotrexate + trimethoprim"),
+        ("TOP10", [EDI_ATORVASTATIN, EDI_CLARITHROMYCIN], "statin + macrolide"),
     ],
 )
 def test_edi_only_http_fires(http_client, rule_id, edis, label):
@@ -152,59 +157,39 @@ def test_batch_route_shares_the_same_resolution_path(http_client):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 미발화 4종 — 잔여. 발화하게 되면 이 테스트가 실패하며, 그것이 신호다.
+# 해소 회귀 방지 — RS1·RS2·RS3 이 되돌아가면 여기서 먼저 실패한다
 # ─────────────────────────────────────────────────────────────────────────────
 
-_PROMOTE = (
-    "{rid} 가 발화했다. 해소 결함({defect})이 고쳐졌다는 뜻이다. "
-    "이 테스트를 지우지 말고, 잔여 목록(docs/plans/2026-09-02-a3-발화가능성-실측.md §3)에서 "
-    "{rid} 를 빼고 위 test_edi_only_http_fires 파라미터로 승격시킬 것."
+_REGRESS = (
+    "{who}({edi}) 가 이름으로 해소되지 않는다. {defect} 가 되돌아갔다는 뜻이며, "
+    "그 규칙은 실 청구 요청에서 조용히 무발화한다. 해소 경로를 먼저 고칠 것."
 )
 
 
 @pytest.mark.parametrize(
-    "rule_id, edis, defect, label",
+    "edi, who, defect",
     [
-        ("TOP03", [EDI_ENALAPRIL, EDI_SPIRONOLACTONE, EDI_CELECOXIB], "RS1",
-         "Triple Whammy — K보존이뇨제가 이름으로 해소되지 않는다"),
-        ("TOP04", [EDI_DIGOXIN, EDI_AMIODARONE], "RS1",
-         "digoxin + amiodarone — amiodarone 이 해소되지 않는다"),
-        ("TOP05", [EDI_METHOTREXATE, EDI_TRIMETHOPRIM], "RS1",
-         "methotrexate + trimethoprim — methotrexate 가 해소되지 않는다"),
-        ("TOP10", [EDI_ATORVASTATIN, EDI_CLARITHROMYCIN], "RS1",
-         "statin + macrolide — 양쪽 모두 해소되지 않는다"),
+        (EDI_ENALAPRIL, "TOP03 acei", "RS1"),
+        (EDI_CELECOXIB, "TOP03 nsaid", "RS1"),
+        (EDI_SPIRONOLACTONE, "TOP03 k보존이뇨제", "RS1"),
+        (EDI_DIGOXIN, "TOP04 digoxin", "RS1"),
+        (EDI_AMIODARONE, "TOP04 amiodarone", "RS1"),
+        (EDI_METHOTREXATE, "TOP05 methotrexate", "RS1"),
+        (EDI_TRIMETHOPRIM, "TOP05 trimethoprim", "RS1"),
+        (EDI_ATORVASTATIN, "TOP10 statin", "RS1"),
+        (EDI_CLARITHROMYCIN, "TOP10 macrolide", "RS1"),
     ],
 )
-def test_residual_does_not_fire(http_client, rule_id, edis, defect, label):
-    """잔여 4종은 현재 발화하지 않는다 — 안전 공백을 잠가 둔다."""
-    reasons = _reasons(http_client, f"P-RES-{rule_id}", edis)
-    assert not any(rule_id in x for x in reasons), (
-        _PROMOTE.format(rid=rule_id, defect=defect) + f" (reasons={reasons}, {label})"
-    )
+def test_resolution_did_not_regress(real_standardizer, edi, who, defect):
+    """규칙이 의존하는 약물이 실제로 이름을 얻는지 코드 단위로 고정한다.
 
+    HTTP 발화 테스트는 응답이 비어도 통과할 수 있는 형태가 아니지만, 발화 실패의
+    원인이 규칙인지 해소인지는 구분해 주지 않는다. 이쪽이 그 구분을 준다 —
+    해소가 깨지면 여기가 먼저 실패한다.
 
-@pytest.mark.parametrize(
-    "edi, expect_resolved, who",
-    [
-        # 잔여 규칙의 "해소되는 쪽" — 경로가 살아 있음을 증명한다
-        (EDI_ENALAPRIL, True, "TOP03 acei"),
-        (EDI_CELECOXIB, True, "TOP03 nsaid"),
-        (EDI_DIGOXIN, True, "TOP04 digoxin"),
-        (EDI_TRIMETHOPRIM, True, "TOP05 trimethoprim"),
-        # 잔여 규칙의 "해소되지 않는 쪽" — 미발화의 실제 원인 (RS1)
-        (EDI_SPIRONOLACTONE, False, "TOP03 k보존이뇨제"),
-        (EDI_AMIODARONE, False, "TOP04 amiodarone"),
-        (EDI_METHOTREXATE, False, "TOP05 methotrexate"),
-        (EDI_ATORVASTATIN, False, "TOP10 statin"),
-        (EDI_CLARITHROMYCIN, False, "TOP10 macrolide"),
-    ],
-)
-def test_residual_cause_is_resolution_failure(real_standardizer, edi, expect_resolved, who):
-    """잔여의 원인이 **이름 해소 실패**임을 코드 단위로 고정한다.
-
-    위 `test_residual_does_not_fire` 는 응답이 비어 있어도 통과할 수 있다.
-    이 테스트가 그 구멍을 막는다 — 같은 요청 안에서 한쪽은 해소되고
-    다른 쪽만 해소되지 않는다는 것이 미발화의 실제 원인이다.
+    이 아홉 건은 모두 RS1(성분↔DDI 식별자 미연결) 때문에 해소되지 않던 약물이다.
+    `_edi_map` 은 DrugBank ID 로 키잉되는데 DUR D-코드 314개 중 275개가 거기
+    없었고, 그 275개가 통째로 무발화했다.
     """
     _, name = real_standardizer.lookup_edi(edi)
     if not name:
@@ -212,24 +197,16 @@ def test_residual_cause_is_resolution_failure(real_standardizer, edi, expect_res
         if wk:
             _, name = real_standardizer.lookup_wk(wk)
 
-    if expect_resolved:
-        assert name, (
-            f"{who}({edi}) 가 해소되지 않았다 — 해소 경로 자체가 죽었을 수 있다. "
-            "이 상태면 잔여 테스트의 통과는 근거가 없다."
-        )
-    else:
-        assert not name, (
-            f"{who}({edi}) 가 이제 {name!r} 로 해소된다 — RS1 이 고쳐졌다는 뜻이다. "
-            "해당 규칙을 잔여 목록에서 빼고 발화 테스트로 승격시킬 것."
-        )
+    assert name, _REGRESS.format(who=who, edi=edi, defect=defect)
 
 
-def test_residual_rs2_composite_drops_the_statin_component(real_standardizer):
-    """RS2 — 복합제가 첫 성분 이름만 반환해 스타틴 성분이 소실된다.
+def test_rs2_composite_keeps_the_statin_component(real_standardizer):
+    """RS2 — 복합제의 스타틴 성분이 규칙 입력에서 소실되지 않는다.
 
-    이 코드의 성분에는 스타틴이 있는데 해소된 이름에는 없다. 하루치에서 이런
-    사례가 75건이며, 스타틴이 해소에 성공한 건수 전량이 여기 해당한다.
-    RS2 가 고쳐지면 이 테스트가 실패한다 — 그때 TOP10 잔여도 함께 재검토할 것.
+    `lookup_wk` 는 `DrugItem.drug_name` 이 스칼라라 첫 성분만 돌려준다. 그것은
+    그대로 두고, 규칙 경로가 쓰는 `lookup_wk_names` 가 전 성분을 돌려준다.
+    종전에는 스타틴 복합제 해소 성공 75건 **전량**이 병용 성분 이름으로 해소돼
+    statin 그룹에 한 건도 들어오지 않았다.
     """
     wk = real_standardizer.get_wk(EDI_STATIN_COMBO)
     assert wk, "복합제 EDI 의 주성분코드를 찾지 못했다 — 이 픽스처의 전제가 깨졌다"
@@ -239,11 +216,27 @@ def test_residual_rs2_composite_drops_the_statin_component(real_standardizer):
         f"이 코드는 더 이상 스타틴 복합제가 아니다 — 픽스처를 갱신할 것. 성분={components}"
     )
 
-    _, name = real_standardizer.lookup_wk(wk)
-    assert name, "복합제가 아예 해소되지 않았다 — 이 픽스처의 전제가 깨졌다"
-    assert "statin" not in name.lower(), (
-        f"복합제가 스타틴 이름으로 해소됐다 — RS2 가 고쳐졌다는 뜻이다. "
-        f"잔여 목록에서 TOP10 을 재검토할 것. (성분={components}, 해소명={name!r})"
+    names = real_standardizer.lookup_wk_names(wk)
+    assert any("statin" in n.lower() for n in names), (
+        f"복합제의 스타틴 성분이 규칙 입력에서 빠졌다 — RS2 가 되돌아갔다. "
+        f"성분={components}, 해소명={names}"
+    )
+
+    # 대표 이름(스칼라)은 종전 계약 그대로 — 첫 성분이며 스타틴이 아닐 수 있다
+    _, primary = real_standardizer.lookup_wk(wk)
+    assert primary in names, f"대표 이름이 전 성분 목록에 없다 — {primary!r} not in {names}"
+
+
+def test_composite_components_reach_the_rules(http_client):
+    """복합제만 담긴 EDI-only 요청에서 스타틴 규칙이 발화한다.
+
+    `EDI_STATIN_COMBO` 의 대표 이름은 Amlodipine 이므로, 이 요청이 TOP10 을
+    발화시키려면 전 성분이 규칙에 도달해야만 한다.
+    """
+    reasons = _reasons(http_client, "P-COMBO", [EDI_STATIN_COMBO, EDI_CLARITHROMYCIN])
+
+    assert any("TOP10" in x for x in reasons), (
+        f"복합제의 스타틴 성분이 규칙에 도달하지 않았다 — reasons={reasons}"
     )
 
 

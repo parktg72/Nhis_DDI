@@ -197,6 +197,15 @@ class CodeStandardizer:
             return None, None
 
         # 2. 모든 ddi_id에 대해 매핑되는 ATC 및 약물명 수집
+        #
+        # RS1 — `_edi_map` 은 DrugBank ID 로 키잉된다(DB 19,844 · D 41). 그런데
+        # 성분→DDI ID 인덱스가 참조하는 DUR D-코드는 314개이고 그중 275개가
+        # `_edi_map` 에 없다. 종전에는 그 275개가 이름 없이 버려져 spironolactone·
+        # amiodarone·methotrexate·clarithromycin·statin 같은 흔한 약물이 통째로
+        # 무발화했다(실측: 하루치에 처방되고 성분 파싱도 되는데 해소 0건).
+        # DDI 매트릭스가 그 ID 의 대표 성분명을 이미 갖고 있으므로 그것을 쓴다.
+        # ATC 는 그 출처에 없으므로 채우지 않는다 — `standardize()` 의 `if atc_fb:`
+        # 가드가 ATC 로만 폴백을 채택하므로 ETL 산출물은 바뀌지 않는다.
         atc_list = []
         name_list = []
         for dbid in ddi_ids:
@@ -208,6 +217,10 @@ class CodeStandardizer:
                     atc_list.append(atc)
                 if name:
                     name_list.append(name)
+                    continue
+            fallback = self._master.name_for_ddi_id(dbid)
+            if fallback:
+                name_list.append(fallback)
 
         # ATC 유무로 반환 전체를 게이팅하지 않는다. 성분은 해소됐는데 그 인덱스
         # 엔트리에 ATC 가 없는 경우가 실제로 존재하며(실측: 하루치 고유 EDI 15,017개
@@ -218,6 +231,30 @@ class CodeStandardizer:
                     name_list[0] if name_list else None)
 
         return None, None
+
+    def lookup_wk_names(self, wk_compn_cd: str) -> list[str]:
+        """WK_COMPN_CD 의 **모든** 성분명. 복합제에서 성분이 소실되지 않게 한다.
+
+        RS2 — `lookup_wk` 는 `DrugItem.drug_name` 이 스칼라이므로 첫 성분만
+        돌려준다. 복합제에서는 그것이 병용 성분일 수 있다(실측: 스타틴 복합제
+        123건 중 해소에 성공한 75건 **전량**이 스타틴 아닌 이름으로 해소됐다 —
+        `[rosuvastatin, losartan, amlodipine]` → `Losartan`). 이름 기반 규칙은
+        목록을 입력으로 받으므로, 규칙 경로에는 전 성분을 넘긴다.
+
+        `lookup_wk` 의 반환 계약은 건드리지 않는다.
+        """
+        if not wk_compn_cd:
+            return []
+
+        names: list[str] = []
+        for dbid in self._master.get_ddi_ids(wk_compn_cd):
+            entry = self._edi_map.get(dbid)
+            name = entry.get("drug_name") if entry else None
+            if not name:
+                name = self._master.name_for_ddi_id(dbid)
+            if name and name not in names:
+                names.append(name)
+        return names
 
     def standardize(self, df: pd.DataFrame, edi_col: str = "MCARE_DIV_CD") -> pd.DataFrame:
         """

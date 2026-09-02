@@ -292,6 +292,7 @@ def _run_safety_net(
     patient_age: Optional[int] = None,
     sn_instance=None,
     risk_flags: Optional[tuple[bool, bool]] = None,
+    extra_names: Optional[list[str]] = None,
 ) -> tuple[RiskLevel, list[str], list[DDIAlert]]:
     """
     rules/safety_net.py 실행 → (등급, 이유 목록, DDI 알림 목록).
@@ -316,8 +317,13 @@ def _run_safety_net(
             risk_flags if risk_flags is not None else _detect_risk_flags(drugs)
         )
 
-        # SafetyNet.assess는 list[str] (약물명 목록)을 기대
+        # SafetyNet.assess는 list[str] (약물명 목록)을 기대.
+        # `drug_name` 은 스칼라라 복합제에서 한 성분만 담는다. 규칙은 목록을 받으므로
+        # 나머지 성분(RS2)을 여기서 덧붙인다 — 처방 건수(`len(drugs)`)는 바꾸지 않는다.
         drug_names = [d.drug_name or d.edi_code for d in drugs]
+        if extra_names:
+            seen = {n.lower() for n in drug_names if n}
+            drug_names += [n for n in extra_names if n and n.lower() not in seen]
         assessment = sn.assess(
             drugs=drug_names,
             patient_age=patient_age,
@@ -1607,6 +1613,33 @@ class HybridPredictor:
             return RiskLevel.YELLOW
         return RiskLevel.NORMAL
 
+    def _composite_component_names(self, drugs: list[DrugItem]) -> list[str]:
+        """복합제의 나머지 성분명 (RS2). 해소 실패는 조용히 건너뛴다.
+
+        `lookup_wk_names` 는 선택적 계약이다 — 이 예측기에 주입되는 표준화기가
+        역사적으로 요구받지 않은 메서드이므로, 없으면 종전 동작을 그대로 둔다.
+        """
+        std = self._std
+        get_names = getattr(std, "lookup_wk_names", None)
+        if get_names is None:
+            return []
+
+        out: list[str] = []
+        for d in drugs:
+            try:
+                wk = std.get_wk(d.edi_code)
+                if not wk:
+                    continue
+                for name in get_names(wk):
+                    if name not in out:
+                        out.append(name)
+            except Exception:
+                if not getattr(self, "_warned_component_names", False):
+                    self._warned_component_names = True
+                    logger.warning("복합제 성분명 해소 실패 — 규칙 입력은 대표 성분만 쓴다",
+                                   exc_info=True)
+        return out
+
     def predict(self, req: PredictRequest) -> PredictResponse:
         """단일 환자 위험도 예측."""
         ref = req.reference_date or date.today()
@@ -1619,13 +1652,16 @@ class HybridPredictor:
         # 기본 **비활성**이다. 켜면 적격군 기준 즉각 개입 대상이 28배가 되므로(위
         # `EDI_NAME_RESOLUTION_ENV` 주석) 활성화는 운영 용량 결정이다. 꺼져 있으면
         # 해소는 Step 3(build) 에서만 일어나 종전 동작과 같다.
+        component_names: list[str] = []
         if _edi_name_resolution_enabled():
             self._builder.resolve_codes(req.drugs)
+            component_names = self._composite_component_names(req.drugs)
 
         # Step 1: Rule Safety Net
         rule_level, rule_reasons, ddi_alerts = _run_safety_net(
             req.drugs, patient_age=req.patient_age, sn_instance=self._safety_net,
             risk_flags=self._builder.risk_flags(req.drugs),
+            extra_names=component_names,
         )
 
         # Step 2: 중복약물 탐지
