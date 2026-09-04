@@ -638,8 +638,10 @@ def train_hierarchical(
         "stage1_trained": stage1_trained,
         "stage1_red_count": _n_red,
     }
+    # 읽는 쪽(서빙 로더·A0·재현 정보 스탬프)이 전부 UTF-8 로 연다. 쓰는 쪽만
+    # 플랫폼 기본 인코딩이라 cp949 호스트에서 어긋날 수 있어 명시한다.
     (out / "stage_meta.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2)
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     # ── Stage 2 평가 지표 (in-sample, 학습셋 기준) ────────────────────────────
