@@ -4,6 +4,7 @@ POST /predict       - 단일 환자 위험도 예측
 POST /predict/batch - 배치 예측 (최대 1000명)
 """
 import logging
+import re
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -21,6 +22,56 @@ from serving.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# 사유 목록에서 규칙 ID 로 인정하는 문법. **네임스페이스를 명시적으로 제한한다.**
+# 대문자 토큰이면 다 통과시키면 TIMEOUT·UNKNOWN 같은 비규칙 토큰도 규칙으로 세게
+# 된다. 실제로 사유에 실리는 것은 아래 다섯 갈래뿐이다.
+#   TOP01~TOP10   Top-10 DDI 규칙
+#   GRADE_*       등급 산출 조건 (10종+고위험약 · 75세+신/간 등)
+#   SEV_*         rule_floor 의 중증 하한 트리거
+#   RED_*         결정적 Red 백스톱 (금기)
+#   DDI_*         subtype 판정에서 온 DDI 사유
+# 사유 문자열에는 ID 형식이 아닌 것도 섞인다 — `동일성분중복 3건`(건수마다
+# 달라진다) · `ML 모델 Red 확률: 45.2%`(값이 매번 다르다). 이것들을 ID 로 세면
+# 집계표가 오염되고 카디널리티가 무한히 늘어난다.
+_RULE_ID_RE = re.compile(r"^(?:TOP\d{2}|(?:GRADE|SEV|RED|DDI)_[A-Z0-9_]+)$")
+
+METRICS_SCHEMA_VERSION = 3
+
+
+def _flag_state() -> dict:
+    """현재 서빙 플래그 상태. **지연 import 다.**
+
+    `serving.predictor` 를 모듈 최상단에서 부르면, 플래그를 바꿔 가며
+    `sys.modules` 를 비우고 재적재하는 테스트(탐지 전용 검증)에서 무거운 의존성이
+    반복 적재된다. 기록 시점에만 부른다.
+    """
+    from serving.predictor import serving_flag_state
+    return serving_flag_state()
+
+
+
+def _split_reasons(result) -> tuple[list[str], int]:
+    """사유 목록 → (규칙 ID 목록, ID 형식이 아닌 사유 수).
+
+    설명 문구와 약물명은 기록하지 않는다. 이 파일은 환자 단위로 누적되므로
+    필요한 최소치(어느 규칙이 발화했는가)만 남긴다.
+
+    ID 가 아닌 사유는 **개수만** 센다. 버리지 않는 이유는, 0 으로 보이면 사유가
+    없는 것으로 오독되기 때문이다 — 사유 없는 Red 판정이 그 위에 선다.
+    """
+    ids: list[str] = []
+    other = 0
+    for r in (getattr(result, "risk_reasons", None) or []):
+        token = str(r).split(":", 1)[0].strip()
+        if _RULE_ID_RE.match(token):
+            if token not in ids:
+                ids.append(token)
+        else:
+            other += 1
+    return ids, other
+
 
 router = APIRouter(tags=["predict"])
 
@@ -45,6 +96,7 @@ async def predict(req: PredictRequest):
 
     try:
         _now = datetime.now(timezone.utc)
+        _ids, _other = _split_reasons(result)
         get_metrics_writer().append({
             "timestamp": _now.isoformat(),
             "partition": _now.strftime("%Y-%m-%d"),
@@ -58,6 +110,13 @@ async def predict(req: PredictRequest):
             ),
             "latency_ms": round(latency_ms, 1),
             "source": "api",
+            "schema_version": METRICS_SCHEMA_VERSION,
+            # 플래그 상태를 행에 남긴다. 관측 기간 중 플래그가 바뀌면 꺼진 날과
+            # 켜진 날의 행이 한 파일에 섞이고, 집계가 그것을 구분할 수 없다.
+            "serving_flags": _flag_state(),
+            "rule_ids": _ids,
+            "n_reasons": len(result.risk_reasons or []),
+            "n_other_reasons": _other,
         })
     except Exception:
         logger.warning("메트릭 기록 실패 — 예측은 정상 반환", exc_info=True)
@@ -88,6 +147,7 @@ async def predict_batch(req: BatchPredictRequest):
             results.append(single_result)
             try:
                 _now = datetime.now(timezone.utc)
+                _b_ids, _b_other = _split_reasons(single_result)
                 get_metrics_writer().append({
                     "timestamp": _now.isoformat(),
                     "partition": _now.strftime("%Y-%m-%d"),
@@ -101,6 +161,11 @@ async def predict_batch(req: BatchPredictRequest):
                     ),
                     "latency_ms": round(single_latency_ms, 1),
                     "source": "batch",
+                    "schema_version": METRICS_SCHEMA_VERSION,
+                    "serving_flags": _flag_state(),
+                    "rule_ids": _b_ids,
+                    "n_reasons": len(single_result.risk_reasons or []),
+                    "n_other_reasons": _b_other,
                 })
             except Exception:
                 logger.warning("배치 메트릭 기록 실패 (patient_id=%s)", single_req.patient_id)
