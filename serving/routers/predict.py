@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
+from monitoring.metrics import (
+    BATCH_SIZE,
+    record_batch_outcome,
+    record_prediction,
+)
 from monitoring.metrics_writer import get_metrics_writer
 from serving.predictor import get_predictor
 from serving.schemas import (
@@ -121,6 +126,18 @@ async def predict(req: PredictRequest):
     except Exception:
         logger.warning("메트릭 기록 실패 — 예측은 정상 반환", exc_info=True)
 
+    try:
+        record_prediction(
+            risk_level=result.risk_level.value,
+            source="api",
+            latency_ms=latency_ms,
+            rule_level=result.rule_level.value if result.rule_level else None,
+            ml_level=result.ml_level.value if result.ml_level else None,
+        )
+    except Exception:
+        # 관측은 부가 기능이다. 실패가 예측 응답을 막아서는 안 된다.
+        logger.warning("Prometheus 메트릭 기록 실패 — 예측은 정상 반환", exc_info=True)
+
     return result
 
 
@@ -169,6 +186,16 @@ async def predict_batch(req: BatchPredictRequest):
                 })
             except Exception:
                 logger.warning("배치 메트릭 기록 실패 (patient_id=%s)", single_req.patient_id)
+            try:
+                record_prediction(
+                    risk_level=single_result.risk_level.value,
+                    source="batch",
+                    latency_ms=single_latency_ms,
+                    rule_level=single_result.rule_level.value if single_result.rule_level else None,
+                    ml_level=single_result.ml_level.value if single_result.ml_level else None,
+                )
+            except Exception:
+                logger.warning("배치 Prometheus 메트릭 기록 실패", exc_info=True)
         except Exception as e:
             logger.warning("배치 부분 실패 (patient_id=%s): %s", single_req.patient_id, e)
             warnings.append(f"{single_req.patient_id}: 예측 처리 실패")
@@ -179,6 +206,17 @@ async def predict_batch(req: BatchPredictRequest):
     requested_count = len(req.requests)
     success_count = len(results)
     failed_count = requested_count - success_count
+
+    try:
+        record_batch_outcome(success=success_count, fail=failed_count, source="api")
+        BATCH_SIZE.observe(requested_count)
+        # 고위험 비율(HIGH_RISK_RATE)은 여기서 세우지 않는다. 그것은 파티션 단위
+        # 게이지인데 요청마다 덮어쓰면 하루 값이 **마지막 청크의 비율**이 된다.
+        # 게다가 탐지 전용 배포에서는 최종 등급이 Red 로 올라가지 않으므로 0 이
+        # 나온다 — 규칙이 발화하고 있어도 그렇다. 파티션 집계로 내야 한다(M7 잔여).
+    except Exception:
+        logger.warning("배치 요약 메트릭 기록 실패 — 응답은 정상", exc_info=True)
+
     return BatchPredictResponse(
         results=results,
         requested_count=requested_count,

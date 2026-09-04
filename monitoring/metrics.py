@@ -157,10 +157,42 @@ HIGH_RISK_RATE = _make_gauge(
     ["partition"],  # YYYYMMDD
 )
 
+# 대시보드가 참조하나 정의돼 있지 않던 둘 (M7).
+BATCH_SUCCESS_TOTAL = _make_counter(
+    "ddi_batch_success_total",
+    "배치 예측에서 결과를 산출한 건수",
+    ["source"],   # api | dag
+)
+
+BATCH_FAIL_TOTAL = _make_counter(
+    "ddi_batch_fail_total",
+    "배치 예측에서 실패한 건수",
+    ["source"],
+)
+
+# ddi_pharmacist_acceptance_rate 는 **의도적으로 정의하지 않는다.**
+# 대시보드가 참조하지만 약사 피드백 수집 경로가 구현돼 있지 않다(P1-5).
+# Gauge 를 정의하면 한 번도 설정되지 않은 채 0.0 으로 노출되고, 패널은
+# "약사 수용률 0%" 라는 임상 KPI 의 거짓 0 을 표시한다. 미정의면 Prometheus 가
+# 계열 자체를 내보내지 않아 패널이 "No data" 가 된다 — 그쪽이 사실이다.
+# 피드백 경로가 생기면 그때 정의한다. 부재는 테스트로 고정돼 있다.
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 편의 함수
 # ─────────────────────────────────────────────────────────────────────────────
+
+def record_batch_outcome(success: int = 0, fail: int = 0, source: str = "api") -> None:
+    """배치 예측의 성공·실패 건수를 누적한다.
+
+    성공 = 결과 레코드가 산출된 건, 실패 = 예외로 결과가 없는 건.
+    둘의 합이 요청 건수와 같아야 한다.
+    """
+    if success:
+        BATCH_SUCCESS_TOTAL.labels(source=source).inc(success)
+    if fail:
+        BATCH_FAIL_TOTAL.labels(source=source).inc(fail)
+
 
 def record_prediction(
     risk_level: str,

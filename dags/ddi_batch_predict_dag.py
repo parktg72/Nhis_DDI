@@ -260,49 +260,24 @@ def _cleanup_staging(**context) -> None:
 
 
 def _detect_drift(partition: str) -> None:
-    """배치 예측 parquet에서 PSI 드리프트를 감지하고 JSON 리포트를 저장한다.
+    """배치 예측 parquet 에서 PSI 를 산출하고 JSON 리포트를 저장한다.
+
+    계산 대상 컬럼은 **기준 분포와의 교집합**으로 정한다(M7). 종전에는 세 열을
+    손으로 나열했는데 그중 `rule_triggered` 는 예측 parquet 에 쓰인 적이 없고
+    `ddi_count` 는 기준 분포의 피처명이 아니어서, 실제로 계산되던 열은
+    `drug_count` 하나뿐이었다.
 
     settings 접근을 `from config import settings as _s` 패턴으로 처리해
     테스트에서 monkeypatch.setattr이 정상 작동한다.
     """
-    import pandas as pd
-
     from config import settings as _s
-    from monitoring.drift_detector import DriftDetector
+    from monitoring.drift_job import run_drift_job
 
-    drift_ref = _s.DRIFT_REFERENCE_PATH
-    predictions_dir = _s.PREDICTIONS_DIR
-    monitoring_dir = _s.MONITORING_DIR
-
-    if not drift_ref.exists():
-        logger.warning(
-            "drift_reference.pkl 없음 (%s) — 드리프트 감지 건너뜀 (학습 파이프라인을 먼저 실행하세요)",
-            drift_ref,
-        )
-        return
-
-    pred_path = predictions_dir / f"predictions_{partition}.parquet"
-    if not pred_path.exists():
-        logger.warning("예측 파일 없음 (%s) — 드리프트 감지 건너뜀", pred_path)
-        return
-
-    df = pd.read_parquet(pred_path)
-    available_cols = [c for c in ("drug_count", "ddi_count", "rule_triggered") if c in df.columns]
-    if not available_cols:
-        logger.warning(
-            "PSI 계산 가능한 컬럼 없음 (partition=%s, 컬럼=%s) — 드리프트 감지 건너뜀",
-            partition, list(df.columns),
-        )
-        return
-
-    detector = DriftDetector.load(str(drift_ref))
-    report = detector.detect(df[available_cols], partition=partition)
-
-    monitoring_dir.mkdir(parents=True, exist_ok=True)
-    detector.save_report(report, str(monitoring_dir))
-    logger.info(
-        "드리프트 감지 완료 (partition=%s): %d 피처 분석, %d 드리프트",
-        partition, len(report.feature_results), report.n_drifted,
+    run_drift_job(
+        _s.PREDICTIONS_DIR / f"predictions_{partition}.parquet",
+        _s.DRIFT_REFERENCE_PATH,
+        _s.MONITORING_DIR,
+        partition=partition,
     )
 
 

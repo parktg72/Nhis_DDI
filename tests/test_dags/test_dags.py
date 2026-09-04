@@ -613,3 +613,59 @@ class TestBatchPredictDag:
         }
         result = mod._get_partition(**ctx)
         assert result == "20260319"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Drift 일간 재산출 DAG 테스트 (M7)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDriftDailyDag:
+    """PSI 는 배치 예측 DAG 안에 있었고 그 DAG 는 화~토에만 돈다.
+    배치 DAG 의 일정은 청구 데이터 도착에 묶인 운영 결정이라 건드리지 않고,
+    일간 재산출 DAG 를 따로 둔다."""
+
+    def test_dag_importable(self):
+        assert _import_dag("ddi_drift_dag") is not None
+
+    def test_dag_runs_daily(self):
+        mod = _import_dag("ddi_drift_dag")
+        assert mod.dag.schedule_interval == "0 6 * * *"
+
+    def test_batch_dag_schedule_is_unchanged(self):
+        """일정을 넓히면 빈 날에 배치 예측이 돈다."""
+        mod = _import_dag("ddi_batch_predict_dag")
+        assert mod.dag.schedule_interval == "0 5 * * 2-6"
+
+    def test_dag_does_not_raise_alerts(self):
+        """일·월요일의 재산출은 토요일과 같은 데이터다 — 알림을 다시 울리면 중복이다."""
+        mod = _import_dag("ddi_drift_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "AlertManager" not in src
+        assert not hasattr(mod, "_check_alerts")
+
+    def test_latest_partition_picks_the_newest_file(self, tmp_path, monkeypatch):
+        mod = _import_dag("ddi_drift_dag")
+        for name in ("predictions_20260901.parquet", "predictions_20260903.parquet"):
+            (tmp_path / name).write_bytes(b"x")
+
+        import config.settings as _s
+        monkeypatch.setattr(_s, "PREDICTIONS_DIR", tmp_path)
+        ti = MagicMock()
+        mod._latest_partition(ti=ti)
+
+        ti.xcom_push.assert_called_once_with(key="partition", value="20260903")
+
+    def test_latest_partition_is_empty_when_there_are_no_predictions(self, tmp_path, monkeypatch):
+        """배포 초기에는 예측 결과가 없다. DAG 를 죽일 이유가 없다."""
+        mod = _import_dag("ddi_drift_dag")
+        import config.settings as _s
+        monkeypatch.setattr(_s, "PREDICTIONS_DIR", tmp_path)
+        ti = MagicMock()
+
+        mod._latest_partition(ti=ti)
+
+        ti.xcom_push.assert_called_once_with(key="partition", value="")
+
+    def test_recompute_is_a_noop_on_an_empty_partition(self):
+        mod = _import_dag("ddi_drift_dag")
+        mod._recompute_psi("")   # 예외 없이 통과하면 된다
