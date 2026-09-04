@@ -7,7 +7,7 @@ P0-1(안전망) 의 대상이 특정되지 않아 어떤 조치의 효과도 측
 
   ① 서빙 소스 상태   — 어느 계열인지 (Step 0 이름해소 유무)
   ② 서빙 플래그 값   — /health 의 serving_flags. 키 부재 = 구코드
-  ③ 배포 번들 동일성 — 모델 파일 SHA-256 ↔ 번들 메타 기록값
+  ③ 배포 번들 동일성 — 모델 파일 SHA-256 ↔ 번들 메타 기록값, 재현 정보 유무
   ④ 개입 전달 경로   — 발송 구현이 실재하는지
 
 읽기만 한다. 파일·설정·프로세스를 바꾸지 않으며 네트워크는 localhost 만 쓴다.
@@ -182,8 +182,34 @@ def check_bundle(root: Path) -> str:
             ok = False
         say(f"  {fname:<24} {actual[:16]}  기록 {str(recorded)[:16]}  {mark}")
     v = "일치 — 번들이 메타와 같다" if ok else "불일치 — 배포본 재식별 필요"
+
+    # M-2 이후 번들에는 재현 정보가 실린다. 없으면 그 이전에 만든 번들이다.
+    prov = meta.get("provenance")
+    if prov:
+        period = prov.get("period") or {}
+        code = prov.get("code") or {}
+        say()
+        say(f"  재현 정보 — 입력 {prov.get('input_file_count')}개 파일")
+        if period:
+            say(f"    기간   {period.get('from')} ~ {period.get('to')} ({period.get('source')} 파생)")
+        else:
+            say(f"    기간   확인 불가 ({prov.get('period_reason')})")
+        if code.get("source") == "git":
+            dirty = code.get("dirty")
+            say(f"    코드   git {str(code.get('commit'))[:12]}"
+                + ("  ⚠ 커밋되지 않은 변경 있음" if dirty else ""))
+        else:
+            say("    코드   git 기록 없음 — 소스 지문으로 대조할 것")
+        for rel, fp in (code.get("fingerprints") or {}).items():
+            label = SOURCE_FINGERPRINTS.get(rel, {}).get(fp or "", "")
+            say(f"      {rel:<34} {fp or '파일 없음'}  {label}")
+        say(f"    생성   {prov.get('build_time_utc')}")
+        v += " · 재현 정보 있음"
+    else:
+        say("  주의: 메타에 입력 파일 목록·기간·코드 커밋이 없다. 학습 코호트는 이 값으로 재현되지 않는다.")
+        v += " · 재현 정보 없음(M-2 이전 번들)"
+
     say(f"\n  판정: {v}")
-    say("  주의: 메타에 입력 파일 목록·기간·코드 커밋이 없다. 학습 코호트는 이 값으로 재현되지 않는다.")
     return v
 
 

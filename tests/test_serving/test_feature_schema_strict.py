@@ -86,6 +86,14 @@ def test_validate_dup_efmdc_passes():
     assert missing == [] and ok is True
 
 
+
+# lenient escape hatch 의 sunset 은 2026-08-01 이고 이미 지났다. 아래 두 테스트가
+# 고정하는 것은 **해치가 열려 있을 때 lenient 가 동작하는가** 이므로, 오늘 날짜에
+# 좌우되지 않도록 sunset 을 명시적으로 연다. sunset 자체의 동작(지나면 차단, 형식
+# 오류면 차단)은 `tests/test_ops/test_check_lenient_sunset.py` 가 따로 고정한다.
+# 이 값을 지우면 두 테스트는 sunset 이 지난 날부터 조용히 실패한다.
+_OPEN_HATCH = "2099-12-31"
+
 def test_validate_unknown_fails_strict(monkeypatch):
     monkeypatch.delenv("FEATURE_SCHEMA_LENIENT", raising=False)
     missing, ok = _validate_feature_schema(
@@ -97,6 +105,7 @@ def test_validate_unknown_fails_strict(monkeypatch):
 
 def test_validate_unknown_passes_lenient(monkeypatch):
     monkeypatch.setenv("FEATURE_SCHEMA_LENIENT", "1")
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", _OPEN_HATCH)
     missing, ok = _validate_feature_schema(
         ["drug_count", "fake_feature_xyz"], "test",
     )
@@ -120,6 +129,7 @@ def test_mlmodel_load_rejects_unknown_feature_strict(tmp_path, monkeypatch):
 
 def test_mlmodel_load_accepts_unknown_lenient(tmp_path, monkeypatch):
     monkeypatch.setenv("FEATURE_SCHEMA_LENIENT", "1")
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", _OPEN_HATCH)
     path = _write_model(tmp_path / "m.pkl", ["drug_count", "fake_xyz"])
     ml = MLModel()
     assert ml.load(path) is True

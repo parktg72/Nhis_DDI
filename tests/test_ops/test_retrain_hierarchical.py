@@ -76,6 +76,8 @@ def test_retrain_produces_7class_bundle_from_parquet_paths(tmp_path, monkeypatch
     feat_path = tmp_path / "features_batch_0000.parquet"
     pd.DataFrame([_patient_features_to_row(f) for f in cohort]).to_parquet(feat_path, index=False)
     monkeypatch.setattr(rh, "build_patient_features_from_parquet", lambda **kw: [feat_path])
+    # M-2: raw 경로는 이제 해시 대상이라 실재해야 한다.
+    (tmp_path / "records_dummy.parquet").write_bytes(b"raw")
 
     out = tmp_path / "bundle"
     result = rh.retrain_hierarchical(
@@ -95,12 +97,65 @@ def test_retrain_produces_7class_bundle_from_parquet_paths(tmp_path, monkeypatch
     counts = meta["stage2_label_counts"]
     assert counts.get("Y_TRIPLE", 0) > 0
     assert counts.get("Y_DOUBLE", 0) > 0
+    # M-2: 번들만 보고 학습 코호트를 되짚을 수 있어야 한다.
+    assert meta["provenance"]["input_file_count"] == 1
+    assert meta["provenance"]["cohort_params"]["seed"] == 7
+
+
+def test_bundle_records_the_period_and_files_it_was_trained_on(tmp_path, monkeypatch):
+    """M-2 — 배포 번들에 입력 파일·기간·코드 참조가 남는다 (B-1 재발 방지)."""
+    import pandas as pd
+
+    from hana_app.core.ml_runner import _patient_features_to_row
+
+    cohort = _synthetic_cohort()
+    feat_path = tmp_path / "features_batch_0000.parquet"
+    pd.DataFrame([_patient_features_to_row(f) for f in cohort]).to_parquet(feat_path, index=False)
+    monkeypatch.setattr(rh, "build_patient_features_from_parquet", lambda **kw: [feat_path])
+
+    raws = []
+    for name in ("records_20240701.parquet", "records_20241130.parquet"):
+        (tmp_path / name).write_bytes(name.encode())
+        raws.append(tmp_path / name)
+
+    out = tmp_path / "bundle_prov"
+    rh.retrain_hierarchical(
+        raw_paths=raws, output_dir=out, seed=7,
+        glob_patterns=["records_2024*.parquet"],
+        log_cb=lambda *_a, **_k: None,
+    )
+
+    prov = json.loads((out / "stage_meta.json").read_text(encoding="utf-8"))["provenance"]
+    assert [f["name"] for f in prov["input_files"]] == [
+        "records_20240701.parquet", "records_20241130.parquet",
+    ]
+    assert prov["period"] == {"from": "20240701", "to": "20241130", "source": "filename"}
+    assert prov["glob_patterns"] == ["records_2024*.parquet"]
+    assert prov["code"]["source"] in {"git", "none"}
+
+
+def test_a_missing_raw_file_aborts_before_training(tmp_path, monkeypatch):
+    """몇 분짜리 학습을 시작한 뒤 실패하는 것보다 먼저 멈추는 편이 낫다."""
+    called = []
+    monkeypatch.setattr(
+        rh, "build_patient_features_from_parquet",
+        lambda **kw: called.append(1) or [],
+    )
+
+    with pytest.raises(FileNotFoundError):
+        rh.retrain_hierarchical(
+            raw_paths=[tmp_path / "없는파일.parquet"],
+            output_dir=tmp_path / "bundle_x",
+            log_cb=lambda *_a, **_k: None,
+        )
+    assert called == []
 
 
 def test_retrain_handles_patient_features_list(tmp_path, monkeypatch):
     """방어적 분기: 빌더가 list[PatientFeatures] 를 반환해도 동작."""
     cohort = _synthetic_cohort()
     monkeypatch.setattr(rh, "build_patient_features_from_parquet", lambda **kw: cohort)
+    (tmp_path / "records_dummy.parquet").write_bytes(b"raw")
     out = tmp_path / "bundle2"
     result = rh.retrain_hierarchical(
         raw_paths=[tmp_path / "records_dummy.parquet"],

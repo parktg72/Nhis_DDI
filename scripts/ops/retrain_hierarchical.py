@@ -5,6 +5,9 @@ Page 3 (RAW → hierarchical) 데스크톱 흐름을 CLI 로 재현해, 동일 r
 → `train_hierarchical`)로 7-class 계층 번들(stage1_red.joblib / stage2_yellow.joblib /
 stage_meta.json)을 산출한다. 산출 번들을 `HIERARCHICAL_MODEL_DIR` 로 지정해 배포한다.
 
+번들에는 재현 정보(입력 파일 목록·SHA-256·기간·코드 참조)를 `stage_meta.provenance`
+로 함께 스탬프한다 (M-2). 앱(Page 3) 경로로 만든 번들에는 이 키가 없다.
+
 라벨 공간은 학습 시점의 STAGE2_LABELS 를 따른다(현재 7-class: Y_TRIPLE/Y_DOUBLE/
 Y_DDI_MAJOR/Y_DDI_MOD/Y_DUP/Y_FRAG/No_Alert). 서빙 로드 가드가 이 라벨 공간과
 불일치하는 구 번들을 거부한다(serving.predictor.HierarchicalPredictor.load).
@@ -37,6 +40,7 @@ from hana_app.core.ml_runner import (
     build_patient_features_from_parquet,
 )
 from scripts.etl.models import PatientFeatures
+from scripts.ops.bundle_provenance import collect_provenance, stamp_bundle
 
 
 def collect_raw_paths(raw_dir: str | Path, glob="records_*.parquet") -> list[Path]:
@@ -71,6 +75,7 @@ def retrain_hierarchical(
     recall_floor: float = 0.90,
     review_recall_target: float = 0.98,
     cost_sensitive: bool = False,
+    glob_patterns: list[str] | None = None,
     log_cb=print,
 ) -> dict:
     """raw Parquet → 피처 → df → train_hierarchical. 결과 dict(+output_dir/n_patients) 반환.
@@ -81,6 +86,17 @@ def retrain_hierarchical(
     start = perf_counter()
     cols = list(feature_cols) if feature_cols is not None else list(FEATURE_COLS)
     out = Path(output_dir)
+
+    # 재현 정보는 학습 **전에** 모은다 (M-2). 읽으려는 그 파일의 해시여야 하고,
+    # 입력이 하나라도 없으면 몇 분짜리 학습을 시작하기 전에 멈추는 편이 낫다.
+    provenance = collect_provenance(
+        raw_paths,
+        code_root=Path(__file__).resolve().parents[2],
+        glob_patterns=glob_patterns,
+        seed=seed,
+        window_days=window_days,
+        poly_threshold=poly_threshold,
+    )
 
     log_cb(f"[1/3] 피처 계산 - raw 파일 {len(raw_paths)}개")
     # build_patient_features_from_parquet 는 실제로 **피처 배치 Parquet 경로(list[Path])**
@@ -115,9 +131,11 @@ def retrain_hierarchical(
         cost_sensitive=cost_sensitive,
         log_cb=log_cb,
     )
+    stamp_bundle(out, provenance)
     result["output_dir"] = str(out)
     result["n_patients"] = len(df)
     result["build_time_sec"] = round(perf_counter() - start, 2)
+    result["provenance"] = provenance
     return result
 
 
@@ -164,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         recall_floor=args.recall_floor,
         review_recall_target=args.review_recall_target,
         cost_sensitive=args.cost_sensitive,
+        glob_patterns=args.glob,
     )
     print(f"[OK] 번들: {result['output_dir']}")
     print(f"n_patients={result['n_patients']} build_time={result['build_time_sec']}s")
@@ -172,6 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"stage1_trained={result.get('stage1_trained')} "
           f"stage1_red_count={result.get('stage1_red_count')}")
     print(f"thresholds={result.get('thresholds')}")
+    _prov = result.get("provenance") or {}
+    _period = _prov.get("period") or {}
+    print(f"provenance: 입력 {_prov.get('input_file_count')}개 "
+          f"기간 {_period.get('from')}~{_period.get('to')} "
+          f"코드 {_prov.get('code', {}).get('source')}")
     return 0
 
 
