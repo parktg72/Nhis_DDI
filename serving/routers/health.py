@@ -14,7 +14,11 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+
+import uuid
+
+from monitoring.audit_log import audit
 from pydantic import BaseModel
 
 from config import settings as _settings
@@ -49,15 +53,57 @@ _MODEL_DIR: Path = _settings.MODEL_DIR.resolve()
 _DL_MODEL_DIR: Path = (_MODEL_DIR / "dl").resolve()
 
 
-def _require_admin(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
+def _audit_endpoint(request) -> str:
+    """감사 이벤트의 endpoint 필드. 경로만 남기고 질의 문자열은 남기지 않는다."""
+    try:
+        return request.url.path
+    except Exception:
+        return ""
+
+
+def _request_id(request) -> str:
+    """서버가 만드는 요청 식별자. 인증 이벤트와 조작 결과를 잇는다.
+
+    이것이 없으면 동시 요청에서 어느 `auth_ok` 가 어느 조작 결과인지 알 수 없고,
+    "어느 IP 에서 무엇을" 조차 확답하지 못한다.
+    """
+    try:
+        rid = getattr(request.state, "audit_request_id", None)
+        if not rid:
+            rid = uuid.uuid4().hex[:16]
+            request.state.audit_request_id = rid
+        return rid
+    except Exception:
+        return ""
+
+
+def _client_ip(request) -> str:
+    """호출자 IP. **행위자가 아니라 위치다** — 공유 키 하나이므로 여기까지가 한계다."""
+    try:
+        return request.client.host if request.client else ""
+    except Exception:
+        return ""
+
+
+def _require_admin(
+    request: Request,
+    x_admin_key: str = Header(..., alias="X-Admin-Key"),
+) -> None:
     """X-Admin-Key 헤더로 관리자 인증. ADMIN_API_KEY 미설정 시 엔드포인트 전체 비활성화."""
+    ep, ip, rid = _audit_endpoint(request), _client_ip(request), _request_id(request)
     if not _ADMIN_KEY:
+        audit("auth_unconfigured", endpoint=ep, client_ip=ip, key_kind="admin",
+              request_id=rid)
         raise HTTPException(
             status_code=503,
             detail="ADMIN_API_KEY 환경변수 미설정: /admin 엔드포인트 비활성화",
         )
     if not hmac.compare_digest(x_admin_key, _ADMIN_KEY):
+        # 인증 실패는 핸들러에 도달하지 않는다 — 여기서 남기지 않으면 어디에도 없다.
+        audit("auth_failed", endpoint=ep, client_ip=ip, key_kind="admin",
+              request_id=rid)
         raise HTTPException(status_code=401, detail="관리자 인증 실패")
+    audit("auth_ok", endpoint=ep, client_ip=ip, key_kind="admin", request_id=rid)
 
 
 def _model_mode(pred) -> str:
@@ -231,6 +277,7 @@ async def model_info():
 
 @router.post("/admin/reload")
 async def reload_model(
+    request: Request,
     body: ReloadRequest,
     _: None = Depends(_require_admin),
 ):
@@ -240,14 +287,20 @@ async def reload_model(
     """
     resolved = Path(body.model_path).resolve()
     try:
-        resolved.relative_to(_MODEL_DIR)
+        rel = str(resolved.relative_to(_MODEL_DIR))
     except ValueError:
+        # 허용 디렉터리 밖 경로 요청도 관리 조작 시도다. 절대 경로는 남기지 않는다.
+        audit("admin_call", endpoint="/admin/reload", outcome="rejected_path",
+              target=None, client_ip=_client_ip(request), request_id=_request_id(request))
         raise HTTPException(
             status_code=400,
             detail=f"모델 경로는 허용된 디렉토리({_MODEL_DIR}) 내부여야 합니다: {body.model_path}",
         )
     pred = get_predictor()
     ok = pred.reload_model(resolved)
+    audit("admin_call", endpoint="/admin/reload",
+          outcome="ok" if ok else "load_failed", target=rel,
+          client_ip=_client_ip(request), request_id=_request_id(request))
     if not ok:
         raise HTTPException(status_code=400, detail=f"모델 로드 실패: {body.model_path}")
     return {"status": "ok", "model_path": str(resolved)}
@@ -255,6 +308,7 @@ async def reload_model(
 
 @router.post("/admin/reload/hierarchical")
 async def reload_hierarchical_model(
+    request: Request,
     body: HierarchicalReloadRequest,
     _: None = Depends(_require_admin),
 ):
@@ -264,14 +318,20 @@ async def reload_hierarchical_model(
     """
     resolved = Path(body.model_dir).resolve()
     try:
-        resolved.relative_to(_MODEL_DIR)
+        rel = str(resolved.relative_to(_MODEL_DIR))
     except ValueError:
+        # 허용 디렉터리 밖 경로 요청도 관리 조작 시도다. 절대 경로는 남기지 않는다.
+        audit("admin_call", endpoint="/admin/reload/hierarchical", outcome="rejected_path",
+              target=None, client_ip=_client_ip(request), request_id=_request_id(request))
         raise HTTPException(
             status_code=400,
             detail=f"모델 경로는 허용된 디렉토리({_MODEL_DIR}) 내부여야 합니다: {body.model_dir}",
         )
     pred = get_predictor()
     ok = pred.reload_hierarchical(resolved)
+    audit("admin_call", endpoint="/admin/reload/hierarchical",
+          outcome="ok" if ok else "load_failed", target=rel,
+          client_ip=_client_ip(request), request_id=_request_id(request))
     if not ok:
         raise HTTPException(status_code=400, detail=f"계층 모델 로드 실패: {body.model_dir}")
     return {"status": "ok", "model_dir": str(resolved)}
@@ -279,14 +339,18 @@ async def reload_hierarchical_model(
 
 @router.post("/admin/reload/dl")
 async def reload_dl_model(
+    request: Request,
     body: DLReloadRequest,
     _: None = Depends(_require_admin),
 ):
     """DL bundle manifest/hash/lookback 핫스왑. 실제 DL 추론은 아직 비활성."""
     resolved = Path(body.bundle_dir).resolve()
     try:
-        resolved.relative_to(_DL_MODEL_DIR)
+        rel = str(resolved.relative_to(_DL_MODEL_DIR))
     except ValueError:
+        # 허용 디렉터리 밖 경로 요청도 관리 조작 시도다. 절대 경로는 남기지 않는다.
+        audit("admin_call", endpoint="/admin/reload/dl", outcome="rejected_path",
+              target=None, client_ip=_client_ip(request), request_id=_request_id(request))
         raise HTTPException(
             status_code=400,
             detail={
@@ -301,17 +365,28 @@ async def reload_dl_model(
     pred = get_predictor()
     try:
         pred.reload_dl(resolved)
+        audit("admin_call", endpoint="/admin/reload/dl", outcome="ok", target=rel,
+              client_ip=_client_ip(request), request_id=_request_id(request))
     except LookbackMismatchError as e:
+        audit("admin_call", endpoint="/admin/reload/dl",
+              outcome="lookback_mismatch", target=rel,
+              client_ip=_client_ip(request), request_id=_request_id(request))
         raise HTTPException(
             status_code=400,
             detail={"error_code": "lookback_mismatch", "message": str(e)},
         )
     except BundleHashMismatchError as e:
+        audit("admin_call", endpoint="/admin/reload/dl",
+              outcome="bundle_hash_mismatch", target=rel,
+              client_ip=_client_ip(request), request_id=_request_id(request))
         raise HTTPException(
             status_code=400,
             detail={"error_code": "bundle_hash_mismatch", "message": str(e)},
         )
     except BundleArtifactEmptyError as e:
+        audit("admin_call", endpoint="/admin/reload/dl",
+              outcome="bundle_artifact_empty", target=rel,
+              client_ip=_client_ip(request), request_id=_request_id(request))
         raise HTTPException(
             status_code=400,
             detail={"error_code": "bundle_artifact_empty", "message": str(e)},

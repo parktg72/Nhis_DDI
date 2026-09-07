@@ -108,6 +108,11 @@ def test_lenient_env_active_but_no_drift_health_ok(
     Codex 합의: "우회 가능 상태"가 아닌 "실제 drift 모델 로드" 기준으로 degraded.
     """
     monkeypatch.setenv("FEATURE_SCHEMA_LENIENT", "1")
+    # sunset 이 지나면 lenient 가 강제 차단돼 `feature_schema_lenient` 가 False 로
+    # 떨어진다. 이 테스트가 고정하는 것은 **해치가 열려 있을 때** drift 없음이
+    # ok 로 남는가이므로 sunset 을 명시적으로 연다. sunset 자체의 동작은
+    # `tests/test_ops/test_check_lenient_sunset.py` 가 따로 고정한다.
+    monkeypatch.setenv("FEATURE_SCHEMA_LENIENT_SUNSET_DATE", "2099-12-31")
     pred = _make_pred(ml_loaded=True, schema_drift=[])
     client = app_client_factory(pred)
     try:
