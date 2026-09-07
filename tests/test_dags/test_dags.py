@@ -622,7 +622,8 @@ class TestBatchPredictDag:
 class TestDriftDailyDag:
     """PSI 는 배치 예측 DAG 안에 있었고 그 DAG 는 화~토에만 돈다.
     배치 DAG 의 일정은 청구 데이터 도착에 묶인 운영 결정이라 건드리지 않고,
-    일간 재산출 DAG 를 따로 둔다."""
+    일간 노출 DAG 를 따로 둔다. **재채점은 하지 않는다** — 같은 데이터를 다시
+    재면 새 정보 없이 리포트를 덮어쓰고 배치 DAG 와 파일 경합을 만든다."""
 
     def test_dag_importable(self):
         assert _import_dag("ddi_drift_dag") is not None
@@ -637,35 +638,28 @@ class TestDriftDailyDag:
         assert mod.dag.schedule_interval == "0 5 * * 2-6"
 
     def test_dag_does_not_raise_alerts(self):
-        """일·월요일의 재산출은 토요일과 같은 데이터다 — 알림을 다시 울리면 중복이다."""
+        """같은 데이터로 알림을 다시 내면 중복이다."""
         mod = _import_dag("ddi_drift_dag")
         src = open(mod.__file__, encoding="utf-8").read()
         assert "AlertManager" not in src
         assert not hasattr(mod, "_check_alerts")
 
-    def test_latest_partition_picks_the_newest_file(self, tmp_path, monkeypatch):
+    def test_dag_does_not_rescore(self):
+        """리뷰 지적 — 재채점은 리포트를 덮어쓰고 배치 DAG 와 경합한다."""
         mod = _import_dag("ddi_drift_dag")
-        for name in ("predictions_20260901.parquet", "predictions_20260903.parquet"):
-            (tmp_path / name).write_bytes(b"x")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "run_drift_job" not in src
+        assert not hasattr(mod, "_recompute_psi")
+        assert hasattr(mod, "_push_psi_freshness")
 
+    def test_push_task_delegates_to_the_shared_job(self, tmp_path, monkeypatch):
+        mod = _import_dag("ddi_drift_dag")
+        seen = []
+        import monitoring.drift_job as dj
+        monkeypatch.setattr(dj, "push_latest_psi", lambda d, **k: seen.append(d))
         import config.settings as _s
-        monkeypatch.setattr(_s, "PREDICTIONS_DIR", tmp_path)
-        ti = MagicMock()
-        mod._latest_partition(ti=ti)
+        monkeypatch.setattr(_s, "MONITORING_DIR", tmp_path)
 
-        ti.xcom_push.assert_called_once_with(key="partition", value="20260903")
+        mod._push_psi_freshness()
 
-    def test_latest_partition_is_empty_when_there_are_no_predictions(self, tmp_path, monkeypatch):
-        """배포 초기에는 예측 결과가 없다. DAG 를 죽일 이유가 없다."""
-        mod = _import_dag("ddi_drift_dag")
-        import config.settings as _s
-        monkeypatch.setattr(_s, "PREDICTIONS_DIR", tmp_path)
-        ti = MagicMock()
-
-        mod._latest_partition(ti=ti)
-
-        ti.xcom_push.assert_called_once_with(key="partition", value="")
-
-    def test_recompute_is_a_noop_on_an_empty_partition(self):
-        mod = _import_dag("ddi_drift_dag")
-        mod._recompute_psi("")   # 예외 없이 통과하면 된다
+        assert seen == [tmp_path]

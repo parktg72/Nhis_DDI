@@ -236,13 +236,24 @@ def record_batch(
 # Pushgateway 전송 (선택적)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def push_metrics(gateway_url: str, job: str = "ddi_serving") -> None:
-    """Prometheus Pushgateway로 메트릭 전송."""
+def push_metrics(gateway_url: str, job: str, registry) -> bool:
+    """Prometheus Pushgateway 로 전송. 성공 여부를 돌려준다.
+
+    `registry` 는 **필수**다. 종전에는 전역 `REGISTRY` 를 기본값으로 밀었는데,
+    그러면 호출한 프로세스에 정의만 되고 값이 없는 메트릭과 기본 수집기
+    (`process_*`·`python_*`)까지 함께 실린다. DAG 워커에서 부르면 서빙 쪽
+    무라벨 메트릭이 0 인 채로 게시된다. 보낼 것만 담은 레지스트리를 넘겨라.
+
+    실패를 삼키지 않는다 — 호출자가 판단한다. 종전에는 예외를 삼켜서 관측이
+    나가지 않아도 DAG 가 성공으로 끝났다.
+    """
     if not _PROMETHEUS_AVAILABLE:
         logger.warning("prometheus_client 미설치 — push 생략")
-        return
+        return False
     try:
-        push_to_gateway(gateway_url, job=job, registry=REGISTRY)
-        logger.info("메트릭 push 완료: %s", gateway_url)
+        push_to_gateway(gateway_url, job=job, registry=registry)
+        logger.info("메트릭 push 완료: %s (job=%s)", gateway_url, job)
+        return True
     except Exception as exc:
-        logger.warning("메트릭 push 실패 (무시): %s", exc)
+        logger.warning("메트릭 push 실패: %s", exc)
+        return False
