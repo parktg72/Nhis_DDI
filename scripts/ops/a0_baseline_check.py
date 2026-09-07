@@ -9,12 +9,14 @@ P0-1(안전망) 의 대상이 특정되지 않아 어떤 조치의 효과도 측
   ② 서빙 플래그 값   — /health 의 serving_flags. 키 부재 = 구코드
   ③ 배포 번들 동일성 — 모델 파일 SHA-256 ↔ 번들 메타 기록값, 재현 정보 유무
   ④ 개입 전달 경로   — 발송 구현이 실재하는지
+  ⑤ 관측 노출 상태   — 스크레이프 경로가 열리는지, worker 가 몇 개인지
 
 읽기만 한다. 파일·설정·프로세스를 바꾸지 않으며 네트워크는 localhost 만 쓴다.
 
 사용:
     python scripts/ops/a0_baseline_check.py
     python scripts/ops/a0_baseline_check.py --api http://localhost:8000 --out a0_report.txt
+    python scripts/ops/a0_baseline_check.py --metrics-key <스크레이프 키>   # ⑤ 포함
 
 폐쇄망 Windows 기준. 표준 라이브러리만 쓰므로 venv 없이도 돈다.
 """
@@ -24,6 +26,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -247,11 +250,95 @@ def check_delivery(root: Path) -> str:
     return v
 
 
+# ── ⑤ 관측 노출 상태 ──────────────────────────────────────────────────────
+LAUNCHER_GLOBS = ("*.bat", "*.cmd", "*.ps1")
+
+
+def find_worker_setting(root: Path) -> list[tuple[str, str]]:
+    """저장소의 실행 스크립트에서 uvicorn worker 설정을 찾는다.
+
+    **process 메트릭으로 세지 않는 이유** — `process_start_time_seconds` 등은
+    `/proc` 기반이라 **Linux 전용**이다. 운영 대상인 Windows 파이썬에서는
+    아예 노출되지 않으므로, 그것으로 worker 수를 세는 방식은 이 배포에서
+    작동하지 않는다. 대신 실행 명령을 읽는다 — 읽기 전용이고 플랫폼을 타지 않는다.
+    """
+    found: list[tuple[str, str]] = []
+    for pattern in LAUNCHER_GLOBS:
+        for f in sorted(root.glob(pattern)):
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if "uvicorn" not in line:
+                    continue
+                m = re.search(r"--workers[= ]+(\d+)", line)
+                found.append((f.name, m.group(1) if m else "미지정(기본 1)"))
+    return found
+
+
+def check_exposition(api: str, key: str | None, root: Path) -> str:
+    """스크레이프 경로가 열리는지, 그리고 **worker 가 몇으로 뜨는지** 확인한다.
+
+    worker 수가 중요한 이유 — 노출 경로는 **요청을 받은 프로세스의** 레지스트리를
+    내보낸다. worker 가 여럿이면 스크레이프마다 다른 프로세스가 답해 총량이
+    누락되고 카운터가 리셋된 것처럼 보인다. 그때 대시보드 숫자는 집계가 아니다.
+    """
+    head("⑤ 관측 노출 상태")
+
+    # (1) 실행 명령의 worker 설정
+    workers = find_worker_setting(root)
+    if not workers:
+        say("  실행 스크립트에서 uvicorn 실행 줄을 찾지 못했다.")
+        say("  → 운영에서 서비스를 어떤 명령으로 띄우는지 확인할 것. worker 가 2 이상이면")
+        say("     대시보드 총량·카운터는 집계가 아니다.")
+        w = "worker 미확인 — 실행 명령 확인 필요"
+    else:
+        for name, val in workers:
+            say(f"  {name:<28} --workers {val}")
+        multi = [v for _, v in workers if v.isdigit() and int(v) > 1]
+        if multi:
+            w = (f"**worker {max(multi)}개 설정 발견** — 노출값은 한 프로세스의 값이므로 "
+                 "집계가 아니다. 대시보드 총량·카운터를 그대로 인용하지 말 것")
+            say("  ⚠ " + w)
+        else:
+            w = "worker 1개 설정 — 노출값을 집계로 읽어도 된다"
+
+    # (2) 노출 경로가 실제로 열리는지
+    url = api.rstrip("/") + "/metrics/prometheus"
+    say(f"\n  스크레이프 경로: {url}")
+    if not key:
+        say("  키 미지정 — `--metrics-key` 로 주면 실제 응답까지 확인한다.")
+        return f"{w} · 노출 경로 미확인(키 없음)"
+
+    req = urllib.request.Request(url, headers={"X-Admin-Key": key})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            body = r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        say(f"  HTTP {e.code} — 401/403 이면 키가 다르고, 503 이면 prometheus_client "
+            "미설치이거나 키가 전혀 설정되지 않은 것이다.")
+        return f"{w} · 노출 열리지 않음 (HTTP {e.code})"
+    except (urllib.error.URLError, OSError) as e:
+        say(f"  조회 실패: {type(e).__name__}: {e}")
+        return f"{w} · 노출 경로 조회 실패"
+
+    series = sorted({l.split()[2] for l in body.splitlines() if l.startswith("# TYPE")})
+    ddi = [n for n in series if n.startswith("ddi_")]
+    say(f"  응답 OK · 계열 {len(series)}종 (그중 ddi_* {len(ddi)}종)")
+    if not ddi:
+        say("  ⚠ ddi_* 계열이 없다 — 서빙이 메트릭을 아직 한 번도 올리지 않았거나 배선이 없다.")
+        return f"{w} · 노출 열림이나 ddi_* 없음"
+    return f"{w} · 노출 열림 (ddi_* {len(ddi)}종)"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="A0 운영 기준선 확인 (읽기 전용)")
     ap.add_argument("--api", default="http://localhost:8000", help="서빙 API 베이스 URL")
     ap.add_argument("--root", default=".", help="저장소 루트")
     ap.add_argument("--out", default="a0_baseline_report.txt", help="리포트 저장 경로")
+    ap.add_argument("--metrics-key", default=None,
+                    help="스크레이프 키(METRICS_SCRAPE_KEY 또는 관리자 키). ⑤ 확인용")
     a = ap.parse_args()
     root = Path(a.root).resolve()
 
@@ -264,14 +351,17 @@ def main() -> int:
     v2 = check_flags(a.api)
     v3 = check_bundle(root)
     v4 = check_delivery(root)
+    v5 = check_exposition(a.api, a.metrics_key, root)
 
     head("요약 — 개선계획 A0 산출물")
     say(f"  ① 소스 상태     {v1}")
     say(f"  ② 플래그        {v2}")
     say(f"  ③ 번들          {v3}")
     say(f"  ④ 전달 경로     {v4}")
+    say(f"  ⑤ 관측 노출     {v5}")
     say()
     say("  다음: ①②가 A4(활성 방식 결정)의 입력이고, ④는 B2 의뢰서에 그대로 들어간다.")
+    say("  ⑤ 의 worker 설정이 1이 아니면 Grafana 총량·카운터는 집계가 아니다.")
 
     try:
         Path(a.out).write_text("\n".join(OUT) + "\n", encoding="utf-8")

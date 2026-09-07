@@ -157,10 +157,42 @@ HIGH_RISK_RATE = _make_gauge(
     ["partition"],  # YYYYMMDD
 )
 
+# 대시보드가 참조하나 정의돼 있지 않던 둘 (M7).
+BATCH_SUCCESS_TOTAL = _make_counter(
+    "ddi_batch_success_total",
+    "배치 예측에서 결과를 산출한 건수",
+    ["source"],   # api | dag
+)
+
+BATCH_FAIL_TOTAL = _make_counter(
+    "ddi_batch_fail_total",
+    "배치 예측에서 실패한 건수",
+    ["source"],
+)
+
+# ddi_pharmacist_acceptance_rate 는 **의도적으로 정의하지 않는다.**
+# 대시보드가 참조하지만 약사 피드백 수집 경로가 구현돼 있지 않다(P1-5).
+# Gauge 를 정의하면 한 번도 설정되지 않은 채 0.0 으로 노출되고, 패널은
+# "약사 수용률 0%" 라는 임상 KPI 의 거짓 0 을 표시한다. 미정의면 Prometheus 가
+# 계열 자체를 내보내지 않아 패널이 "No data" 가 된다 — 그쪽이 사실이다.
+# 피드백 경로가 생기면 그때 정의한다. 부재는 테스트로 고정돼 있다.
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 편의 함수
 # ─────────────────────────────────────────────────────────────────────────────
+
+def record_batch_outcome(success: int = 0, fail: int = 0, source: str = "api") -> None:
+    """배치 예측의 성공·실패 건수를 누적한다.
+
+    성공 = 결과 레코드가 산출된 건, 실패 = 예외로 결과가 없는 건.
+    둘의 합이 요청 건수와 같아야 한다.
+    """
+    # 0 이어도 자식 계열을 만든다. 실패가 한 번도 없으면 계열이 아예 없어서
+    # 성공률 패널이 100% 대신 "데이터 없음" 이 된다 — 그것은 관측 실패로 읽힌다.
+    BATCH_SUCCESS_TOTAL.labels(source=source).inc(success or 0)
+    BATCH_FAIL_TOTAL.labels(source=source).inc(fail or 0)
+
 
 def record_prediction(
     risk_level: str,
@@ -204,13 +236,24 @@ def record_batch(
 # Pushgateway 전송 (선택적)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def push_metrics(gateway_url: str, job: str = "ddi_serving") -> None:
-    """Prometheus Pushgateway로 메트릭 전송."""
+def push_metrics(gateway_url: str, job: str, registry) -> bool:
+    """Prometheus Pushgateway 로 전송. 성공 여부를 돌려준다.
+
+    `registry` 는 **필수**다. 종전에는 전역 `REGISTRY` 를 기본값으로 밀었는데,
+    그러면 호출한 프로세스에 정의만 되고 값이 없는 메트릭과 기본 수집기
+    (`process_*`·`python_*`)까지 함께 실린다. DAG 워커에서 부르면 서빙 쪽
+    무라벨 메트릭이 0 인 채로 게시된다. 보낼 것만 담은 레지스트리를 넘겨라.
+
+    실패를 삼키지 않는다 — 호출자가 판단한다. 종전에는 예외를 삼켜서 관측이
+    나가지 않아도 DAG 가 성공으로 끝났다.
+    """
     if not _PROMETHEUS_AVAILABLE:
         logger.warning("prometheus_client 미설치 — push 생략")
-        return
+        return False
     try:
-        push_to_gateway(gateway_url, job=job, registry=REGISTRY)
-        logger.info("메트릭 push 완료: %s", gateway_url)
+        push_to_gateway(gateway_url, job=job, registry=registry)
+        logger.info("메트릭 push 완료: %s (job=%s)", gateway_url, job)
+        return True
     except Exception as exc:
-        logger.warning("메트릭 push 실패 (무시): %s", exc)
+        logger.warning("메트릭 push 실패: %s", exc)
+        return False

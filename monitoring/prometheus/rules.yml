@@ -16,6 +16,33 @@ groups:
             피처 {{ $labels.feature_name }} PSI = {{ $value | printf "%.4f" }}
             (임계값 0.25 초과). 긴급 재학습을 검토하세요.
 
+      # ── PSI 관측 정지 ───────────────────────────────────────────────────
+      # 드리프트 값 자체가 아니라 **그 값이 언제 데이터인지**를 본다. 오래된
+      # 리포트를 계속 게시하면 패널은 초록인데 관측은 멈춰 있다.
+      - alert: DDI_PSI_Stale
+        expr: (time() - ddi_psi_source_partition_timestamp_seconds) > 86400 * 3
+        for: 30m
+        labels:
+          severity: warning
+          team: ddi
+        annotations:
+          summary: "PSI 근거 데이터가 3일 이상 지났다"
+          description: >
+            마지막 PSI 가 근거한 예측 파티션이 3일 넘게 갱신되지 않았다.
+            배치 예측 또는 드리프트 DAG 를 확인하세요.
+
+      - alert: DDI_PSI_Absent
+        expr: absent(ddi_psi_source_partition_timestamp_seconds)
+        for: 1h
+        labels:
+          severity: warning
+          team: ddi
+        annotations:
+          summary: "PSI 관측 계열이 아예 없다"
+          description: >
+            pushgateway 미구성이거나 드리프트 DAG 가 한 번도 성공하지 않았다.
+            PSI 패널이 비어 있는 것은 "드리프트 없음" 이 아니다.
+
       - alert: DDI_PSI_Warning
         expr: ddi_psi_score >= 0.10 and ddi_psi_score < 0.25
         for: 10m

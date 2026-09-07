@@ -613,3 +613,89 @@ class TestBatchPredictDag:
         }
         result = mod._get_partition(**ctx)
         assert result == "20260319"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Drift 일간 재산출 DAG 테스트 (M7)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDriftDailyDag:
+    """PSI 는 배치 예측 DAG 안에 있었고 그 DAG 는 화~토에만 돈다.
+    배치 DAG 의 일정은 청구 데이터 도착에 묶인 운영 결정이라 건드리지 않고,
+    일간 노출 DAG 를 따로 둔다. **재채점은 하지 않는다** — 같은 데이터를 다시
+    재면 새 정보 없이 리포트를 덮어쓰고 배치 DAG 와 파일 경합을 만든다."""
+
+    def test_dag_importable(self):
+        assert _import_dag("ddi_drift_dag") is not None
+
+    def test_dag_runs_daily(self):
+        mod = _import_dag("ddi_drift_dag")
+        assert mod.dag.schedule_interval == "0 6 * * *"
+
+    def test_batch_dag_schedule_is_unchanged(self):
+        """일정을 넓히면 빈 날에 배치 예측이 돈다."""
+        mod = _import_dag("ddi_batch_predict_dag")
+        assert mod.dag.schedule_interval == "0 5 * * 2-6"
+
+    def test_dag_does_not_raise_alerts(self):
+        """같은 데이터로 알림을 다시 내면 중복이다."""
+        mod = _import_dag("ddi_drift_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "AlertManager" not in src
+        assert not hasattr(mod, "_check_alerts")
+
+    def test_dag_does_not_rescore(self):
+        """리뷰 지적 — 재채점은 리포트를 덮어쓰고 배치 DAG 와 경합한다."""
+        mod = _import_dag("ddi_drift_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "run_drift_job" not in src
+        assert not hasattr(mod, "_recompute_psi")
+        assert hasattr(mod, "_push_psi_freshness")
+
+    def test_batch_dag_pushes_beside_alerts_not_before_them(self):
+        """노출 실패가 알림 생성을 막지 않아야 한다 — 갈래를 나눴다."""
+        mod = _import_dag("ddi_batch_predict_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "t_detect_drift >> t_push_psi" in src
+        assert hasattr(mod, "_push_psi")
+
+    def test_scoring_task_does_not_push(self):
+        mod = _import_dag("ddi_batch_predict_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        body = src[src.index("def _detect_drift"):src.index("def _push_psi")]
+        assert "push_psi_report" not in body
+
+    def test_alerts_are_a_direct_upstream_of_end(self):
+        """정리 태스크가 all_done 이라 알림 실패가 DAG 성공에 가려졌다."""
+        mod = _import_dag("ddi_batch_predict_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "t_generate_alerts >> end" in src
+
+    def test_push_uses_the_partition_just_scored_not_the_latest(self):
+        """'최신' 을 고르면 채점이 무산출일 때 이전 파티션을 재게시하고 성공한다."""
+        mod = _import_dag("ddi_batch_predict_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "xcom_pull(task_ids='detect_drift')" in src
+        assert "push_latest_psi" not in src
+
+    def test_push_is_skipped_when_scoring_produced_nothing(self, monkeypatch):
+        mod = _import_dag("ddi_batch_predict_dag")
+        called = []
+        import monitoring.drift_job as dj
+        monkeypatch.setattr(dj, "push_psi_report", lambda p: called.append(p))
+
+        mod._push_psi("")
+
+        assert called == []
+
+    def test_push_task_delegates_to_the_shared_job(self, tmp_path, monkeypatch):
+        mod = _import_dag("ddi_drift_dag")
+        seen = []
+        import monitoring.drift_job as dj
+        monkeypatch.setattr(dj, "push_latest_psi", lambda d, **k: seen.append(d))
+        import config.settings as _s
+        monkeypatch.setattr(_s, "MONITORING_DIR", tmp_path)
+
+        mod._push_psi_freshness()
+
+        assert seen == [tmp_path]

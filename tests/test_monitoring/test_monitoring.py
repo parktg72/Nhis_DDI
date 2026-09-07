@@ -465,7 +465,9 @@ class TestDashboard:
         assert dashboard is not None
 
     def test_panel_count(self, dashboard):
-        assert len(dashboard["panels"]) == 19
+        # 20 = 종전 19 + PSI 근거 데이터 경과 패널 (M7). 시각 메트릭을 내보내기만
+        # 하고 아무도 보지 않으면 오래된 데이터를 최신인 양 보는 문제가 남는다.
+        assert len(dashboard["panels"]) == 20
 
     def test_panel_ids_unique(self, dashboard):
         ids = [p["id"] for p in dashboard["panels"]]

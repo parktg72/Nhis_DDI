@@ -259,51 +259,49 @@ def _cleanup_staging(**context) -> None:
         os.remove(staging_path)
 
 
-def _detect_drift(partition: str) -> None:
-    """배치 예측 parquet에서 PSI 드리프트를 감지하고 JSON 리포트를 저장한다.
+def _detect_drift(partition: str) -> str:
+    """배치 예측 parquet 에서 PSI 를 산출하고 JSON 리포트를 저장한다.
+
+    계산 대상 컬럼은 **기준 분포와의 교집합**으로 정한다(M7). 종전에는 세 열을
+    손으로 나열했는데 그중 `rule_triggered` 는 예측 parquet 에 쓰인 적이 없고
+    `ddi_count` 는 기준 분포의 피처명이 아니어서, 실제로 계산되던 열은
+    `drug_count` 하나뿐이었다.
+
+    **산출한 리포트 경로를 돌려준다.** 노출 태스크가 "최신" 을 고르면 채점이
+    무산출일 때 이전 파티션을 재게시하고 성공해 버린다. 방금 쓴 것을 넘긴다.
 
     settings 접근을 `from config import settings as _s` 패턴으로 처리해
     테스트에서 monkeypatch.setattr이 정상 작동한다.
     """
-    import pandas as pd
-
     from config import settings as _s
-    from monitoring.drift_detector import DriftDetector
+    from monitoring.drift_job import run_drift_job
 
-    drift_ref = _s.DRIFT_REFERENCE_PATH
-    predictions_dir = _s.PREDICTIONS_DIR
-    monitoring_dir = _s.MONITORING_DIR
-
-    if not drift_ref.exists():
-        logger.warning(
-            "drift_reference.pkl 없음 (%s) — 드리프트 감지 건너뜀 (학습 파이프라인을 먼저 실행하세요)",
-            drift_ref,
-        )
-        return
-
-    pred_path = predictions_dir / f"predictions_{partition}.parquet"
-    if not pred_path.exists():
-        logger.warning("예측 파일 없음 (%s) — 드리프트 감지 건너뜀", pred_path)
-        return
-
-    df = pd.read_parquet(pred_path)
-    available_cols = [c for c in ("drug_count", "ddi_count", "rule_triggered") if c in df.columns]
-    if not available_cols:
-        logger.warning(
-            "PSI 계산 가능한 컬럼 없음 (partition=%s, 컬럼=%s) — 드리프트 감지 건너뜀",
-            partition, list(df.columns),
-        )
-        return
-
-    detector = DriftDetector.load(str(drift_ref))
-    report = detector.detect(df[available_cols], partition=partition)
-
-    monitoring_dir.mkdir(parents=True, exist_ok=True)
-    detector.save_report(report, str(monitoring_dir))
-    logger.info(
-        "드리프트 감지 완료 (partition=%s): %d 피처 분석, %d 드리프트",
-        partition, len(report.feature_results), report.n_drifted,
+    report = run_drift_job(
+        _s.PREDICTIONS_DIR / f"predictions_{partition}.parquet",
+        _s.DRIFT_REFERENCE_PATH,
+        _s.MONITORING_DIR,
+        partition=partition,
     )
+    if report is None:
+        return ""
+    return str(_s.MONITORING_DIR / f"drift_{partition}.json")
+
+
+def _push_psi(report_path: str) -> None:
+    """PSI 노출. **알림과 나란한 갈래에 둔다.**
+
+    종전에는 채점 안에서 push 했는데, 그러면 노출 실패가 채점 태스크를 죽이고
+    직렬 체인의 다음인 알림 생성까지 막았다. 관측 실패가 알림을 막는 것은
+    우선순위가 뒤집힌 것이다.
+
+    채점이 무산출이면(`report_path` 가 빈 값) 노출하지 않는다 — 이전 파티션을
+    다시 밀면 없는 관측이 있는 것처럼 보인다.
+    """
+    from monitoring.drift_job import push_psi_report
+
+    if not report_path:
+        return
+    push_psi_report(report_path)
 
 
 def _generate_alerts(partition: str) -> None:
@@ -419,6 +417,13 @@ with DAG(
         python_callable=_detect_drift,
         op_kwargs={"partition": "{{ ti.xcom_pull(key='partition', task_ids='get_partition') }}"},
     )
+    t_push_psi = PythonOperator(
+        task_id="push_psi",
+        python_callable=_push_psi,
+        op_kwargs={
+            "report_path": "{{ ti.xcom_pull(task_ids='detect_drift') or '' }}"
+        },
+    )
     t_generate_alerts = PythonOperator(
         task_id="generate_alerts",
         python_callable=_generate_alerts,
@@ -439,7 +444,15 @@ with DAG(
         >> t_predict
         >> t_summary
         >> t_detect_drift
+    )
+    # 노출 실패가 알림을 막지 않도록 갈래를 나눈다.
+    t_detect_drift >> t_push_psi >> end
+    (
+        t_detect_drift
         >> t_generate_alerts
         >> t_cleanup
         >> end
     )
+    # 정리 태스크는 trigger_rule="all_done" 이라 알림 실패에도 성공한다. 알림을
+    # end 의 upstream 에 직접 걸어야 알림 실패가 DAG 성공에 가려지지 않는다.
+    t_generate_alerts >> end

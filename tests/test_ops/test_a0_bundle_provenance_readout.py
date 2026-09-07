@@ -71,3 +71,76 @@ def test_the_stamp_does_not_mask_a_bundle_mismatch(tmp_path, monkeypatch):
 
     assert verdict.startswith("불일치")
     assert "재현 정보 있음" in verdict
+
+
+# ── A0 ⑤ 관측 노출 상태 (3차 검토 반영) ─────────────────────────────────
+#
+# 종전 구현은 `process_start_time_seconds` 로 worker 수를 셌다. 그 계열은 /proc
+# 기반이라 **Linux 전용**이고, 운영 대상인 Windows 파이썬에서는 아예 노출되지
+# 않는다. 배포 대상에서 못 도는 검사였다. 실행 명령을 읽는 방식으로 바꿨다.
+
+
+def _launcher(tmp_path, name, line):
+    (tmp_path / name).write_text(line, encoding="utf-8")
+
+
+def test_worker_setting_is_read_from_the_launcher(tmp_path):
+    _launcher(tmp_path, "run.bat", 'python -m uvicorn serving.main:app --workers 4\n')
+
+    assert a0.find_worker_setting(tmp_path) == [("run.bat", "4")]
+
+
+def test_a_launcher_without_the_flag_is_reported_as_default_one(tmp_path):
+    _launcher(tmp_path, "run.bat", "python -m uvicorn serving.main:app --port 8000\n")
+
+    assert a0.find_worker_setting(tmp_path) == [("run.bat", "미지정(기본 1)")]
+
+
+def test_multiple_workers_are_called_out_as_not_an_aggregate(tmp_path):
+    _launcher(tmp_path, "run.bat", "uvicorn serving.main:app --workers 4\n")
+
+    v = a0.check_exposition("http://x", None, tmp_path)
+
+    assert "worker 4개 설정 발견" in v
+    assert "집계가 아니다" in v
+
+
+def test_a_single_worker_is_reported_as_safe_to_read(tmp_path):
+    _launcher(tmp_path, "run.bat", "uvicorn serving.main:app\n")
+
+    assert "worker 1개 설정" in a0.check_exposition("http://x", None, tmp_path)
+
+
+def test_no_launcher_is_reported_as_unknown_not_as_fine(tmp_path):
+    """찾지 못한 것을 조용히 통과시키면 확인했다고 오해된다."""
+    v = a0.check_exposition("http://x", None, tmp_path)
+
+    assert "worker 미확인" in v
+
+
+def test_without_a_key_the_exposition_itself_is_not_claimed_checked(tmp_path):
+    _launcher(tmp_path, "run.bat", "uvicorn serving.main:app\n")
+
+    assert "노출 경로 미확인" in a0.check_exposition("http://x", None, tmp_path)
+
+
+def test_exposition_without_ddi_series_is_flagged(tmp_path, monkeypatch):
+    """노출은 열렸는데 ddi_* 가 없으면 배선이 없는 것이다 — 통과로 읽히면 안 된다."""
+    import urllib.request
+
+    class _R:
+        def read(self):
+            return b"# TYPE python_info gauge\npython_info 1.0\n"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _R())
+    _launcher(tmp_path, "run.bat", "uvicorn serving.main:app\n")
+
+    v = a0.check_exposition("http://x", "k", tmp_path)
+
+    assert "ddi_* 없음" in v
