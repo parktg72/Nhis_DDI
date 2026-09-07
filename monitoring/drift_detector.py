@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -297,8 +298,21 @@ class DriftDetector:
         path = os.path.join(log_dir, f"drift_{report.partition}.json")
         # 임시 파일에 쓰고 교체한다. 같은 디렉터리를 읽는 DAG 가 따로 있어,
         # 직접 "w" 로 열면 그 사이에 부분 JSON 을 잡을 수 있다.
-        tmp = f"{path}.tmp{os.getpid()}"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(report.to_dict(), f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        # 임시 파일에 쓰고 교체한다. 같은 디렉터리를 읽는 DAG 가 따로 있어,
+        # 직접 "w" 로 열면 그 사이에 부분 JSON 을 잡을 수 있다.
+        # **원자적 게시이지 불변 기록은 아니다** — 같은 파티션을 다시 돌리면
+        # 그 파티션의 리포트는 갱신된다.
+        fd, tmp = tempfile.mkstemp(prefix=f"drift_{report.partition}.", suffix=".tmp",
+                                   dir=log_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(report.to_dict(), f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        finally:
+            # 교체가 실패하면 임시 파일이 남는다. 남기지 않는다.
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    logger.warning("임시 리포트 파일 정리 실패: %s", tmp)
         return path

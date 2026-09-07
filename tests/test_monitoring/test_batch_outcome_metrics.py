@@ -39,3 +39,20 @@ def test_dashboard_panel_says_the_feedback_path_is_missing():
 
     assert hit, "약사 수용률 패널이 사라졌다 — 지우지 말고 사유를 적어 남긴다"
     assert any("미구현" in t or "P1-5" in t for t in hit)
+
+
+def test_the_freshness_metric_is_actually_consumed():
+    """내보내기만 하고 아무도 보지 않으면 오래된 데이터를 최신인 양 보는 문제가
+    그대로다 — 패널과 경보가 소비하는지 고정한다."""
+    import json
+    from pathlib import Path
+
+    metric = "ddi_psi_source_partition_timestamp_seconds"
+
+    d = json.loads(Path("monitoring/grafana/dashboard.json").read_text(encoding="utf-8"))
+    exprs = [t.get("expr", "") for p in d["panels"] for t in p.get("targets", [])]
+    assert any(metric in e for e in exprs), "대시보드가 시각 메트릭을 쓰지 않는다"
+
+    rules = Path("monitoring/prometheus/rules.yml").read_text(encoding="utf-8")
+    assert metric in rules, "경보 규칙이 시각 메트릭을 쓰지 않는다"
+    assert "absent(" in rules, "계열 부재 자체를 잡는 규칙이 없다"

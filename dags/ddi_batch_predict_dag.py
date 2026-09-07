@@ -259,7 +259,7 @@ def _cleanup_staging(**context) -> None:
         os.remove(staging_path)
 
 
-def _detect_drift(partition: str) -> None:
+def _detect_drift(partition: str) -> str:
     """배치 예측 parquet 에서 PSI 를 산출하고 JSON 리포트를 저장한다.
 
     계산 대상 컬럼은 **기준 분포와의 교집합**으로 정한다(M7). 종전에는 세 열을
@@ -267,31 +267,41 @@ def _detect_drift(partition: str) -> None:
     `ddi_count` 는 기준 분포의 피처명이 아니어서, 실제로 계산되던 열은
     `drug_count` 하나뿐이었다.
 
+    **산출한 리포트 경로를 돌려준다.** 노출 태스크가 "최신" 을 고르면 채점이
+    무산출일 때 이전 파티션을 재게시하고 성공해 버린다. 방금 쓴 것을 넘긴다.
+
     settings 접근을 `from config import settings as _s` 패턴으로 처리해
     테스트에서 monkeypatch.setattr이 정상 작동한다.
     """
     from config import settings as _s
     from monitoring.drift_job import run_drift_job
 
-    run_drift_job(
+    report = run_drift_job(
         _s.PREDICTIONS_DIR / f"predictions_{partition}.parquet",
         _s.DRIFT_REFERENCE_PATH,
         _s.MONITORING_DIR,
         partition=partition,
     )
+    if report is None:
+        return ""
+    return str(_s.MONITORING_DIR / f"drift_{partition}.json")
 
 
-def _push_psi() -> None:
-    """PSI 노출. **알림과 나란히 둔다.**
+def _push_psi(report_path: str) -> None:
+    """PSI 노출. **알림과 나란한 갈래에 둔다.**
 
     종전에는 채점 안에서 push 했는데, 그러면 노출 실패가 채점 태스크를 죽이고
     직렬 체인의 다음인 알림 생성까지 막았다. 관측 실패가 알림을 막는 것은
     우선순위가 뒤집힌 것이다.
-    """
-    from config import settings as _s
-    from monitoring.drift_job import push_latest_psi
 
-    push_latest_psi(_s.MONITORING_DIR)
+    채점이 무산출이면(`report_path` 가 빈 값) 노출하지 않는다 — 이전 파티션을
+    다시 밀면 없는 관측이 있는 것처럼 보인다.
+    """
+    from monitoring.drift_job import push_psi_report
+
+    if not report_path:
+        return
+    push_psi_report(report_path)
 
 
 def _generate_alerts(partition: str) -> None:
@@ -410,6 +420,9 @@ with DAG(
     t_push_psi = PythonOperator(
         task_id="push_psi",
         python_callable=_push_psi,
+        op_kwargs={
+            "report_path": "{{ ti.xcom_pull(task_ids='detect_drift') or '' }}"
+        },
     )
     t_generate_alerts = PythonOperator(
         task_id="generate_alerts",
@@ -440,3 +453,6 @@ with DAG(
         >> t_cleanup
         >> end
     )
+    # 정리 태스크는 trigger_rule="all_done" 이라 알림 실패에도 성공한다. 알림을
+    # end 의 upstream 에 직접 걸어야 알림 실패가 DAG 성공에 가려지지 않는다.
+    t_generate_alerts >> end

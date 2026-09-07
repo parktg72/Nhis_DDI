@@ -239,3 +239,51 @@ def test_impossible_partitions_are_rejected(bad):
 
 def test_month_partition_uses_the_first_day():
     assert _partition_start("202609") == datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+
+# ── 3차 검토 반영 ────────────────────────────────────────────────────────
+
+def test_push_psi_report_uses_the_given_report_not_the_latest(tmp_path, monkeypatch):
+    """배치는 방금 쓴 리포트를 밀어야 한다 — 최신을 고르면 무산출일 때
+    이전 파티션을 재게시하고 성공한다."""
+    from monitoring.drift_job import push_psi_report
+
+    sent = {}
+    monkeypatch.setattr(dj, "push_metrics",
+                        lambda url, job, registry: sent.update(reg=registry) or True)
+    monkeypatch.setenv("DDI_PUSHGATEWAY_URL", "http://pushgw:9091")
+    m = tmp_path / "monitoring"
+    _report(m, "20260901", "2026-09-01T05:10:00", psi=0.11)
+    _report(m, "20260905", "2026-09-05T05:10:00", psi=0.33)
+
+    got = push_psi_report(m / "drift_20260901.json")
+
+    assert got.name == "drift_20260901.json"
+    vals = {s.name: s.value for mf in sent["reg"].collect() for s in mf.samples}
+    assert vals["ddi_psi_score"] == 0.11
+    assert vals["ddi_psi_source_partition_timestamp_seconds"] == datetime(
+        2026, 9, 1, tzinfo=timezone.utc).timestamp()
+
+
+def test_push_psi_report_is_a_noop_on_a_missing_path(tmp_path):
+    from monitoring.drift_job import push_psi_report
+
+    assert push_psi_report(tmp_path / "없음.json") is None
+    assert push_psi_report("") is None
+
+
+def test_a_failed_report_write_leaves_no_temp_file(tmp_path, monkeypatch):
+    """교체가 실패하면 임시 파일이 남는다 — 남기지 않는다."""
+    import os as _os
+
+    from monitoring.drift_detector import DriftDetector
+
+    ref = pd.DataFrame({"drug_count": list(range(1, 51))})
+    d = DriftDetector().fit(ref)
+    rep = d.detect(pd.DataFrame({"drug_count": [1, 2, 3]}), partition="20260905")
+
+    monkeypatch.setattr(_os, "replace", lambda *a: (_ for _ in ()).throw(OSError("boom")))
+    with pytest.raises(OSError):
+        d.save_report(rep, str(tmp_path))
+
+    assert list(tmp_path.glob("*.tmp")) == []

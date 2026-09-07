@@ -662,9 +662,31 @@ class TestDriftDailyDag:
     def test_scoring_task_does_not_push(self):
         mod = _import_dag("ddi_batch_predict_dag")
         src = open(mod.__file__, encoding="utf-8").read()
-        # _detect_drift 는 run_drift_job 만 부르고 push 하지 않는다
         body = src[src.index("def _detect_drift"):src.index("def _push_psi")]
-        assert "push" not in body
+        assert "push_psi_report" not in body
+
+    def test_alerts_are_a_direct_upstream_of_end(self):
+        """정리 태스크가 all_done 이라 알림 실패가 DAG 성공에 가려졌다."""
+        mod = _import_dag("ddi_batch_predict_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "t_generate_alerts >> end" in src
+
+    def test_push_uses_the_partition_just_scored_not_the_latest(self):
+        """'최신' 을 고르면 채점이 무산출일 때 이전 파티션을 재게시하고 성공한다."""
+        mod = _import_dag("ddi_batch_predict_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "xcom_pull(task_ids='detect_drift')" in src
+        assert "push_latest_psi" not in src
+
+    def test_push_is_skipped_when_scoring_produced_nothing(self, monkeypatch):
+        mod = _import_dag("ddi_batch_predict_dag")
+        called = []
+        import monitoring.drift_job as dj
+        monkeypatch.setattr(dj, "push_psi_report", lambda p: called.append(p))
+
+        mod._push_psi("")
+
+        assert called == []
 
     def test_push_task_delegates_to_the_shared_job(self, tmp_path, monkeypatch):
         mod = _import_dag("ddi_drift_dag")

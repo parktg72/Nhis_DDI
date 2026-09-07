@@ -13,8 +13,12 @@
 **함수 둘의 역할이 다르다.**
 
   run_drift_job      새 예측 파티션을 채점하고 리포트를 쓴다. **push 하지 않는다.**
-                     이 리포트가 불변 기록이며 덮어쓰지 않는다.
-  push_latest_psi    최신 리포트를 읽어 노출한다. **push 하는 곳은 여기 하나다.**
+                     같은 파티션을 다시 돌리면 그 파티션 리포트를 갱신한다 —
+                     쓰기는 원자적이지만 **불변 기록은 아니다.**
+  push_psi_report    지정한 리포트를 노출한다. 배치 DAG 는 **방금 쓴 그 리포트**를
+                     넘긴다 — "최신" 을 고르면 채점이 무산출일 때 이전 파티션을
+                     재게시하고 성공해 버린다.
+  push_latest_psi    최신 리포트를 골라 노출한다. 일간 DAG 전용.
                      다시 채점하지 않는다 — 같은 데이터를 다시 재면 새 정보 없이
                      리포트만 덮어쓰고 파일 경합을 만든다.
 
@@ -139,7 +143,7 @@ def run_drift_job(predictions_path, reference_path, output_dir, *, partition: st
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    detector.save_report(report, str(out))
+    written = detector.save_report(report, str(out))
 
     for r in report.feature_results:
         record_psi(feature_name=r.feature_name, psi_value=r.psi)
@@ -148,6 +152,7 @@ def run_drift_job(predictions_path, reference_path, output_dir, *, partition: st
         "PSI 산출 완료 (partition=%s): %d 피처, 드리프트 %d",
         partition, len(report.feature_results), report.n_drifted,
     )
+    logger.debug("리포트 기록: %s", written)
     return report
 
 
@@ -191,33 +196,27 @@ def _select_latest(monitoring_dir: Path):
     return best
 
 
-def push_latest_psi(monitoring_dir) -> Path | None:
-    """가장 최근 드리프트 리포트를 노출한다. **다시 채점하지 않는다.**
-
-    배치 DAG 와 일간 DAG 가 모두 이 함수를 쓴다 — push 하는 곳은 여기 하나다.
-    배치가 돌지 않는 날에도 PSI 계열이 살아 있게 하되, 그 값이 **언제 데이터**
-    인지를 `ddi_psi_source_partition_timestamp_seconds` 로 함께 낸다.
-    """
-    d = Path(monitoring_dir)
-    if not d.exists():
-        logger.warning("모니터링 디렉터리 없음 (%s) — 노출할 PSI 가 없다", d)
+def push_psi_report(report_path) -> Path | None:
+    """**지정한** 리포트를 노출한다. push 하는 실체는 이 함수 하나다."""
+    latest = Path(report_path) if report_path else None
+    if latest is None or not latest.exists():
+        logger.warning("노출할 리포트가 없다 (%s)", report_path)
         return None
 
-    picked = _select_latest(d)
-    if picked is None:
-        logger.warning("드리프트 리포트 없음 (%s) — 노출할 PSI 가 없다", d)
-        return None
-    started, latest, name_partition = picked
+    m = _REPORT_RE.match(latest.name)
+    started = _partition_start(m.group(1)) if m else None
 
     data = json.loads(latest.read_text(encoding="utf-8"))
     inner = str(data.get("partition", ""))
-    if inner and inner != name_partition:
-        # 파일명과 내용이 어긋나면 어느 쪽이 맞는지 알 수 없다. 내용을 따르되
-        # 조용히 넘기지 않는다.
-        logger.warning("파일명과 리포트 파티션 불일치: %s vs %s", name_partition, inner)
+    if inner:
         inner_started = _partition_start(inner)
+        if started is not None and inner_started is not None and inner_started != started:
+            logger.warning("파일명과 리포트 파티션 불일치: %s vs %s", latest.name, inner)
         if inner_started is not None:
             started = inner_started
+    if started is None:
+        logger.warning("파티션 날짜를 읽을 수 없다 (%s) — 노출하지 않는다", latest.name)
+        return None
 
     # 리포트 스키마는 `features: [{feature, psi, status}]` 다.
     pairs = [
@@ -233,5 +232,19 @@ def push_latest_psi(monitoring_dir) -> Path | None:
         record_psi(feature_name=name, psi_value=value)
     _push(pairs, started.timestamp())
 
-    logger.info("최신 PSI 노출 (%s, 파티션 시작 %s)", latest.name, started.date())
+    logger.info("PSI 노출 (%s, 파티션 시작 %s)", latest.name, started.date())
     return latest
+
+
+def push_latest_psi(monitoring_dir) -> Path | None:
+    """가장 최근 리포트를 골라 노출한다. **다시 채점하지 않는다.** 일간 DAG 전용."""
+    d = Path(monitoring_dir)
+    if not d.exists():
+        logger.warning("모니터링 디렉터리 없음 (%s) — 노출할 PSI 가 없다", d)
+        return None
+
+    picked = _select_latest(d)
+    if picked is None:
+        logger.warning("드리프트 리포트 없음 (%s) — 노출할 PSI 가 없다", d)
+        return None
+    return push_psi_report(picked[1])
