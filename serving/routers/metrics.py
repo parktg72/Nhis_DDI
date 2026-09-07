@@ -14,11 +14,16 @@ Prometheus 설정 파일에 관리 권한이 들어간다. 그래서 `METRICS_SC
 따로 받고, 이 키는 **노출 경로에서만** 통한다. 미설정 시에는 종전대로 관리자
 키를 받는다(하위 호환).
 
-**멀티 프로세스** — 배포 이미지가 uvicorn worker 를 4개 띄운다. 노출 요청은 그중
-하나가 받으므로, 그 프로세스의 레지스트리만 내보내면 총량이 누락되고 카운터가
-리셋된 것처럼 보인다. `PROMETHEUS_MULTIPROC_DIR` 가 설정돼 있으면 그 디렉터리를
-읽어 프로세스 전체를 합산한다. 미설정이면 종전대로 프로세스 로컬 값을 낸다 —
-worker 가 하나일 때만 맞는 값이며, 그 확인은 A0 ② 의 몫이다.
+**worker 가 하나일 때만 맞는 값이다.** 이 경로는 **요청을 받은 프로세스의**
+레지스트리를 내보낸다. uvicorn 을 여러 worker 로 띄우면 총량이 누락되고 카운터가
+리셋된 것처럼 보인다.
+
+합산 수집기 경로를 넣었다가 **뺐다.** 근거로 삼았던 `--workers 4` 가 저장소에서
+DEPRECATED 로 표시된 컨테이너 파일과 진입점 docstring 에만 있었고, 운영 실행
+경로(Windows 폐쇄망)의 worker 수는 확인되지 않았다. 확인되지 않은 배포 형태를
+겨냥해 코드를 남기지 않는다. **worker 수는 A0 ⑤ 가 실측한다** — 노출을 여러 번
+읽어 서로 다른 프로세스 시작 시각이 몇 개인지 센다. 하나가 아니면 이 값은
+집계가 아니며, 그때 합산 경로를 다시 검토한다.
 """
 import logging
 import os
@@ -36,13 +41,7 @@ from serving.routers.health import _require_admin
 logger = logging.getLogger(__name__)
 
 try:
-    from prometheus_client import (
-        CONTENT_TYPE_LATEST,
-        REGISTRY,
-        CollectorRegistry,
-        generate_latest,
-        multiprocess,
-    )
+    from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
     _PROMETHEUS_AVAILABLE = True
 except ImportError:      # 폐쇄망 최소 설치 대비 — 장애가 아니라 구성 문제다
     _PROMETHEUS_AVAILABLE = False
@@ -75,16 +74,6 @@ def _require_scrape(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None
         raise HTTPException(status_code=401, detail="관리자 인증 실패")
 
 
-def _exposition_registry():
-    """노출에 쓸 레지스트리. 멀티 프로세스 구성이면 전 프로세스를 합산한다."""
-    mp_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR", "").strip()
-    if not mp_dir:
-        return REGISTRY
-    registry = CollectorRegistry()
-    multiprocess.MultiProcessCollector(registry, path=mp_dir)
-    return registry
-
-
 @router.get("/metrics/prometheus", response_class=PlainTextResponse)
 async def get_metrics_prometheus(_: None = Depends(_require_scrape)) -> PlainTextResponse:
     """Prometheus 텍스트 노출. 스크레이프 대상이 되는 유일한 경로다."""
@@ -94,7 +83,7 @@ async def get_metrics_prometheus(_: None = Depends(_require_scrape)) -> PlainTex
             detail="prometheus_client 미설치 — 스크레이프 노출 불가 (인메모리 폴백 모드)",
         )
     return PlainTextResponse(
-        content=generate_latest(_exposition_registry()).decode("utf-8"),
+        content=generate_latest(REGISTRY).decode("utf-8"),
         media_type=CONTENT_TYPE_LATEST,
     )
 

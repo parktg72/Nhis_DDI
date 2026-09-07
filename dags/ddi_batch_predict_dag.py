@@ -281,6 +281,19 @@ def _detect_drift(partition: str) -> None:
     )
 
 
+def _push_psi() -> None:
+    """PSI 노출. **알림과 나란히 둔다.**
+
+    종전에는 채점 안에서 push 했는데, 그러면 노출 실패가 채점 태스크를 죽이고
+    직렬 체인의 다음인 알림 생성까지 막았다. 관측 실패가 알림을 막는 것은
+    우선순위가 뒤집힌 것이다.
+    """
+    from config import settings as _s
+    from monitoring.drift_job import push_latest_psi
+
+    push_latest_psi(_s.MONITORING_DIR)
+
+
 def _generate_alerts(partition: str) -> None:
     """드리프트 리포트와 Rule/ML 불일치율을 기반으로 알림을 생성하고 JSON으로 저장한다."""
     import json
@@ -394,6 +407,10 @@ with DAG(
         python_callable=_detect_drift,
         op_kwargs={"partition": "{{ ti.xcom_pull(key='partition', task_ids='get_partition') }}"},
     )
+    t_push_psi = PythonOperator(
+        task_id="push_psi",
+        python_callable=_push_psi,
+    )
     t_generate_alerts = PythonOperator(
         task_id="generate_alerts",
         python_callable=_generate_alerts,
@@ -414,6 +431,11 @@ with DAG(
         >> t_predict
         >> t_summary
         >> t_detect_drift
+    )
+    # 노출 실패가 알림을 막지 않도록 갈래를 나눈다.
+    t_detect_drift >> t_push_psi >> end
+    (
+        t_detect_drift
         >> t_generate_alerts
         >> t_cleanup
         >> end

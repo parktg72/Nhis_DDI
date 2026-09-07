@@ -295,6 +295,10 @@ class DriftDetector:
         """드리프트 리포트를 JSON으로 저장."""
         os.makedirs(log_dir, exist_ok=True)
         path = os.path.join(log_dir, f"drift_{report.partition}.json")
-        with open(path, "w", encoding="utf-8") as f:
+        # 임시 파일에 쓰고 교체한다. 같은 디렉터리를 읽는 DAG 가 따로 있어,
+        # 직접 "w" 로 열면 그 사이에 부분 JSON 을 잡을 수 있다.
+        tmp = f"{path}.tmp{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(report.to_dict(), f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
         return path

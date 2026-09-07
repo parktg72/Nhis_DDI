@@ -9,12 +9,14 @@ P0-1(안전망) 의 대상이 특정되지 않아 어떤 조치의 효과도 측
   ② 서빙 플래그 값   — /health 의 serving_flags. 키 부재 = 구코드
   ③ 배포 번들 동일성 — 모델 파일 SHA-256 ↔ 번들 메타 기록값, 재현 정보 유무
   ④ 개입 전달 경로   — 발송 구현이 실재하는지
+  ⑤ 관측 노출 상태   — 스크레이프 경로가 열리는지, worker 가 몇 개인지
 
 읽기만 한다. 파일·설정·프로세스를 바꾸지 않으며 네트워크는 localhost 만 쓴다.
 
 사용:
     python scripts/ops/a0_baseline_check.py
     python scripts/ops/a0_baseline_check.py --api http://localhost:8000 --out a0_report.txt
+    python scripts/ops/a0_baseline_check.py --metrics-key <스크레이프 키>   # ⑤ 포함
 
 폐쇄망 Windows 기준. 표준 라이브러리만 쓰므로 venv 없이도 돈다.
 """
@@ -247,11 +249,71 @@ def check_delivery(root: Path) -> str:
     return v
 
 
+# ── ⑤ 관측 노출 상태 ──────────────────────────────────────────────────────
+def check_exposition(api: str, key: str | None) -> str:
+    """스크레이프 경로가 열리는지, 그리고 **worker 가 몇 개인지** 실측한다.
+
+    worker 수가 중요한 이유 — 노출 경로는 **요청을 받은 프로세스의** 레지스트리를
+    내보낸다. worker 가 여럿이면 스크레이프마다 다른 프로세스가 답해 총량이
+    누락되고 카운터가 리셋된 것처럼 보인다. 그때 대시보드 숫자는 집계가 아니다.
+
+    세는 방법 — 노출을 여러 번 읽어 `process_start_time_seconds` 의 서로 다른
+    값이 몇 개인지 본다. 프로세스마다 다르므로 그 개수가 응답한 worker 수의
+    하한이다. (여러 번 읽어도 같은 프로세스만 답할 수 있으므로 **하한**이다.)
+    """
+    head("⑤ 관측 노출 상태")
+    url = api.rstrip("/") + "/metrics/prometheus"
+    say(f"  대상: {url}")
+    if not key:
+        say("  스크레이프 키 미지정 — `--metrics-key` 로 주면 worker 수까지 확인한다.")
+        return "미확인 — 키 미지정"
+
+    starts: set[str] = set()
+    codes: set[int] = set()
+    for _ in range(8):
+        req = urllib.request.Request(url, headers={"X-Admin-Key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                codes.add(r.status)
+                body = r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            codes.add(e.code)
+            continue
+        except (urllib.error.URLError, OSError) as e:
+            say(f"  조회 실패: {type(e).__name__}: {e}")
+            return "UNKNOWN — 노출 경로 조회 실패"
+        for line in body.splitlines():
+            if line.startswith("process_start_time_seconds"):
+                starts.add(line.split()[-1])
+
+    if codes and codes != {200}:
+        say(f"  응답 코드 {sorted(codes)} — 401/403 이면 키가 다르고, 503 이면 "
+            "prometheus_client 미설치이거나 키가 전혀 설정되지 않은 것이다.")
+        return f"열리지 않음 (HTTP {sorted(codes)})"
+
+    if not starts:
+        say("  ⚠ process_start_time_seconds 가 없다 — 노출은 되나 프로세스 식별 불가.")
+        return "열림 — worker 수 확인 불가"
+
+    n = len(starts)
+    say(f"  응답한 서로 다른 프로세스: {n}개 (8회 조회 기준 하한)")
+    if n == 1:
+        v = "열림 · worker 1개로 보임 — 노출값을 집계로 읽어도 된다"
+    else:
+        v = (f"열림 · **worker {n}개 이상** — 노출값은 한 프로세스의 값이므로 "
+             "집계가 아니다. 대시보드 총량·카운터를 그대로 인용하지 말 것")
+        say("  ⚠ " + v)
+    say(f"\n  판정: {v}")
+    return v
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="A0 운영 기준선 확인 (읽기 전용)")
     ap.add_argument("--api", default="http://localhost:8000", help="서빙 API 베이스 URL")
     ap.add_argument("--root", default=".", help="저장소 루트")
     ap.add_argument("--out", default="a0_baseline_report.txt", help="리포트 저장 경로")
+    ap.add_argument("--metrics-key", default=None,
+                    help="스크레이프 키(METRICS_SCRAPE_KEY 또는 관리자 키). ⑤ 확인용")
     a = ap.parse_args()
     root = Path(a.root).resolve()
 
@@ -264,14 +326,17 @@ def main() -> int:
     v2 = check_flags(a.api)
     v3 = check_bundle(root)
     v4 = check_delivery(root)
+    v5 = check_exposition(a.api, a.metrics_key)
 
     head("요약 — 개선계획 A0 산출물")
     say(f"  ① 소스 상태     {v1}")
     say(f"  ② 플래그        {v2}")
     say(f"  ③ 번들          {v3}")
     say(f"  ④ 전달 경로     {v4}")
+    say(f"  ⑤ 관측 노출     {v5}")
     say()
     say("  다음: ①②가 A4(활성 방식 결정)의 입력이고, ④는 B2 의뢰서에 그대로 들어간다.")
+    say("  ⑤ 의 worker 수가 1이 아니면 Grafana 총량·카운터는 집계가 아니다.")
 
     try:
         Path(a.out).write_text("\n".join(OUT) + "\n", encoding="utf-8")

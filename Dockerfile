@@ -84,13 +84,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
-# ── 관측 ───────────────────────────────────────────────────────────────────
-# worker 가 4개이므로 노출 요청은 그중 하나가 받는다. 이 디렉터리가 없으면
-# 그 프로세스의 값만 나가 총량이 누락되고 카운터가 리셋된 것처럼 보인다.
-# prometheus_client 는 **import 시점**에 이 환경변수를 보므로 여기서 설정한다.
-ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
-RUN mkdir -p /tmp/prometheus_multiproc
-
 # ── 실행 ───────────────────────────────────────────────────────────────────
 CMD ["uvicorn", "serving.main:app", \
      "--host", "0.0.0.0", \

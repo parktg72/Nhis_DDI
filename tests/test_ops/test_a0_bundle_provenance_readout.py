@@ -71,3 +71,60 @@ def test_the_stamp_does_not_mask_a_bundle_mismatch(tmp_path, monkeypatch):
 
     assert verdict.startswith("불일치")
     assert "재현 정보 있음" in verdict
+
+
+# ── A0 ⑤ 관측 노출 상태 (PR #22 재검토 반영) ─────────────────────────────
+
+def _fake_exposition(bodies, code=200):
+    """urlopen 대역 — 호출마다 다음 본문을 돌려준다."""
+    import io as _io
+    seq = iter(bodies)
+
+    class _Resp:
+        status = code
+
+        def __init__(self, body):
+            self._b = body.encode("utf-8")
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _open(req, timeout=None):
+        return _Resp(next(seq))
+
+    return _open
+
+
+def test_a0_reports_a_single_worker(monkeypatch):
+    import urllib.request
+    body = "process_start_time_seconds 1.0\nddi_prediction_total 3.0\n"
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_exposition([body] * 8))
+
+    v = a0.check_exposition("http://x", "k")
+
+    assert "worker 1개" in v
+
+
+def test_a0_flags_multiple_workers(monkeypatch):
+    """worker 가 여럿이면 노출값은 한 프로세스의 값이라 집계가 아니다."""
+    import urllib.request
+    bodies = [f"process_start_time_seconds {i % 3}.0\n" for i in range(8)]
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_exposition(bodies))
+
+    v = a0.check_exposition("http://x", "k")
+
+    assert "worker 3개 이상" in v
+    assert "집계가 아니다" in v
+
+
+def test_a0_says_it_cannot_check_without_a_key(monkeypatch):
+    """키 없이 조용히 통과하면 확인했다고 오해된다."""
+    v = a0.check_exposition("http://x", None)
+
+    assert v.startswith("미확인")

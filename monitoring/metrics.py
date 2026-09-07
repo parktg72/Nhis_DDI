@@ -188,10 +188,10 @@ def record_batch_outcome(success: int = 0, fail: int = 0, source: str = "api") -
     성공 = 결과 레코드가 산출된 건, 실패 = 예외로 결과가 없는 건.
     둘의 합이 요청 건수와 같아야 한다.
     """
-    if success:
-        BATCH_SUCCESS_TOTAL.labels(source=source).inc(success)
-    if fail:
-        BATCH_FAIL_TOTAL.labels(source=source).inc(fail)
+    # 0 이어도 자식 계열을 만든다. 실패가 한 번도 없으면 계열이 아예 없어서
+    # 성공률 패널이 100% 대신 "데이터 없음" 이 된다 — 그것은 관측 실패로 읽힌다.
+    BATCH_SUCCESS_TOTAL.labels(source=source).inc(success or 0)
+    BATCH_FAIL_TOTAL.labels(source=source).inc(fail or 0)
 
 
 def record_prediction(

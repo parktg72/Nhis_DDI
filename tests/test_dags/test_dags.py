@@ -652,6 +652,20 @@ class TestDriftDailyDag:
         assert not hasattr(mod, "_recompute_psi")
         assert hasattr(mod, "_push_psi_freshness")
 
+    def test_batch_dag_pushes_beside_alerts_not_before_them(self):
+        """노출 실패가 알림 생성을 막지 않아야 한다 — 갈래를 나눴다."""
+        mod = _import_dag("ddi_batch_predict_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "t_detect_drift >> t_push_psi" in src
+        assert hasattr(mod, "_push_psi")
+
+    def test_scoring_task_does_not_push(self):
+        mod = _import_dag("ddi_batch_predict_dag")
+        src = open(mod.__file__, encoding="utf-8").read()
+        # _detect_drift 는 run_drift_job 만 부르고 push 하지 않는다
+        body = src[src.index("def _detect_drift"):src.index("def _push_psi")]
+        assert "push" not in body
+
     def test_push_task_delegates_to_the_shared_job(self, tmp_path, monkeypatch):
         mod = _import_dag("ddi_drift_dag")
         seen = []

@@ -91,28 +91,12 @@ def test_without_a_scrape_key_the_admin_key_still_works(client, monkeypatch):
     assert client.get(PATH, headers={"X-Admin-Key": ADMIN_KEY}).status_code == 200
 
 
-def test_multiprocess_directory_is_used_when_configured(client, monkeypatch, tmp_path):
-    """배포 이미지는 worker 4개를 띄운다. 프로세스 로컬 레지스트리만 내면
-    총량이 누락되고 카운터가 리셋된 것처럼 보인다."""
-    called = []
+def test_exposition_serves_the_process_local_registry(client, monkeypatch):
+    """worker 가 여럿이면 이 값은 집계가 아니다. 합산 경로는 넣지 않았다 —
+    운영 worker 수가 확인되지 않았고, 확인되지 않은 배포 형태를 겨냥한 코드는
+    남기지 않는다. worker 수는 A0 ⑤ 가 실측한다."""
     import serving.routers.metrics as m
 
-    class _FakeCollector:
-        def __init__(self, registry, path=None):
-            called.append(path)
-
-    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
-    monkeypatch.setattr(m.multiprocess, "MultiProcessCollector", _FakeCollector)
-
-    r = client.get(PATH, headers={"X-Admin-Key": ADMIN_KEY})
-
-    assert r.status_code == 200
-    assert called == [str(tmp_path)]
-
-
-def test_without_the_multiprocess_directory_it_serves_the_local_registry(client, monkeypatch):
-    """미설정이면 worker 1개일 때만 맞는 값이다 — A0 ② 가 확인한다."""
-    import serving.routers.metrics as m
-    monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
-
-    assert m._exposition_registry() is m.REGISTRY
+    src = open(m.__file__, encoding="utf-8").read()
+    assert "MultiProcessCollector" not in src
+    assert "PROMETHEUS_MULTIPROC_DIR" not in src
