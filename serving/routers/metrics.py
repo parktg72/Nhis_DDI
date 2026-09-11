@@ -28,13 +28,14 @@ DEPRECATED 로 표시된 컨테이너 파일과 진입점 docstring 에만 있�
 import logging
 import os
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 # 메트릭 **정의**를 등록시키기 위한 import. 이것이 없으면 어느 라우터가 먼저
 # import 되었는지에 따라 노출 내용이 달라진다. 노출하는 쪽이 등록을 소유한다.
 import monitoring.metrics  # noqa: F401
+from monitoring.audit_log import audit
 from monitoring.metrics_writer import get_metrics_writer
 from serving.routers.health import _require_admin
 
@@ -49,7 +50,10 @@ except ImportError:      # 폐쇄망 최소 설치 대비 — 장애가 아니�
 router = APIRouter(tags=["metrics"])
 
 
-def _require_scrape(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
+def _require_scrape(
+    request: Request,
+    x_admin_key: str = Header(..., alias="X-Admin-Key"),
+) -> None:
     """노출 경로 전용 인증.
 
     `METRICS_SCRAPE_KEY` 가 설정돼 있으면 그 키만 받는다 — 스크레이프 설정에
@@ -59,19 +63,26 @@ def _require_scrape(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None
 
     from serving.routers import health as _health
 
+    ep = _health._audit_endpoint(request)
+    ip = _health._client_ip(request)
     scrape_key = os.environ.get("METRICS_SCRAPE_KEY", "").strip()
     if scrape_key:
         if hmac.compare_digest(x_admin_key, scrape_key):
+            audit("auth_ok", endpoint=ep, client_ip=ip, key_kind="scrape")
             return
+        audit("auth_failed", endpoint=ep, client_ip=ip, key_kind="scrape")
         raise HTTPException(status_code=401, detail="스크레이프 인증 실패")
 
     if not _health._ADMIN_KEY:
+        audit("auth_unconfigured", endpoint=ep, client_ip=ip, key_kind="scrape")
         raise HTTPException(
             status_code=503,
             detail="METRICS_SCRAPE_KEY·ADMIN_API_KEY 모두 미설정: 노출 경로 비활성화",
         )
     if not hmac.compare_digest(x_admin_key, _health._ADMIN_KEY):
+        audit("auth_failed", endpoint=ep, client_ip=ip, key_kind="admin")
         raise HTTPException(status_code=401, detail="관리자 인증 실패")
+    audit("auth_ok", endpoint=ep, client_ip=ip, key_kind="admin")
 
 
 @router.get("/metrics/prometheus", response_class=PlainTextResponse)
@@ -106,10 +117,17 @@ async def get_metrics(
     """
     try:
         records = get_metrics_writer().read_recent(hours=hours)
+        # **호출**을 남기지 응답을 남기지 않는다 — 이 응답은 환자 단위 행이다.
+        audit("admin_call", endpoint="/metrics", outcome="ok",
+              hours=hours, returned_count=len(records))
     except RuntimeError as exc:
         logger.error("MetricsWriter 초기화 안 됨: %s", exc)
+        audit("admin_call", endpoint="/metrics", outcome="writer_uninitialized",
+              hours=hours, status_code=503)
         raise HTTPException(status_code=503, detail="메트릭 서비스 초기화되지 않음")
     except Exception:
         logger.warning("메트릭 읽기 실패 — 빈 목록 반환", exc_info=True)
+        # 빈 목록이 "기록이 없다" 로 읽히지 않도록 읽기 실패 자체를 남긴다.
+        audit("admin_call", endpoint="/metrics", outcome="read_failed", hours=hours)
         records = []
     return MetricsResponse(records=records, count=len(records), hours=hours)
